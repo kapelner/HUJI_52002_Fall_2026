@@ -1,0 +1,352 @@
+---
+title: "Lecture 1: Working at the Unix Command Line"
+subtitle: "Big Data Algorithms"
+format:
+  html:
+    toc: true
+    toc-depth: 2
+    number-sections: true
+    code-copy: true
+    embed-resources: true
+---
+
+# Plan for the session {.unnumbered}
+
+| Time | Topic | Commands |
+|------|-------|----------|
+| 0–10 | Anatomy of a command, getting help | `man`, `--help`, Tab, history, Ctrl+C, `clear` |
+| 10–25 | Moving around | `pwd`, `ls`, `cd`, `which`, `echo` |
+| 25–45 | Managing files | `mkdir`, `touch`, `cp`, `mv`, `rm`, `find`, `chmod`, `sudo` |
+| 45–55 | Editing in the terminal | `vi` |
+| 55–65 | *Break* | |
+| 65–85 | Looking at data without opening it | `cat`, `less`, `head`, `tail`, `wc`, `du`, `df`, `time` |
+| 85–100 | Redirection and pipes | `>`, `>>`, <code>&#124;</code>, `grep`, `cut`, `sort`, `uniq` |
+| 100–115 | Processes | `ps`, `htop`, `top`, `kill`, `&`, `jobs`, `fg` |
+| 115–120 | Wrap-up | |
+
+::: {.callout-note}
+## Mac users
+Almost everything here works the same in the Mac Terminal. However, the Linux command `free` doesn't exist on a Mac (use `top` instead).
+:::
+
+We first create a subfolder for scratch work for this lecture and move there using `mkdir` (make [new] directory [if it doesn't exist]) and `cd` (change directory). The `~` is a useful directive; it means "home directory". We will verify we are in the right place using `pwd` (print [the] working directory).
+
+```bash
+mkdir -p ~/workspace/HUJI_52002_Fall_2026/scratch/lec01 #the -p forces nested new directories to be created if they don't exist already
+cd ~/workspace/HUJI_52002_Fall_2026/scratch/lec01
+pwd
+```
+
+The file system is a tree. You / the linux prompt are always "in" one directory, called the **working directory**.
+
+# Setup: practice data
+
+We will start with `covid.csv`, from the New York Times' public repository of COVID-19 data. The file tracks COVID-19 in the United States during 2020: each row gives one county on one day, with the total cases and deaths reported there up to that day. It has about 885,000 rows and takes about 35 MB.
+
+Our first "real" linux command is `curl` (client URL) which downloads whatever is at the web address (a URL) you supply. 
+
+```bash
+curl -L -o covid.csv https://raw.githubusercontent.com/nytimes/covid-19-data/master/us-counties-2020.csv
+#^^^  ^^^^^^^^^^^^^^ ^^^^^^^^^
+#  |  cmd options    cmd argument
+# linux command
+```
+
+A command has three parts: the **command** itself, **options** (also called flags) that change its behavior, and **arguments** that tell it what to act on.
+
+We gave it two options:
+
+- `-L` follows redirects: if the server says the file has moved, `curl` automatically fetches it from the new location.
+- `-o covid.csv` saves the download in a file with that name. Without `-o`, `curl` prints the contents to the screen.
+
+You don't have to memorize options like these. Almost every command comes with a manual page that lists them, which you open with `man`:
+
+```bash
+man curl      # the full manual page for curl (type /--output to search, q to quit)
+curl --help   # a shorter summary (GNU/Linux tools)
+```
+
+
+Now let's make sure the `curl` actually worked i.e. downloaded the website and named it correctly. For this we'll use our next command `ls` (list [contents of a directory]). We will use a few options
+
+```bash
+ls
+ls -l           #list with "l"ong details
+ls -l -h        #+ list with "h"uman readable file sizes
+ls -l -h -a     #+ list "a"ll including hidden files
+ls -lha
+```
+
+Short options can be combined: `ls -lha` is the same as `ls -l -h -a`.
+
+The . and .. are "hidden" and signify special directory entries known as "hard links" that act as shortcuts for file system navigation. The `.` is the current directory. We will use it soon. The `..` is the parent directory e.g.
+
+```bash
+cd ..   #visit one directory up
+pwd
+cd lec01
+pwd
+```
+
+
+
+Keyboard habits that save hours:
+
+| Key | What it does |
+|-----|--------------|
+| Tab | Completes file and command names. Press twice to see options. |
+| ↑ / ↓ | Scroll through previous commands |
+| Ctrl+R | Search your command history |
+| Ctrl+C | Stop the running command |
+| Ctrl+L or `clear` | Clear the screen |
+
+```bash
+history       # list your recent commands
+```
+
+# Moving around
+
+
+
+Paths:
+
+- An **absolute path** starts from the root, `/`: `/home/adam/bigdata/lec01`
+- A **relative path** starts from where you are: `lec01/covid.csv`
+- `~` means your home directory, `.` means "here", `..` means "one level up"
+
+Two more commands for finding your way:
+
+```bash
+which python3       # where is this program installed?
+echo $HOME          # print a variable: your home directory
+echo $PATH          # the directories searched for programs
+```
+
+::: {.callout-tip}
+## Try it
+Starting from your home directory, get into `~/bigdata/lec01` using only relative paths, then get back home in one command.
+:::
+
+# Managing files
+
+```bash
+mkdir scratch               # make a directory
+mkdir -p a/b/c              # make nested directories in one step
+touch notes.txt             # create an empty file (or update its timestamp)
+cp notes.txt notes2.txt     # copy a file
+cp -r a a_copy              # copy a directory (-r = recursive)
+mv notes2.txt scratch/      # move a file
+mv scratch old_scratch      # rename (moving to a new name)
+rm notes.txt                # delete a file
+rm -r old_scratch           # delete a directory and everything in it
+rm -i *.txt                 # ask before deleting each file
+```
+
+::: {.callout-warning}
+## There is no trash can
+`rm` deletes permanently. There is no undo. Be especially careful with `rm -r` and with wildcards. Before running `rm` on a pattern, run `ls` with the same pattern to see what it will match.
+:::
+
+**Wildcards** match file names:
+
+```bash
+ls *.csv            # every file ending in .csv
+ls file_?.txt       # ? matches exactly one character
+```
+
+**Finding files:**
+
+```bash
+find ~/bigdata -name "*.csv"     # all csv files under ~/bigdata
+find . -size +10M                # files bigger than 10 MB under here
+```
+
+**Permissions.** In the output of `ls -l`, the first column looks like `-rwxr-xr--`: read, write, and execute permissions for the owner, the group, and everyone else.
+
+```bash
+chmod +x myscript.sh    # make a script executable
+sudo apt install htop   # run one command as administrator
+```
+
+`sudo` asks for your Linux password. Use it only when a command needs it, typically for installing software.
+
+# Editing in the terminal
+
+On a remote server there is no graphical editor, so you need to be able to edit a file in the terminal. The two common terminal editors are `vi` and `nano`. We will only use `vi`; you can learn `nano` on your own.
+
+::: {.callout-note}
+## Which is used more, vi or nano?
+Vi, by about two to one. In the 2025 Stack Overflow Developer Survey, 24.3% of developers said they use Vim and 12.2% use Nano. Another 14% use Neovim, a modern rewrite of Vim, so the vi family together is ahead by more than three to one.
+:::
+
+`vi` is installed on virtually every Unix system. It has **modes**, which is what confuses everyone at first.
+
+```bash
+vi notes.txt
+```
+
+The survival kit:
+
+| Keys | What it does |
+|------|--------------|
+| `i` | Enter insert mode: now you can type |
+| Esc | Leave insert mode |
+| `:w` Enter | Save |
+| `:q` Enter | Quit |
+| `:wq` Enter | Save and quit |
+| `:q!` Enter | Quit **without** saving |
+| `/word` Enter | Search for "word" (`n` for next match) |
+| `dd` | Delete the current line |
+| `u` | Undo |
+
+If you're ever stuck in `vi`, press Esc a few times, then type `:q!` and Enter.
+
+::: {.callout-tip}
+## Practice later
+`vimtutor` is a 30-minute interactive vi tutorial. On Ubuntu, install it with `sudo apt install vim`.
+:::
+
+# Looking at data without opening it
+
+This is the most important section for big data. A file can be far larger than what you want to (or can) load into memory, but you can still look at it.
+
+We will now return to our downloaded file. The columns are `date`, `county`, `state`, `fips` (a numeric code for the county), `cases` and `deaths`. Source: The New York Times, based on reports from state and local health agencies, <https://github.com/nytimes/covid-19-data>.
+
+```bash
+cat covid.csv         # print the whole file (bad idea for big files!)
+less covid.csv        # scroll through a file (q quits, / searches)
+head covid.csv        # first 10 lines
+head -n 3 covid.csv   # first 3 lines
+tail covid.csv        # last 10 lines
+tail -f logfile.txt   # keep watching a file as it grows (Ctrl+C to stop)
+wc -l covid.csv       # count lines
+```
+
+::: {.callout-tip}
+## Try it
+Run `cat covid.csv`. Then press Ctrl+C. Now run `head covid.csv` and `tail covid.csv`. Which ones are instant, and why?
+:::
+
+How much space are things taking?
+
+```bash
+du -sh ~/bigdata          # total size of a directory
+du -sh *                  # size of each item here
+df -h ~                   # free space on the disk holding your home directory
+```
+
+How long does a command take? Put `time` in front of it:
+
+```bash
+time wc -l covid.csv
+```
+
+`real` is the wall-clock time. We'll use `time` all semester to compare methods.
+
+# Redirection and pipes
+
+By default, output goes to the screen. You can send it to a file instead:
+
+```bash
+echo "hello" > greeting.txt     # write to a file (replaces its contents!)
+echo "again" >> greeting.txt    # append to a file
+head -n 1000 covid.csv > sample.csv
+```
+
+The **pipe**, `|`, sends the output of one command into the next. Each command does one small job, and you chain them:
+
+```bash
+grep ",California," covid.csv | head    # rows for California, first 10
+grep -c ",California," covid.csv        # count of rows for California
+cut -d, -f3 covid.csv | head            # just the 3rd column (the state)
+cut -d, -f3 covid.csv | tail -n +2 | sort | uniq -c   # count rows per state
+```
+
+Read the last line left to right: take column 3, drop the header line, sort it, then count identical neighbors.
+
+::: {.callout-note}
+## Why this matters for big data
+Pipes process data as a **stream**: each command reads a line, handles it, and passes it on. None of these commands loads the whole file into memory, which is why they work on files much bigger than your RAM. This is the idea behind the one-pass algorithms we'll study later.
+:::
+
+::: {.callout-tip}
+## Try it
+How many rows of `covid.csv` are from March 2020? (Hint: `cut` the first column, then `grep` with `"^2020-03"`, then count.)
+:::
+
+# Processes
+
+Every running program is a **process** with an ID number (PID).
+
+```bash
+ps                    # your processes in this terminal
+ps aux | head         # every process on the machine
+htop                  # live view of CPU and memory (q quits)
+top                   # the older version, available everywhere
+```
+
+**Demo: watch a process eat CPU.** Run this in one terminal, and `htop` in another:
+
+```bash
+yes > /dev/null &     # a useless program that uses 100% of one core
+```
+
+The `&` runs it in the **background**, so you get your prompt back. Now manage it:
+
+```bash
+jobs                  # list background jobs in this terminal
+fg                    # bring it to the foreground (then Ctrl+C stops it)
+kill %1               # or: stop background job number 1
+pkill yes             # or: stop every process named yes
+kill 12345            # or: stop a process by its PID
+kill -9 12345         # last resort: force it
+```
+
+**Demo: watch a process use memory.** With `htop` open, run:
+
+```bash
+python3 -c "x = 'a' * 10**9; input('Press Enter to quit')"
+```
+
+Watch the memory bar jump by about 1 GB. Press Enter and watch it drop. This is what "fits in RAM" means in practice.
+
+# Wrap-up
+
+## Cheat sheet
+
+| Command | What it does |
+|---------|--------------|
+| `pwd`, `ls`, `cd` | Where am I, what's here, go somewhere |
+| `mkdir`, `touch` | Make a directory, make an empty file |
+| `cp`, `mv`, `rm` | Copy, move/rename, delete (permanently!) |
+| `find` | Search for files by name, size, etc. |
+| `chmod`, `sudo` | Change permissions, run as administrator |
+| `vi` | Edit files in the terminal |
+| `cat`, `less` | Print a file, scroll through a file |
+| `head`, `tail`, `wc` | First lines, last lines, count lines |
+| `du`, `df` | Space used by files, free space on disk |
+| `time` | How long a command takes |
+| `>`, `>>`, <code>&#124;</code> | Write to file, append to file, pipe to next command |
+| `grep`, `cut`, `sort`, `uniq` | Filter lines, pick columns, sort, count duplicates |
+| `ps`, `htop`, `top` | See running processes |
+| `&`, `jobs`, `fg`, `kill` | Background, list, foreground, stop processes |
+| `man`, `--help` | Get help |
+
+## Check yourself
+
+These are the kinds of questions you should be able to answer on an exam, without a computer or AI.
+
+1. What's the difference between an absolute and a relative path? Give an example of each.
+2. You're in `~/bigdata/lec01`. What does `cd ../..` do?
+3. What's the difference between `>` and `>>`?
+4. You opened a file in `vi` and typed text you don't want to keep. How do you get out without saving?
+5. Why is `head` instant on a 10 GB file while `cat` is not?
+6. What does `cut -d, -f3 covid.csv | sort | uniq -c` produce?
+7. Your laptop's fan is suddenly loud. How do you find out which process is responsible, and how do you stop it?
+8. Why is `rm -r *` dangerous?
+
+## Before next class
+
+- Make sure your terminal works: Ubuntu in WSL on Windows, or Terminal on a Mac.
+- Install `htop` and `git` if you don't have them.
+- Do 15 minutes of `vimtutor`.

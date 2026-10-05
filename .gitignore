@@ -1,3 +1,5 @@
+.ignore
+
 # History files
 .Rhistory
 .Rapp.history
@@ -48,3 +50,11 @@ po/*~
 
 # RStudio Connect folder
 rsconnect/
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/
+
+# Quarto output: HTML rendered from .qmd files, and its support folders
+*.html
+*_files/
+scratch/

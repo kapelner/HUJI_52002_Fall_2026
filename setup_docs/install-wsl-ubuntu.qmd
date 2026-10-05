@@ -1,0 +1,96 @@
+---
+title: "Installing Ubuntu 26.04 LTS on Windows (WSL)"
+subtitle: "Big Data Algorithms — setup guide"
+format:
+  html:
+    toc: true
+    number-sections: true
+    code-copy: true
+    embed-resources: true
+---
+
+These steps install Ubuntu 26.04 LTS inside the Windows Subsystem for Linux (WSL 2), so you have a real Linux command line on your Windows laptop. They work on Windows 11, or Windows 10 version 2004 or later. Mac users can skip this guide.
+
+# Open PowerShell as Administrator
+
+Click the Start button and type "powershell". You should see under "best match" a program called "Windows PowerShell" with the subtitle "System". Right click it and select "Run as Administrator". This will open a terminal. Run the following to ensure the linux subsystem is up to date:
+
+```powershell
+wsl --update
+```
+
+If WSL isn't installed at all, the install step below installs it as well. Restart Windows if it asks you to.
+
+We now confirm Ubuntu 26.04 is available:
+
+```powershell
+wsl --list --online
+```
+
+You should see a line "Ubuntu-26.04    Ubuntu 26.04 LTS"
+
+We now will install Ubuntu 26.04
+
+```powershell
+wsl --install -d Ubuntu-26.04
+```
+
+Note: use the exact name `Ubuntu-26.04`, not plain `Ubuntu`. Plain `Ubuntu` may give you a different version, and everyone in the course should be on the same one.
+
+Once this is done, a Ubuntu window opens and asks for a username and password. These are separate from your Windows login. The password doesn't show while you type. That's normal. Don't forget this password as you'll need it whenever you run a command with `sudo` (to be explained later).
+
+WSL with Ubuntu should now be installed. You can open it by right clikcing the start bar and clicking "Terminal". I would then go to settings in the terminal program and let "default profile" by Ubuntu. This way every time you open the terminal it goes to Unbuntu rather than the DOS prompt. Restart the terminal and let's verify Ubuntu-26.04 is installed via: 
+
+```bash
+lsb_release -a
+```
+
+Even though you downloaded the latest ubuntu version, it is already out of date. We can update it with "apt". This program is your friend as it's the standard package manager for Ubuntu.
+
+```bash
+sudo apt update && sudo apt full-upgrade -y
+```
+
+
+Now let's raise the memory limit. By default WSL uses only part of your computer's RAM. In this course we work with large data, so give it more. Create a text file named `.wslconfig` in your Windows home folder (`C:\Users\<your-username>\.wslconfig`) containing:
+
+```ini
+[wsl2]
+memory=12GB
+processors=8
+```
+
+Adjust the numbers to your machine; around three quarters of your RAM and your number of CPU cores is reasonable. Then restart WSL from PowerShell:
+
+```powershell
+wsl --shutdown
+```
+
+Reopen Ubuntu in the terminal and check what it now sees:
+
+```bash
+free -h
+nproc
+```
+
+WSL gives you access to your regular windows file system and the windows file system give you access to your WSL file system. Note that
+
+- Files under `/mnt/c` are on the Windows side and are much slower to read from Linux.
+- Files edited on the Windows side can pick up Windows line endings, which break bash scripts.
+
+You can browse your Linux files from Windows File Explorer at `\\wsl$\Ubuntu-26.04\home\<your-username>`.
+
+# If you already have an older Ubuntu in WSL
+
+You have two choices:
+
+1. **Install 26.04 alongside it**, using the steps above. Both can coexist, but files don't move between them automatically. The simplest way to carry work over is to push it to GitHub from the old distribution and clone it in the new one. You can also copy files through `\\wsl$\` in File Explorer.
+2. **Upgrade the old one in place** by running, inside it:
+
+    ```bash
+    sudo do-release-upgrade
+    ```
+
+    This keeps your files and setup, but takes longer and occasionally needs manual fixes.
+
+A fresh install (option 1) is cleaner and matches what everyone else in the course has.

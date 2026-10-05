@@ -1,0 +1,233 @@
+\documentclass[12pt]{article}
+
+\usepackage[margin=0.98in]{geometry}
+\input{../../syllabi/preamble}
+
+\newcommand{\professorname}{Adam Kapelner}
+\newcommand{\professorcontactinfo}{Write to @kapelner on \href{\discordurl}{discord} in a public channel}
+\newcommand{\professoroffice}{24-417}
+\newcommand{\coursedept}{Statistics}
+\newcommand{\coursenumber}{52002}
+\newcommand{\sixhundredsection}{52019}
+\newcommand{\coursenumbercrosslisted}{/ \sixhundredsection}
+\newcommand{\semester}{Fall}
+\newcommand{\numcredits}{3}
+\newcommand{\lectimeandloc}{Sun 11:30-14:00 / 21-204}
+\newcommand{\requiredlabtimeandloc}{}
+\newcommand{\tataofficehourtimeandloc}{
+Eynat Sela  / see \coursewebpagelink 
+}
+\newcommand{\coursewebpageurl}{https://github.com/kapelner/HUJI_\coursenumber_\semester_\the\year}
+\newcommand{\coursewebpagelink}{\href{\coursewebpageurl}{course homepage}}
+\newcommand{\discordurl}{https://discord.com/channels/1463307077060526225}
+\newcommand{\discordlink}{\href{\discordurl}{discord}}
+\newcommand{\numtheoryhws}{3 or 4}
+\newcommand{\extrahwzero}{\item provide a link to your public repository on github (this means you need to sign up for github first)}
+\newcommand{\lastdatetimetohandinhomeworks}{Jan 11}
+
+\input{../../syllabi/_header}
+
+\section*{Course Overview}
+
+Big Data Algorithms / Data Mining 3 cr. Prereq.: 52571
+(Regression and Statistical Models) OR 52307 (Regression and Linear Models). We plan to cover
+
+
+\begin{itemize}
+\itemsep -0.0em
+\item working locally and remotely in *nix environments - becoming fluent in *nix commands
+\item basic git - you are required to have a github account where you will push your assignments
+\item definition of what big data means (fits in RAM, fits on local disk, does not fit on local disk)
+\item working with CSV files, compression locally and remotely
+\item becoming fluent with SQL basics locally and remotely
+\item columnar formats (Parquet, arrow), duckDB, Polars, data.table
+\item joins (locally and remotely)
+\item profiling time/memory
+\item acquiring data from the web
+\item data hygiene (deduping, missingness handling)
+\item basics of hash functions
+\item streaming and one-pass statistics accuracy-vs-memory tradeoff, error bounds
+\item sampling statistics: SRS, stratified
+\item fitting standard models, identify breakdown of standard models (computational and statistical), fitting standard models at scale exactly and approximately (subsampling, bag of little bootstraps)
+\item statistical significance (pval) vs practical/clinical significance (effect size)
+\item dimension reduction
+\item nearest neighbors
+\item parallel computing with multiple cores and multiple machines
+\item predictive modeling with tree models, xgboost/lightGBM
+\end{itemize}
+
+
+We will cover these topics using both R and Python. I plan to use quarto. R is the better language for statistics but Python is the better language for infrastructure. A true data scientist / engineer should be fluent in both. They are not substitutes but different tools. SQL is the substrate for both so we will cover the basics but I don't consider it a "third language". Same as bash scripting - not a "third language" but necessary to become fluent in. As for Julia, scala, Java, Go, SAS, Matlab, etc - some industries use them but they are not widely adopted by data scientists in practice and thus, beyond the scope of the course.
+
+You should be familiar with the following before entering the class:
+
+\begin{itemize}
+\itemsep -0.0em 
+\item Basic Probability Theory: conditional probability, in/dependence, identical distributedness, discrete random variables: Bernoulli, Binomial, expectation and variance
+%\item Modeling with continuous random variables: Exponential, Uniform and Normal
+%\item Frequentist confidence intervals and hypothesis testing for one-sample proportions
+%\item Basic visualization of data: plots, histograms, bar charts
+\item Linear algebra: Vectors, matrices, transpose, inverse, rank, nullity
+\item Fundamental programming concepts: basic data types, vectors, arrays, control flow (for, while, if, else), functions
+\item Basic statistics: point estimation, hypothesis testing, confidence intervals
+\item Inference vs prediction, theory of modeling 
+\end{itemize}
+
+\noindent We will review the above \textit{throughout the semester} when needed and we will do so rapidly. \\
+
+
+\noindent \textbf{This is not your typical statistics course.} This course will do lots of hands-on big data manipulation using modern computing.
+
+%\section*{Books and Reference Materials}
+%
+%We will be using many reference texts and three popular books which you will read portions from. However the main materials are the course notes. You should always supplement concepts from class by reading up on them online; \href{https://en.wikipedia.org}{wikipedia} I find the best for this. 
+%
+%\paragraph{Theory Reference:} It is not necessary to have these two books, but it is recommended. The first is \qu{Learning from Data: A Short Course} by Abu-Mostafa, Magdon-Ismael and Lin which can be purchased used on \href{https://www.amazon.com/Learning-Data-Yaser-S-Abu-Mostafa/dp/1600490069}{Amazon}. We will also be using portions from \qu{Deep Learning} by Goodfellow, Bengio and Courville that can be purchased on \href{https://www.amazon.com/Deep-Learning-Adaptive-Computation-Machine/dp/0262035618}{Amazon} and read for free at \url{http://www.deeplearningbook.org/}.
+%
+%\paragraph{Popular Books:} We will also be reading the non-fiction novel \qu{The Signal and the Noise} by Nate Silver which can also be purchased on \href{https://www.amazon.com/Signal-Noise-Many-Predictions-Fail-but/dp/0143125087}{Amazon}. This is \textit{required} --- you will have homework questions directly from this book. We will also be referencing \qu{Preditive Analytics, Data Mining and Big Data} by Steven Finlay that can be purchased on \href{https://www.amazon.com/Predictive-Analytics-Data-Mining-Misconceptions/dp/1349478687}{Amazon} and it is also available online from the \href{https://link-springer-com.queens.ezproxy.cuny.edu/book/10.1057%2F9781137379283}{Queens College library system}. 
+%
+%\paragraph{Book on \texttt{R}:} We will be making some use of \qu{R for Data Science} by Wickham and Grolemund which can be purchased on \href{https://www.amazon.com/R-Data-Science-Hadley-Wickham/dp/1491910399}{Amazon} or read online at \url{http://r4ds.had.co.nz/}.
+
+\section*{Required Technology}
+
+\paragraph{Computer:} You need your own laptop and it is \textit{required} to bring it to lectures where you can follow the demos on your own machine. 
+
+\paragraph{Source Control:} You will be expected to use \texttt{git} and have a \url{github.com} account with a class repository (see \texttt{class\_setup.qmd}). You will use this repository to submit coding lab assignments (and theory assignments if you use \LaTeX). Setting this up is a required course preassignment.
+
+\subsection*{Software}
+
+We will be concentrating on the computer language \texttt{R} which is a free, open source programming language available for all operating systems. \texttt{R} is the most popular language for academic Statistics, Biostatistics and Data Science. Anything cutting-edge in these fields is released in \texttt{R} first. However, it is the second-most used language for industry data science, the first being \texttt{Python} which we will be using as well. Of course we will be using \texttt{SQL}. All these programs and libraries should be set up on your machine. I will have a running software setup documents \texttt{software\_setup\_ubuntu.qmd} and \texttt{software\_setup\_mac.qmd}.
+
+
+
+
+
+
+\input{../../syllabi/_the650section}
+
+%\section*{The Additional 390.2 / 690.2 Section}
+%
+%This is a supplemental 2 credit course once per week on Zoom for 110min that covers the lab assignments (see section below) in Python. This supplement is highly recommended as it will (1) rerivet the fundamentals of data science you'll learn in this course and (2) it will teach you data science skills in the Python language which is immensely useful if you wish to pursue data in your future career.
+
+%To download \texttt{Python} go to \url{https://www.python.org/downloads/}. I then recommend the IDE \texttt{Jupyter Notebook} available for free so you can follow Amir's Python translations of the class demos. To install Notebook, open up a command prompt and executing \texttt{pip install notebook}. After this is installed, you can run \texttt{jupyter notebook} in a command prompty which will open up a web browser with the IDE embedded. An alternative method is to install Anaconda using \href{https://medium.com/@yunanwu2020/how-to-install-jupyter-notebook-from-scratch-on-anaconda-simple-codes-8652c3095091}{these instructions}.
+
+%\paragraph{Books on Python:} For those who also want to learn Python in addition to \texttt{R}, the following books are recommended: \href{https://automatetheboringstuff.com/}{Second Edition of Atomate the Boring Stuff With Python}, \href{https://www.python.org/dev/peps/pep-0008/}{The Official Style Guide for Python Code}, \href{https://www.learnpython.org/}{Interactive Python Tutorial} and \href{https://cs50.harvard.edu/college/2019/fall/weeks/6/}{Harvard Universities Quick Python Course}.
+
+\input{../../syllabi/_announcements_on_discord}
+
+\input{../../syllabi/_use_of_discord}
+
+
+I will not be using Moodle.
+
+\section*{Class Meetings}
+
+There are 13 scheduled meetings from Sunday Oct 11 to Sunday Jan 10 of which 12 are lectures and one will be the in-person midterm exam (Nov 29).
+
+\subsection*{Tentative Day-by-Day Schedule}
+
+Lectures will be further split into two modes: practice and theory. The former is where will be using the \qu{computer/projector} to see the concepts in action and the latter is a standard \qu{chalkboard} lecture where we learn concepts and the second.
+
+%\input{../../syllabi/_zoom_policies}
+
+%\input{_lecture_schedule}
+
+%\input{../../syllabi/_lecture_upload}
+
+
+%\subsection*{Labs}
+%
+%During labs will be in the computer-enabled classroom, the majority of this time will be your time. You will take turns \qu{driving} the coding in front of the class, working on exercises that you will finish for homework. Thus we will spend most a lot of time talking through problem-solving skills in data science.
+
+\section*{Homework}
+
+Homework will be split into \textit{theory} and \textit{practice} (called \qu{labs} which are like mini projects). This course is in English and will involve writing \textit{English} and thus being graded in \textit{English}.
+
+\subsection*{Theory Assignments}
+
+\input{../../syllabi/_theory_hws_text}
+
+\input{../../syllabi/_theory_hws_submission_github_text}
+
+\input{../../syllabi/_lab_assignments}
+
+\input{../../syllabi/_collaboration_policy}
+
+\input{../../syllabi/_philosophy_hws}
+
+\input{../../syllabi/_time_spent_hws_4_cr}
+
+\input{../../syllabi/_late_hw_policy}
+
+%\input{../../syllabi/_latex_hw_bonus_policy}
+
+%\input{../../syllabi/_hw_ec_policy}
+
+%\subsection*{TA Office Hours}
+
+%See course homepage for the name of the TA and the office hours.
+
+%\input{../../syllabi/_hw_0}
+
+\input{../../syllabi/_chatgpt_ai_policy}
+
+\section*{Examinations}
+
+\input{../../syllabi/_examination_text}
+
+
+\subsection*{Exams and Major Assignments}\label{subsec:exam_schedule}
+
+\begin{itemize}
+\itemsep -0.0em 
+\item Midterm exam
+\item Final exam
+\end{itemize}
+
+The schedule of exams and assignment due dates are on the \coursewebpagelink.
+
+\subsection*{Exam Policies and Materials}
+
+\input{../../syllabi/_examination_policies}
+
+
+I also allow \qu{cheat sheets} on examinations. For the midterms, you are allowed to bring \ingreen{one} 8.5'' $\times$ 11'' sheet of paper (front and back). \inred{Two sheets single sided are not allowed.} On this paper you can write anything you would like which you believe will help you on the exam. For the final, you are allowed to bring two 8.5'' $\times$ 11'' sheet of paper (front and back). \inred{Four sheets single sided are not allowed.} I will be handing back the mditerm cheat sheets so you can reuse your midterm cheat sheets for the final if you wish. 
+
+
+
+
+\input{../../syllabi/_cheating_on_exams_and_missing_exams}
+%\input{../../syllabi/_special_services}
+
+%\input{../../syllabi/_class_participation}
+
+%\input{../../syllabi/_zoom_attendance}
+
+\section*{Grading and Grading Policy}\label{sec:grading}
+
+Your course grade will be calculated based on the percentages as follows: 
+
+\begin{table}[h]
+\centering
+\begin{tabular}{l|l}
+Homework (theory and labs) & 25\% \\
+Midterm Examination & 25\%\\
+Final Examination* & 40\%\\
+Attendance & 10\%
+\end{tabular}
+\end{table}
+\FloatBarrier
+
+%\input{../../syllabi/_342W_grading_and_grading_policy}
+
+
+%\input{../../syllabi/_advanced_course_grade_distribution}
+
+\input{../../syllabi/_grade_checking_on_gradesly}
+
+\input{../../syllabi/_auditing_policy}
+
+
+
+
+\end{document}
