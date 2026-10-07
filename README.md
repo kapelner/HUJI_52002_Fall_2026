@@ -19,8 +19,8 @@ None released yet
 * [Lab 5, due Oct 17 23:59](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/master/labs/lab05.Rmd) pushed to your github repo
 * [Lab 4, due Oct 17 23:59](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/master/labs/lab04.Rmd) pushed to your github repo
 * [Lab 3, due Oct 17 23:59](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/master/labs/lab03.Rmd) pushed to your github repo
-* [Lab 2, due Oct 17 23:59](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/master/labs/lab02.Rmd) pushed to your github repo-->
-* [Lab 1, due Oct 17 23:59](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/master/labs/lab01.Rmd) pushed to your github repo
+* [Lab 2, due Oct 17 23:59](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/master/labs/lab02.Rmd) pushed to your github repo
+* [Lab 1, due Oct 17 23:59](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/master/labs/lab01.Rmd) pushed to your github repo-->
 
 
 ## Theory Homeworks
