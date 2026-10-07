@@ -1,6 +1,6 @@
 # HUJI 52002 Big Data Algorithms & Data Mining Fall 2026
 
-This is the course homepage for Math 52002 (and Masters level 52019) at Hebrew University of Jerusalem taught by Professor Adam Kapelner. The course syllabus can be found [here](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/master/syllabus/syllabus.pdf). We use this [discord channel](https://discord.com/channels/1556341692754567288) for class announcements and discussions. 
+This is the course homepage for Math 52002 (and Masters level 52019) at Hebrew University of Jerusalem taught by Professor Adam Kapelner. The course syllabus can be found [here](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/syllabus/syllabus.pdf). We use this [discord channel](https://discord.com/channels/1556341692754567288) for class announcements and discussions. 
 
 ## Setting up your Computer
 
