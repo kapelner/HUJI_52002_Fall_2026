@@ -7,31 +7,62 @@ format:
 
 # Linux
 
-Big data almost never lives on your laptop. It sits on remote servers, cloud machines, and computing clusters, and nearly all of them run Linux, usually with no GUI; all you get is a terminal with a prompt. To work with data at scale, you must begin to be comfortable with the Linux command line. You connect to remote machines with ssh, move file, keep long jobs running after you disconnect, and check memory, CPU, disk usage, running processes to see why a job is slow or crashing. Linux tools are also built for data too large to open, so you can inspect, filter, count, and compress a 100 GB file without ever loading it into memory. Chaining them with pipes is a form of streaming computation.
+Big data almost never lives on your laptop. It sits on remote servers, cloud machines, and computing clusters, and nearly all of them run Linux, usually with no GUI; all you get is a terminal with a prompt. To work with data at scale, you must begin to be comfortable with the Linux command line. You connect to remote machines with ssh, move file, keep long jobs running after you disconnect, and check memory, CPU, disk usage, running processes to see why a job is slow or crashing. Linux tools are also built for data too large to open, so you can inspect, filter, count, and compress a 100 GB file without ever loading it into memory. Chaining them with pipes is a form of streaming computation. The Linux shell is what connects the main data science tools of this class (R, Python, SQL, git, and Quarto) into one reproducible pipeline. Data scientists who are fluent at the command line can work wherever their data lives, not only where a familiar interface happens to be installed.
 
 If you are using Linux already, you obviously have nothing to do. If you have the ability to install a machine from scratch, I will prefer Ubuntu; it is one of the most widely used systems on cloud machines and servers, so what you learn on your laptop is what you will find in practice. Please install the current long-term support (LTS) release, Ubuntu 26.04.
 
 ## How to "Install Linux" on Windows
 
-Carefully follow the setup instructions in the file "install-wsl-ubuntu.qmd".
+Carefully follow the setup instructions in the file `01a_install-wsl-ubuntu.qmd`.
 
 ## For MAC users
 
-Mac users do not need to switch to Linux as macOS is itself a certified Unix, built on BSD, a close relative of Linux, so the shell, pipes, file system layout, permissions, ssh, and *nearly* every command work the same way. The differences are small, such as an occasional flag that behaves differently and installing the GNU versions of these tools with Homebrew removes most of them:
+Mac users do not need to switch to Linux as macOS is itself a certified Unix, built on BSD, a close relative of Linux, so the shell, pipes, file system layout, permissions, ssh, and *nearly* every command work the same way. The differences are small, such as an occasional flag that behaves differently and installing the GNU versions of these tools with Homebrew removes most of them. First check whether you already have Homebrew:
+
+```bash
+brew --version
+```
+
+If the command is not found, install Homebrew:
+
+```bash
+/bin/bash -c "$(curl -fsSL \
+  https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+```
+
+It asks for your Mac password. When the installer finishes, it prints a short "Next steps" section with commands that add `brew` to your PATH. Run them, then open a new terminal window.
+
+Make sure Homebrew knows about the latest versions before installing anything:
+
+```bash
+brew update
+```
+
+Now we can install the linux-like tools:
 
 ```bash
 brew install coreutils gnu-sed grep
-```
-
-We'll also need a few more programs to equalize with ubuntu:
-
-```bash
 brew install htop
 ```
 
-If you don't have brew installed yet, you first install brew by following the instructions at <https://brew.sh> then return and do the above. Verify using `git --version` that git is successfully installed.
+99% of what you practice in the Mac terminal carries over directly to the Linux servers you will use. 
 
-Everything you practice in the Mac terminal carries over directly to the Linux servers you will use. Finally, the shell is what connects the main data science tools of this class (R, Python, SQL, git, and Quarto) into one reproducible pipeline. Data scientists who are fluent at the command line can work wherever their data lives, not only where a familiar interface happens to be installed.
+# Ensure the shell is working correctly
+
+Let's run 
+
+```bash
+uname -a
+```
+
+You should see something like
+
+Linux [machine name] 6.6.87.2-microsoft-standard-WSL2 [datetime]
+
+on WSL and something like
+
+Darwin [machine name] 25.0.0 Darwin Kernel Version 25.0.0: [build date]; [root and release]
+
 
 # git
 
@@ -235,4 +266,6 @@ echo "scratch/" >> ~/workspace/HUJI_52002_Fall_2026/.gitignore
 
 This adds the line `scratch/` to the end of `.gitignore` (and also creating the `.gitignore` file if it doesn't exist yet). The `.gitignore` file itself does get committed, which will happen the next time you run `git add .`.
 
+# Software setup
 
+Continue on to `02_software_setup_ubuntu.qmd` or `02_software_setup_mac.qmd` now.

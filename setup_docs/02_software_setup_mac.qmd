@@ -1,0 +1,144 @@
+---
+title: "Rolling Class Software Setup on MAC OS"
+subtitle: "Big Data Algorithms — setup guide"
+format:
+  html:
+    toc: true
+    number-sections: true
+    code-copy: true
+    embed-resources: true
+---
+
+These steps install the current versions of the software we use in the course on a Mac. They work on both Apple Silicon (M-series) and Intel Macs. Ubuntu users, including Ubuntu inside WSL on Windows, should follow "02_software_setup_ubuntu.qmd" instead. When you finish this guide, continue with "03_software_setup_common.qmd", which installs the R and Python packages and is the same for Ubuntu and Mac.
+
+You should have already completed the setup in `01_linux_git_github_setup.qmd` before you begin here.
+
+We install everything with Homebrew, the standard package manager for macOS. Run every command in the Terminal app. A few commands are too long to fit on one line, so they continue on the following lines, either after a `\` or inside quotes. Copy all the lines together and the terminal runs them as one command. As of October 2026, you should end up with:
+
+| Software   | Version | Check after with    |
+|------------|---------|---------------------|
+| R          | 4.6     | `R --version`       |
+| Python     | 3.14    | `python3 --version` |
+| PostgreSQL | 18      | `psql --version`    |
+| Quarto     | 1.10    | `quarto --version`  |
+| Positron   | 2026.09 | Positron > About Positron |
+
+
+# R
+
+```bash
+brew install --cask r-app
+```
+
+This downloads the official installer from CRAN, the home of R, and runs it. It asks for your Mac password. Note the `--cask`: do not use plain `brew install r`. That installs a different build of R that cannot use CRAN's ready-made packages, so every package you install would have to be compiled on your Mac.
+
+Check the installation:
+
+```bash
+R --version
+```
+
+The first line should begin with `R version 4.6`.
+
+Now tell R where to download add-on packages from, by adding a line to `~/.Rprofile`, a file R runs every time it starts:
+
+```bash
+echo 'options(timeout = 600,
+  repos = c(CRAN = "https://cloud.r-project.org"))' >> ~/.Rprofile
+```
+
+The `timeout` part allows each download ten minutes instead of R's default of one, which is too short for the larger packages on a slow connection.
+
+# Python
+
+```bash
+brew install python
+python3 --version
+```
+
+This should print `Python 3.14` followed by a third number. Note that the command is `python3`, not `python`.
+
+macOS comes with an older Python of its own, so make sure the terminal uses the one from Homebrew:
+
+```bash
+which python3
+```
+
+This should print `/opt/homebrew/bin/python3` (Apple Silicon) or `/usr/local/bin/python3` (Intel). If it prints `/usr/bin/python3`, open a new terminal window and try again.
+
+Two of the Python packages we install later, `xgboost` and `lightgbm`, need a library called OpenMP, which macOS does not include. Install it now:
+
+```bash
+brew install libomp
+```
+
+# PostgreSQL
+
+Install PostgreSQL 18 and start the database server:
+
+```bash
+brew install postgresql@18
+brew services start postgresql@18
+```
+
+`brew services` also restarts the server every time you log in. Homebrew does not put the PostgreSQL commands on your PATH, so add them yourself:
+
+```bash
+echo "export PATH=\"$(brew --prefix postgresql@18)/bin:\$PATH\"" >> ~/.zshrc
+source ~/.zshrc
+```
+
+Homebrew sets up PostgreSQL so that your Mac username is the database administrator. Create a database with the same name as your username:
+
+```bash
+createdb $USER
+```
+
+From now on `psql` connects without any extra options:
+
+```bash
+psql -c "SELECT version();"
+```
+
+This should print one row beginning with `PostgreSQL 18`. Typing `psql` alone opens the interactive SQL prompt and `\q` quits it.
+
+If `psql` cannot connect, check that the server is running with `brew services list`. The line for `postgresql@18` should say `started`.
+
+# Quarto
+
+```bash
+brew install --cask quarto
+```
+
+It asks for your Mac password. Check the installation:
+
+```bash
+quarto --version
+quarto check
+```
+
+`quarto check` lists everything Quarto can find on your computer, and should show the R and Python you just installed. It may also tell you that Jupyter (for Python) and the `knitr` package (for R) are not installed yet. `knitr` is installed later, in "03_software_setup_common.qmd", and Jupyter is not needed for this course's setup.
+
+# Positron
+
+Positron is the editor (IDE) we use for R, Python and Quarto.
+
+```bash
+brew install --cask positron
+```
+
+Open Positron from your Applications folder. To be able to start it from the terminal as well, press Cmd+Shift+P inside Positron to bring up the Command Palette, type "Install 'positron' command in PATH" and run that command. After you restart the terminal, `positron .` opens the current folder in Positron. Positron comes with its own copy of Quarto. We installed Quarto separately so that the `quarto` command also works in the terminal.
+
+# Continue with the common setup
+
+Continue now with "03_software_setup_common.qmd". It installs the R and Python packages we use in the course and sets up Quarto to run R and Python in the same document. Those steps are the same on Ubuntu and on a Mac.
+
+# Updating later
+
+Homebrew updates everything you installed with it:
+
+```bash
+brew update && brew upgrade
+```
+
+Positron also offers updates by itself when a new version is released.

@@ -1,0 +1,203 @@
+---
+title: "Rolling Class Software Setup on Ubuntu 26.04"
+subtitle: "Big Data Algorithms — setup guide"
+format:
+  html:
+    toc: true
+    number-sections: true
+    code-copy: true
+    embed-resources: true
+---
+
+These steps install the current versions of the software we use in the course on Ubuntu 26.04 LTS. They apply both to Ubuntu installed directly on your computer and to Ubuntu inside WSL on Windows (set up by following "01a_install-wsl-ubuntu.qmd"). Mac users should follow "02_software_setup_mac.qmd" instead. When you finish this guide, continue with "03_software_setup_common.qmd", which installs the R and Python packages and is the same for Ubuntu and Mac.
+
+You should have already completed the setup in `01_linux_git_github_setup.qmd` before you begin here.
+
+Run every command in the Ubuntu terminal. Commands that begin with `sudo` ask for your Ubuntu password. A few commands are too long to fit on one line, so they continue on the following lines, either after a `\` or inside quotes. Copy all the lines together and the terminal runs them as one command. As of October 2026, you should end up with:
+
+| Software   | Version | Check after with    |
+|------------|---------|---------------------|
+| R          | 4.6     | `R --version`       |
+| Python     | 3.14    | `python3 --version` |
+| PostgreSQL | 18      | `psql --version`    |
+| Quarto     | 1.10    | `quarto --version`  |
+| Positron   | 2026.09 | Help > About        |
+
+# Before you start
+
+Bring Ubuntu up to date and install the download tools the steps below rely on:
+
+```bash
+sudo apt update && sudo apt full-upgrade -y
+sudo apt install -y curl wget ca-certificates
+```
+
+# R
+
+Ubuntu's own repository carries an older R (4.5). To get the current release, we add the repository maintained by CRAN, the official home of R:
+
+```bash
+sudo apt install -y --no-install-recommends software-properties-common dirmngr
+wget -qO- https://cloud.r-project.org/bin/linux/ubuntu/marutter_pubkey.asc \
+  | sudo tee -a /etc/apt/trusted.gpg.d/cran_ubuntu_key.asc
+sudo add-apt-repository \
+"deb https://cloud.r-project.org/bin/linux/ubuntu $(lsb_release -cs)-cran40/"
+```
+
+The last command, `add-apt-repository`, asks you to press Enter to confirm. Now install R:
+
+```bash
+sudo apt install -y --no-install-recommends r-base r-base-dev
+```
+
+The `r-base-dev` package contains the compilers R needs for add-on packages that have to be built from source code.
+
+Check the installation:
+
+```bash
+R --version
+```
+
+The first line should begin with `R version 4.6`.
+
+## Prepare R for installing packages
+
+Three more steps get R ready to install add-on packages. First, create your personal package library, the folder in your home directory where R keeps the packages you install:
+
+```bash
+Rscript -e 'dir.create(Sys.getenv("R_LIBS_USER"),
+  recursive = TRUE, showWarnings = FALSE)'
+```
+
+Second, tell R where to download packages from. CRAN offers packages for Linux only as source code, which R would have to compile on your computer, and for the large packages we use that takes a very long time. Posit, the company behind Positron, runs a copy of CRAN in which the same packages are already built for Ubuntu 26.04. The following command makes that copy R's default by adding four lines to `~/.Rprofile`, a file R runs every time it starts. Copy all six lines, from `cat` to `EOF`, and paste them together:
+
+```bash
+cat >> ~/.Rprofile << 'EOF'
+options(timeout = 600, repos = c(CRAN =
+  "https://p3m.dev/cran/__linux__/resolute/latest"))
+options(HTTPUserAgent = sprintf("R/%s R (%s)", getRversion(),
+  paste(getRversion(), R.version$platform, R.version$arch, R.version$os)))
+EOF
+```
+
+The `timeout` part allows each download ten minutes instead of R's default of one, which is too short for the larger packages on a slow connection. The `HTTPUserAgent` part tells the server which version of R you run, so that it sends the ready-built packages instead of source code.
+
+Third, install the system libraries those packages rely on, plus a few small ones that packages we may add later are likely to need:
+
+```bash
+sudo apt install -y cmake libcurl4-openssl-dev libssl-dev libxml2-dev \
+  libfontconfig1-dev libfreetype-dev libharfbuzz-dev libfribidi-dev \
+  libpng-dev libjpeg-dev libtiff-dev libwebp-dev libicu-dev libuv1-dev \
+  libpq-dev libgit2-dev libglpk-dev libsodium-dev libx11-dev libcairo2-dev
+```
+
+# Python
+
+Ubuntu 26.04 ships with Python 3.14, which is the current stable series, so there is nothing new to download. We only add `pip` (the package installer), `venv` (virtual environments) and `python3-dev`, which R needs later in order to run Python code:
+
+```bash
+sudo apt install -y python3 python3-pip python3-venv python3-dev
+python3 --version
+```
+
+Note that the command is `python3`, not `python`. Ubuntu maintains its own build of Python, so the last digit of the version may be slightly behind the one on python.org. That's fine.
+
+# PostgreSQL
+
+The PostgreSQL project maintains its own repository for Ubuntu, which always has the newest release. Add it and install PostgreSQL 18:
+
+```bash
+sudo apt install -y postgresql-common
+sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh
+sudo apt install -y postgresql-18
+```
+
+The second command asks you to press Enter to confirm. The database server starts on its own after installation and again every time Ubuntu starts. Check that it is running:
+
+```bash
+pg_lsclusters
+```
+
+You should see a line for version `18`, cluster `main`, port `5432`, with status `online`. If the status is `down`, start the server with `sudo systemctl start postgresql`.
+
+Out of the box, only the administrative user `postgres` can connect. Create a database user with your Ubuntu username, and a database with the same name:
+
+```bash
+sudo -u postgres createuser --superuser $USER
+createdb $USER
+```
+
+If the first command prints a warning that begins with `could not change directory to`, ignore it. The user was still created.
+
+From now on `psql` connects without any extra options:
+
+```bash
+psql -c "SELECT version();"
+```
+
+This should print one row beginning with `PostgreSQL 18`. Typing `psql` alone opens the interactive SQL prompt and `\q` quits it.
+
+# Quarto
+
+Quarto is not in any Ubuntu repository. Download the latest release from quarto.org and install it:
+
+```bash
+ARCH=$(dpkg --print-architecture)
+wget https://quarto.org/download/latest/quarto-linux-$ARCH.deb
+sudo apt install -y ./quarto-linux-$ARCH.deb
+rm quarto-linux-$ARCH.deb
+```
+
+The first line detects whether your computer has an Intel/AMD processor (`amd64`) or an ARM processor (`arm64`), so that the right file is downloaded.
+
+Check the installation:
+
+```bash
+quarto --version
+quarto check
+```
+
+`quarto check` lists everything Quarto can find on your computer, and should show the R and Python you just installed. It may also tell you that Jupyter (for Python) and the `knitr` package (for R) are not installed yet. `knitr` is installed later, in "03_software_setup_common.qmd", and Jupyter is not needed for this course's setup.
+
+# Positron
+
+Positron is the editor (IDE) we use for R, Python and Quarto. It is a desktop application, so how you install it depends on where your Ubuntu lives.
+
+## Ubuntu inside WSL on Windows
+
+Positron is installed on the Windows side and connects to your Ubuntu from there. Do not install the Linux version inside WSL.
+
+1. Open <https://positron.posit.co/download.html> in your Windows browser, accept the license, download the Windows "x64 User install" file and run it.
+2. Open Positron and press Ctrl+Shift+P to bring up the Command Palette. Type "WSL" and choose the command that connects to WSL, selecting `Ubuntu-26.04` as the distribution. It should be "connect to WSL"
+3. The first connection takes a minute or two, because Positron installs a helper program inside Ubuntu. When it is done, the bottom-left corner of the window shows that you are connected to WSL.
+
+From then on, everything Positron runs (R, Python, the terminal) runs inside Ubuntu, using the software you installed above. Positron comes with its own copy of Quarto. We installed Quarto separately so that the `quarto` command also works in the terminal.
+
+::: {.callout-note}
+## WSL Users: 
+IMPORTANT: EVERY TIME YOU START POSITRON YOU MUST DO STEP 2 ABOVE i.e., Ctrl+Shift+P  and type "WSL" and choose "connect to WSL". OTHERWISE NOTHING WILL WORK AT ALL!
+:::
+
+## If Ubuntu was installed directly on your computer
+
+If you already completed the Positron installation above, skip this section!
+
+Open <https://positron.posit.co/download.html> in your browser, accept the license and download the "Debian/Ubuntu x64" file. If `dpkg --print-architecture` prints `arm64` on your computer, download the "Debian/Ubuntu ARM64" file instead. Then install the file you downloaded:
+
+```bash
+sudo apt install -y ~/Downloads/Positron-*.deb
+```
+
+Start Positron from the applications menu, or by typing `positron` in a terminal.
+
+
+
+# Continue with the common setup
+
+Continue now with "03_software_setup_common.qmd". It installs the R and Python packages we use in the course and sets up Quarto to run R and Python in the same document. Those steps are the same on Ubuntu and on a Mac.
+
+# Updating later
+
+- R, Python and PostgreSQL are updated together with the rest of Ubuntu whenever you run `sudo apt update && sudo apt full-upgrade`.
+- To update Quarto, repeat the commands in the Quarto section.
+- To update Positron on Ubuntu, download the new `.deb` file and install it the same way. On Windows, Positron offers updates by itself.
