@@ -46,18 +46,26 @@ Open File → Preferences → Keyboard Shortcuts, or press Ctrl+K and then Ctrl+
 In the search box, type "Run Selected Text In Active Terminal".
 Click the pencil icon next to that command, press the keys you want (for example Ctrl+Alt+Enter), then press Enter. You don't want to use Ctrl+Enter as this will conflict with R later.
 
-We first create a subfolder for scratch work for this lecture and move there using `mkdir` (make [new] directory [if it doesn't exist]) and `cd` (change directory). The `~` is a useful shortcut; it means "home directory". We will verify we are in the right place using `pwd` (print [the] working directory).
+We first create a subfolder for scratch work for this lecture and move there using `mkdir` (make [new] directory [if it doesn't exist])  The `~` is a useful shortcut; it means "home directory". W
 
 ```bash
-# -p also creates the parent folders if they don't exist already
-mkdir -p ~/workspace/HUJI_52002_Fall_2026/scratch/lec01
+mkdir -p ~/workspace/HUJI_52002_Fall_2026/scratch/lec01 # -p also creates the parent folders if they don't exist already
+```
+
+and `cd` (change directory) into this new directory
+
+```bash
 cd ~/workspace/HUJI_52002_Fall_2026/scratch/lec01
 pwd
 ```
 
-The file system is a tree. You / the linux prompt are always "in" one directory, called the **working directory**.
+The file system is a tree. You  (via the linux prompt) are always "in" one directory, called the **working directory**. Let's verify we are in the right directory using `pwd` (print [the] working directory).
 
-# Setup: practice data
+```bash
+pwd
+```
+
+# Download data
 
 We will start with `covid.csv`, from the New York Times' public repository of COVID-19 data. The file tracks COVID-19 in the United States during 2020: each row gives one county on one day, with the total cases and deaths reported there up to that day. It has about 885,000 rows and takes about 35 MB.
 
@@ -92,8 +100,8 @@ ls
 ls -l           #list with "l"ong details
 ls -l -h        #+ list with "h"uman readable file sizes
 ls -l -h -a     #+ list "a"ll including hidden files
-ls -lha         #`ls -lha` is the same as `ls -l -h -a`
-ls -lhaS        #my go-to as it also sorts by size
+ls -lha         #`ls -lha` is the same as `ls -l -h -a` this is my go-to 
+ls -lhaS        #my other go-to as it also sorts by size
 ```
 
 The . and .. are "hidden" and signify special directory entries known as "hard links" that act as shortcuts for file system navigation. The `.` is the current directory. We will use it soon. The `..` is the parent directory e.g.
@@ -116,6 +124,7 @@ This fails because there is no `lec01` directory in the root:
 ```bash
 ls /
 ```
+
 The following is the listing of all files and directories from the root. If you're a sysadmin, you'll be using logs in the root folder `var` a lot and installing programs to `bin` and `opt`. But this is not a class in linux sysadmin - we only need to know what's useful for the data world.
 
 A **relative path** starts from where you are i.e. beginning with pwd. So
@@ -144,23 +153,19 @@ Keyboard habits that save hours:
 
 | Key | What it does |
 |-----|--------------|
-| Tab | Completes file and command names. Press twice to see options. |
+| Ctrl+L or `clear` | Clear the screen |
+| Tab | Completes file and command names e.g. wc co<tab> Press twice to see options. |
 | ↑ / ↓ | Scroll through previous commands |
 | Ctrl+R | Search your command history (Enter to run, Ctrl+R again to get previous, Ctrl+G to clear) |
 | Ctrl+C | Stop the running command |
-| Ctrl+L or `clear` | Clear the screen |
 | Ctrl+U | Clear the line |
 
 ```bash
-history       # list your recent commands
-```
-
-Two more commands for finding your way:
-
-```bash
+history             # list your recent commands
 which python3       # where is this program installed?
-echo $HOME          # print a variable: your home directory
+echo $HOME          # print a variable: your home directory (what "~" means)
 echo $PATH          # the directories searched for programs
+echo $PATH | grep "bigdata" #we will see what this means later
 ```
 
 The PATH variable is pretty important. You will be adding directories to it for convenience at times so you don't need to specify absolute path each time you want to run a new program you installed.
@@ -169,14 +174,28 @@ The PATH variable is pretty important. You will be adding directories to it for 
 
 ```bash
 touch notes.txt             # create an empty file (or update its timestamp)
+ls -alhS
 cp notes.txt notes2.txt     # copy a file
+ls -alhS
 mkdir tmp_dir               # make a directory (we've seen this before)
+ls -alhS
 cp -r tmp_dir tmp_dir_copy  # copy a directory (-r = recursive)
+ls -alhS
 mv notes2.txt tmp_dir/      # move a file to another folder
+ls -alhS
+ls tmp_dir/ -alhS
 mv tmp_dir/notes2.txt .     # move it to the working directory (that `.`!)
+ls -alhS
 mv notes.txt my_notes.txt   # rename (via moving to a new name)
+ls -alhS
 rm notes.txt                # delete a file
-rm -r tmp_dir               # delete a directory and everything in it
+ls -alhS
+rm notes2.txt my_notes.txt  # delete multiple files
+rm -r tmp_dir               # delete a directory and everything in it (r is for "recursive" which is needed)
+ls -alhS
+rm tmp_dir_copy             # fails
+rm -r tmp_dir_copy 
+ls -alhS
 ```
 
 ::: {.callout-warning}
@@ -191,12 +210,11 @@ touch tmp.csv file_1.txt file_2.txt file_10.tex   # touch takes several names
 ls *.csv            # * matches any run of characters, including none
 ls file_?.txt       # ? matches exactly one character: file_1.txt, not file_10
 ls file_[12].txt    # [...] matches one character from the set
-ls file_[0-9].*     # ranges work too; here the suffix can be anything
+ls file_[0-9].*     # ranges work too plus other wildcards (the suffix can be anything)
 ls file_[!1]*       # [!...] matches one character NOT in the set
 ls *_1*             # wildcards can go anywhere in the name
 ls file_{1,10}.*    # {a,b} is not a wildcard: the shell writes out both names
-ls -d */            # directories only (the trailing / matters)
-echo *.csv          # see what a pattern expands to before using it with rm
+echo file_{1,10}.*  # see what a pattern expands to before using it with rm
 ```
 
 The shell expands a pattern into the matching names *before* the command runs, so `ls *.csv` is really `ls covid.csv tmp.csv`, and `ls *` alone lists the contents of every subdirectory too. Patterns never match names that start with a dot (hidden files) unless you write the dot yourself.
@@ -204,12 +222,12 @@ The shell expands a pattern into the matching names *before* the command runs, s
 **Finding files:** `find` walks a directory tree and prints every file that passes the tests you give it. The first argument is where to start; everything after it is a test.
 
 ```bash
-find ~ -name "*.csv"        # all csv files anywhere under my home directory
-                            # (your list will differ; I have a lot of them)
-find . -name "*.csv"        # the same, but only under the working directory
+find . -name "*.csv"        # find CSV files in the working directory and its subdirectories
+find ~ -name "*.csv"        # all csv files anywhere under my home directory and its subdirectories
+                            # (your list will differ; I have a lot of files in my WSL as I use it for all my projects)
 find . -type f              # only files...
 find . -type d              # ...or only directories
-find . -maxdepth 1 -type f  # don't descend into subdirectories
+find ~ -maxdepth 1 -type f  # don't descend into subdirectories
 find . -size +10M           # files bigger than 10 MB
 find . -size -1k            # files smaller than 1 KB (the ones we touched)
 find . -empty               # empty files and directories
@@ -229,19 +247,15 @@ find . -type f -not -name "*.csv"         # everything except csv files
 Once `find` has the files, it can do something with them. `-exec` runs a command on each result, with `{}` standing for the file name:
 
 ```bash
-find . -name "*.txt" -ls                  # long listing, like ls -l
-find . -name "*.txt" -exec wc -l {} \;    # count lines in each file. The {} is a placeholder for the specific file at hand.
-find . -name "*.txt" -delete              # delete every match (no asking!)
+find . -name "*.txt" -delete              # delete every match (no confirmation given)
+ls -alhS
 rm -i *.tex                               # ask before each deletion
 ```
 
-The `\;` ends the command (the backslash stops the shell from treating `;` as the end of the `find` command itself) and `+` collects all results into a single call of the command.
-
-Searching from `/` reaches directories you are not allowed to read, which produces error messages. Send them away with `2>/dev/null` (more on that later):
+Searching from `/` reaches directories you are not allowed to read, which produces error messages.
 
 ```bash
-find / -name "Rscript"
-find / -name "Rscript" 2>/dev/null   # where is R? (like which, for any file)
+find / -name "*.csv*"
 ```
 
 Every program has two separate output channels:
@@ -249,18 +263,87 @@ Every program has two separate output channels:
 - stdout (channel 1) carries normal results, such as the file names find prints.
 - stderr (channel 2) carries error messages, such as "find: '...': Permission denied."
 
-Both go to your screen by default, so they look the same. They are separate streams, though, and the program chooses which one to write each line to. find writes matches to stdout and complaints to stderr.
+Both go to your screen by default, so they look the same. They are separate streams, though, and the program chooses which one to write each line to. find writes matches to stdout and complaints to stderr. So we want to filter out the errors
 
-In 2>/dev/null, the 2> means "send channel 2 somewhere else", and /dev/null is a special file that throws away anything written to it. Everything on channel 2 is discarded, and channel 1 is untouched.
+```bash
+find / -name "*.csv*" 2>/dev/null   # no more clutter from looking at useless directories
+```
 
-**Permissions.** 
+In 2>/dev/null, the 2> means "redirect channel 2 somewhere else", and /dev/null is a special file that throws away anything written to it. Everything on channel 2 is discarded, and channel 1 is untouched.
 
 
-In the output of `ls -l`, the first column looks like `-rwxr-xr--`: read, write, and execute permissions for the owner, the group, and everyone else.
+**Redirects.** A **redirect** sends a command's input or output somewhere other than the keyboard and screen. The symbols are `>` (send output to a file), `>>` (add output to the end of a file), `2>` (send the error channel to a file) and `<` (read input from a file). The command itself doesn't change, only where its output goes:
+
+```bash
+echo "hello"                 # prints hello on the screen
+echo "hello" > notes.txt     # redirect into a file so nothing printed to terminal because it went into notes.txt
+ls -alh
+cat notes.txt                # cat is "concatenate" which is used mostly to not concatenate but print to screen instead
+echo "again" >> notes.txt    # >> adds the object of redirection to a new line at the end (i.e. "new line append")
+wc -l notes.txt
+cat notes.txt
+echo "oops" > notes.txt      # > replaces the contents: no warning!
+cat notes.txt 
+```
+
+Redirects work with any command, and a redirected file is created if it doesn't exist:
+
+```bash
+ls > listing.txt             # save a directory listing
+cat listing.txt
+date > today.txt             # save the current date and time
+cat today.txt
+cat notes.txt notes.txt > twice.txt   # join files into a new file (the original intent of the cat command)
+cat twice.txt
+ls /nonexistent
+ls /nonexistent > err.txt   #can we redirect this output?
+cat err.txt                 #no, because redirect by default is stdout, not stderr, it's short for 1>
+ls /nonexistent 2> err.txt   # save the error message instead of showing it
+cat err.txt
+ls . /nonexistent
+ls . /nonexistent > out.txt
+cat out.txt
+ls . /nonexistent 1> out.txt
+cat out.txt
+ls . /nonexistent 1> out.txt 2> err.txt      # results and errors in two different files
+cat out.txt
+cat err.txt
+ls . /nonexistent > all.txt 2>&1      # results and errors in one file the &1 says direct to where 1 went
+cat all.txt
+```
+
+**A first shell script.** A shell script is a text file of commands that the shell runs one after another, so a sequence you would otherwise retype can be saved and rerun. Here is the smallest useful one: a file `my_script.sh` with a single line, `touch file1.txt`, which creates an empty file.
+
+```bash
+echo "touch file1.txt" > my_script.sh   # sh is the standard extension for "shell script"
+                                        # although it is not necessary to name it so, it's a good convention though
+cat my_script.sh                        # touch file1.txt
+ls -alhS                                # file1.txt doesn't exist yet
+```
+
+Now let's run this script by giving it to "bash" (Bourne Again SHell). Each line must be either (a) a valid Linux command or (b) a bash command which is a small programming language itself. 
+
+```bash
+bash my_script.sh 
+ls -alhS
+```
+
+A script can contain commands like ls and grep, and also bash syntax: variables (name="Ada"), if/for/while, &&, $(...), functions and comments. Those aren't separate programs. They are part of bash itself. 
+
+
+
+
+
+
+./my_script.sh                          # error: Permission denied (see below)
+
+The last line fails because the file is not marked as something the computer may run. That is what permissions control, and we fix it next. (We write a more useful script later in this lecture.)
+
+**Permissions.** In the output of `ls -l`, the first column looks like `-rwxr-xr--`: read, write, and execute permissions for the owner, the group, and everyone else.
 
 ```bash
 ls -lha
-chmod +x myscript.sh    # make a script executable (we write one below)
+chmod +x my_script.sh   # make it executable: ./my_script.sh now works
 sudo apt install htop   # run one command as administrator
 ```
 
