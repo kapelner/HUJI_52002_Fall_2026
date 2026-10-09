@@ -9,7 +9,9 @@ format:
     embed-resources: true
 ---
 
-These steps install Ubuntu 26.04 LTS inside the Windows Subsystem for Linux (WSL 2), so you have a real Linux command line on your Windows laptop. They work on Windows 11, or Windows 10 version 2004 or later. Mac users can skip this guide.
+Mac users skip this guide.
+
+These steps install Ubuntu 26.04 LTS inside the Windows Subsystem for Linux (WSL 2), so you have a real Linux command line on your Windows laptop in a lightweight virtual machine. It is *nearly* the same thing as having your computer actually natively boot into Linux. Unless you're doing really bare metal profiling operations in the memory or CPU, you won't be able to tell the difference. There is one important exception: since your disk is a virtual file stored on your C: drive, and Windows files under `/mnt/c` are much slower to read and write, so keep your work in your Linux file system folders.
 
 # Open PowerShell as Administrator
 
@@ -77,8 +79,10 @@ WSL gives you access to your regular windows file system and the windows file sy
 
 - Files under `/mnt/c` are on the Windows side and are much slower to read from Linux.
 - Files edited on the Windows side can pick up Windows line endings, which break bash scripts.
+- Files you delete in WSL Ubuntu don't shrink the `.vhdx` file on your C drive by themselves. It grows and doesn't give space back until you compact it, with `wsl --shutdown` followed by `Optimize-VHD` in an administrator PowerShell (or `diskpart`).
 
 You can browse your Linux files from Windows File Explorer at `\\wsl$\Ubuntu-26.04\home\<your-username>`.
+
 
 # If you already have an older Ubuntu in WSL
 

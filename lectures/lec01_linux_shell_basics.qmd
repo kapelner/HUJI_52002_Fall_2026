@@ -10,20 +10,6 @@ format:
     embed-resources: true
 ---
 
-# Plan for the session {.unnumbered}
-
-| Time | Topic | Commands |
-|------|-------|----------|
-| 0–10 | Anatomy of a command, getting help | `man`, `--help`, Tab, history, Ctrl+C, `clear` |
-| 10–25 | Moving around | `pwd`, `ls`, `cd`, `which`, `echo` |
-| 25–45 | Managing files | `mkdir`, `touch`, `cp`, `mv`, `rm`, wildcards, `find`, `chmod`, `sudo` |
-| 45–55 | Editing in the terminal | `vi` |
-| 55–65 | *Break* | |
-| 65–85 | Looking at data without opening it | `cat`, `less`, `head`, `tail`, `wc`, `column`, `du`, `df`, `file`, `time` |
-| 85–110 | Redirection, pipes, `grep` and regular expressions | `>`, `>>`, `2>`, `<`, `tee`, <code>&#124;</code>, `grep`, `cut`, `sort`, `uniq` |
-| 110–130 | Shell scripts | variables, quotes, `&&`, <code>&#124;&#124;</code>, `$?`, `for`, `if`, `PATH`, `alias` |
-| 130–150 | Processes | `ps`, `htop`, `top`, `free`, `nproc`, `kill`, `&`, `jobs`, `fg`, `bg`, `nohup` |
-| 150–155 | Wrap-up | |
 
 ::: {.callout-note}
 ## Mac users
@@ -67,7 +53,7 @@ pwd
 
 # Download data
 
-We will start with `covid.csv`, from the New York Times' public repository of COVID-19 data. The file tracks COVID-19 in the United States during 2020: each row gives one county on one day, with the total cases and deaths reported there up to that day. It has about 885,000 rows and takes about 35 MB.
+We will start with `covid.csv`, from the New York Times' public repository of COVID-19 data. The file tracks COVID-19 in the United States during 2020: each row gives one county on one day, with the total cases and deaths reported there up to that day. It has about 885,000 rows and takes about 35 MB. We won't use it until much later in this lecture except trivially.
 
 Our first "real" linux command is `curl` (client URL) which downloads whatever is at the web address (a URL) you supply. 
 
@@ -97,11 +83,19 @@ Now let's make sure the `curl` actually worked i.e. downloaded the website and n
 
 ```bash
 ls
-ls -l           #list with "l"ong details
-ls -l -h        #+ list with "h"uman readable file sizes
-ls -l -h -a     #+ list "a"ll including hidden files
-ls -lha         #`ls -lha` is the same as `ls -l -h -a` this is my go-to 
-ls -lhaS        #my other go-to as it also sorts by size
+ls -l           # list with "l"ong details (default sort is by alphabetical order)
+ls -l -h        # + list with "h"uman readable file sizes
+ls -l -h -a     # + list "a"ll including hidden files
+ls -lha         # `ls -lha` is the same as `ls -l -h -a` this is my go-to 
+ls -lhaS        # my other go-to as it also sorts by size (directory links are 4KB - interesting)
+ls -lht         # newest file first (t = sort by time)
+ls -lhtr        # oldest first (r reverses any of these)
+```
+
+And type of file is it (the filename can lie)?
+
+```bash
+file covid.csv            
 ```
 
 The . and .. are "hidden" and signify special directory entries known as "hard links" that act as shortcuts for file system navigation. The `.` is the current directory. We will use it soon. The `..` is the parent directory e.g.
@@ -148,6 +142,13 @@ wc -l covid.csv                # count the number of lines in the file
 wc -lwmc covid.csv             # count the number of lines, words, characters, bytes in the file
 ```
 
+How long does a command take? Put `time` in front of it:
+
+```bash
+time wc -l covid.csv
+```
+
+`real` is the wall-clock time. We'll use `time` to compare methods as well as other profiling techniques throughout the semester.
 
 Keyboard habits that save hours:
 
@@ -169,6 +170,17 @@ echo $PATH | grep "bigdata" #we will see what this means later
 ```
 
 The PATH variable is pretty important. You will be adding directories to it for convenience at times so you don't need to specify absolute path each time you want to run a new program you installed.
+
+
+How much space are things taking?
+
+```bash
+du -sh .                                            # total size of this directory
+du -sh ~/workspace/HUJI_52002_Fall_2026             # or of any directory of interest
+du -h -d 1 ~/workspace/HUJI_52002_Fall_2026         # size of each subdirectory in repo root, one level deep
+df -h                     # free space on every disk and partition (note tmp goes in RAM - clear it regularly!!)
+df -h ~                   # free space on the disk holding your home directory (what you actually care about)
+```
 
 # Managing files
 
@@ -236,7 +248,7 @@ find . -mtime +7            # modified more than 7 days ago
 find . -newer covid.csv     # modified after covid.csv was
 ```
 
-Several tests in a row must all hold. Use `-o` for "or" and `-not` to negate:
+Several tests in a row must all hold. Use `-o` for "or" and `-not` to negate. `find` is like its own mini programming language.
 
 ```bash
 find . -type f -name "*.csv" -size +1M    # all three must hold
@@ -312,42 +324,209 @@ ls . /nonexistent > all.txt 2>&1      # results and errors in one file the &1 sa
 cat all.txt
 ```
 
+More about `cat`... It can take a filename as we saw. But it can also take input from the keyboard:
+
+```bash
+cat                              # start typing... until CTRL+D
+cat > keyboard_input.txt         # take the keyboard input as stdin and redirect it as stdout to afile
+ls -alh
+cat keyboard_input.txt
+```
+
+First we will introduce multiline strings. They begin with an arbitrary string which denote the end of input. This is usually
+'EOF' (for "end of file"). Thus EOF terminates the input. The "<<" is a redirection in the opposite direction from before. 
+Here it is fed in.
+
+```bash
+cat << 'EOF'
+line 1
+line 2
+line 3
+EOF
+```
+
+Now the following would make sense, but it ruins the "EOF" delimiter 
+
+```bash
+cat << 'EOF' ####don't run this
+line 1
+line 2
+line 3
+EOF > stream_input.txt
+```
+
+So we can direct the output of cat as the first argument
+
+```bash
+cat > stream_input.txt << 'EOF'
+line 1
+line 2
+line 3
+EOF
+ls -alh
+cat stream_input.txt
+```
 **A first shell script.** A shell script is a text file of commands that the shell runs one after another, so a sequence you would otherwise retype can be saved and rerun. Here is the smallest useful one: a file `my_script.sh` with a single line, `touch file1.txt`, which creates an empty file.
 
 ```bash
 echo "touch file1.txt" > my_script.sh   # sh is the standard extension for "shell script"
                                         # although it is not necessary to name it so, it's a good convention though
 cat my_script.sh                        # touch file1.txt
-ls -alhS                                # file1.txt doesn't exist yet
 ```
 
-Now let's run this script by giving it to "bash" (Bourne Again SHell). Each line must be either (a) a valid Linux command or (b) a bash command which is a small programming language itself. 
+Now let's run this script by giving it to "bash" (Bourne Again SHell) which just runs each line:
 
 ```bash
 bash my_script.sh 
 ls -alhS
 ```
 
-A script can contain commands like ls and grep, and also bash syntax: variables (name="Ada"), if/for/while, &&, $(...), functions and comments. Those aren't separate programs. They are part of bash itself. 
+Let's learn some of basic bash syntax: variables (name="Ada"), if/for/while, &&, $(...), functions and comments (#). You can also use these at the linux prompt. We will upgrade `my_script.sh` into a short tour of the main bash features.
 
+```bash
+cat > my_script.sh << 'EOF'
+#!/usr/bin/env bash
+# this is a comment
+# but that first line is not a comment. It is called the "shebang" (scroll below)
+name="HUJI"                           # a variable: no spaces around =
+echo "Hello, $name"                   # $name is replaced inside " "
+echo 'Hello, $name'                   # but not inside ' '
+echo "Today is $(date +%F)"           # $(...) pastes in a command's output "date +%F" prints out YYYY-MM-DD format
+echo "This script is called $0"       # $0 is the script's own name, it's preset special variable
+echo "I got $# arguments; the first is $1"   # $# counts them, $1 is first, another preset special variable, $2 is second, etc
+if [ -f file1.txt ]; then             # test: does the file exist?
+  echo "file1.txt exists"
+else
+  echo "file1.txt is missing"
+fi                                    # close out the if-else with "fi"
+for i in 1 2 3; do                    # repeat for each item in a list
+  echo "round $i"
+done
+greet() {                             # declare a function: a named block of commands, arguments are optional
+  echo "Hi, $1!"                      # if there's a first argument
+}
+greet
+greet Bob                             
+greet Bob Alex
+EOF
+bash my_script.sh                     # run it
+bash my_script.sh 52002 52019         # run it with two arguments: $1 $2 ...
+```
 
+**The shebang.** The first line, `#!/usr/bin/env bash`, is called the **shebang** (from "sharp" `#` and "bang" `!`). It tells the system which program should run the file when you execute it directly, as we will see below. For a Python script it would be `#!/usr/bin/env python3`, and for an R script `#!/usr/bin/env Rscript`. A few details:
 
+- It must be the very first line of the file: no blank line or space before it.
+- `env bash` means "find `bash` wherever it is installed on this computer". Executable programs need absolute paths. That is more portable than writing a fixed path like `#!/bin/bash`, because the location differs between systems (for example on a Mac with a newer bash from Homebrew).
+- When you run `bash my_script.sh`, you already chose the program yourself, so bash treats the line as an ordinary comment, because it starts with `#`.
 
+Now run the script as an "executable program" instead of handing it to bash. This has a few advantages
+* you don't need to know what program executes the code inside (the shebang handles it)
+* you can set this program in PATH and access it globally
+* other programs can call this program easily
 
+Let's try it:
 
-./my_script.sh                          # error: Permission denied (see below)
+```bash
+./my_script.sh                        # error: Permission denied (see below)
+```
 
 The last line fails because the file is not marked as something the computer may run. That is what permissions control, and we fix it next. (We write a more useful script later in this lecture.)
 
-**Permissions.** In the output of `ls -l`, the first column looks like `-rwxr-xr--`: read, write, and execute permissions for the owner, the group, and everyone else.
+**Permissions.** In the output of `ls -l`, the first column has a string which is always 10 characters: one for the type of item, then three groups of three. Then there are two strings which tell you who is the owner and which group has rights
+
+```bash
+ls -alh
+```
+
+What do these characters mean? The following is the default permissions:
+
+```
+ - rw- r-- r--
+ | |   |   |
+ | |   |   +-- 8-10: permissions for everyone else ("other")
+ | |   +------ 5-7:  permissions for the group (we won't go into this)
+ | +---------- 2-4:  permissions for the owner (the user who owns the file)
+ +------------ 1:    the type of item (`-` for ordinary file, `d` for directory, `l` for links which we may use later)
+```
+
+Am I "kapelner"?
+
+```bash
+whoami
+```
+
+When using the prompt you are a user and that user has certain permissions for each file and directory. For "real" servers, there are tons of users on the same system, so security becomes more important.
+
+The three letters of each group always come in the order `r`, `w`, `x` and `-` means not granted.
+
+|   | on a file | on a directory |
+|---|-----------|----------------|
+| `r` | read the contents (`cat`, `head`) | list the names inside (`ls`) |
+| `w` | change the contents | create, delete and rename files inside |
+| `x` | run it as a program | enter it (`cd`) and reach the files inside |
+
+Some strings you will meet:
+
+| String | What it means |
+|--------|---------------|
+| `-rw-r--r--` | an ordinary file: the owner can read and write, everyone else can only read |
+| `-rwxr-xr-x` | a program: everyone can run it, only the owner can change it |
+| `drwxr-xr-x` | a directory: everyone can enter and list it, only the owner can change it |
+| `-rw-------` | a private file: only the owner can touch it (for passwords and keys) |
+
+The file `my_script.sh` we just created is `-rw-r--r--`. Nobody has an `x`, which is exactly why `./my_script.sh` said `Permission denied`. We need to "change its mode" via `chmod`
 
 ```bash
 ls -lha
-chmod +x my_script.sh   # make it executable: ./my_script.sh now works
-sudo apt install htop   # run one command as administrator
+chmod +x my_script.sh   # make it executable for everyone:
+ls -lha
+./my_script.sh          # now executes
 ```
 
-`sudo` asks for your Linux password. Use it only when a command needs it, typically for installing software.
+If this is my private script then, I want to make sure nobody else has access
+
+```bash
+chmod 600 my_script.sh  # the "600" controls the locations of the permissions - read about it if you care
+                        # I've memorized a few of these numeric codes
+ls -lha                 #now only i can read and write
+chmod u+x my_script.sh  #and only i can execute
+ls -lha
+./my_script.sh          # now executes
+```
+
+If this can be used and edited by everyone (not usually recommended), then
+
+```bash
+chmod 777 my_script.sh
+ls -lha
+```
+
+Let's talk about the root user (or "super" user, the administrator of the machine). You will definitely 
+need to know about this. For example:
+
+```bash
+ls -l /etc/security/limits.conf
+```
+
+This file controls resource limits and may need to be changed for certain big data
+operations. It makes sense only the server admin should be able to change this. Look at the owner and the 
+permissions. What does this grant me?
+
+
+Let's try adding my setting to it
+
+```bash
+echo "my special new line" >> /etc/security/limits.conf
+```
+
+No. I don't have rights. Can I give myself access?
+
+```bash
+chmod a+w /etc/security/limits.conf
+```
+
+No, I'm not the owner.
+
 
 # Editing in the terminal
 
@@ -361,7 +540,7 @@ Vi, by about two to one. In the 2025 Stack Overflow Developer Survey, 24.3% of d
 However, it has a learning curve. It has **modes**, which is what confuses everyone at first.
 
 ```bash
-vi notes.txt
+vi covid.csv
 ```
 
 The survival kit:
@@ -371,14 +550,20 @@ The survival kit:
 | `i` | Enter insert mode: now you can type |
 | Esc | Leave insert mode |
 | `:set nu` +Enter | Add line numbers |
-| `:777` +Enter | Go to line #777 |
+| `:7` +Enter | Go to line #7 |
+| `gg` | Go to the top of the file |
+| `G` | Go to the bottom of the file |
+| Ctrl+F | Go down one page (forward) |
+| Ctrl+B | Go up one page (back) |
 | `:w` +Enter | Save |
 | `:q` +Enter | Quit |
 | `:wq` +Enter | Save and quit |
 | `:q!` +Enter | Quit **without** saving |
 | `/word` +Enter | Search for "word" (`n` for next match) |
-| `d3` | Delete 3 lines |
+| `d3` | Delete 3 lines (`dd` alone deletes one) |
 | `u` | Undo |
+
+The moving keys (`gg`, `G`, Ctrl+F, Ctrl+B) work when you are not in insert mode, so press Esc first.
 
 If you're ever stuck in `vi`, press Esc a few times, then type `:q!` and Enter.
 
@@ -387,9 +572,36 @@ If you're ever stuck in `vi`, press Esc a few times, then type `:q!` and Enter.
 `vimtutor` is a 30-minute interactive vi tutorial. On Ubuntu, install it with `sudo apt install vim`.
 :::
 
+Back to permissions. What if I need to edit a file that only the administrator can edit?
+
+```bash
+vi /etc/security/limits.conf
+```
+
+You need to use "sudo" (i.e. super user do)
+
+```bash
+sudo vi /etc/security/limits.conf
+```
+
+Now of course, you need to be a super user to do this. The administrator gave it to you, 
+or you set up the machine yourself. If its your MAC or you set up WSL. This is the case.
+Later in the semester, when we login to the university's machines, maybe not, unless they're
+giving you a carved out virtual environment. We will see later.
+
+You've seen `sudo` during your setup. You used it to update and install programs e.g. this will
+go to ubuntu's servers (and whatever other servers that catalog programs) and see if you have
+any updates available for what you have installed. The next line will do upgrades on anything
+that needs updating.
+
+```bash
+sudo apt update
+sudo apt upgrade #if necessary
+```
+
 # Looking at data without opening it
 
-This is the most important section for big data. A file can be far larger than what you want to (or can) load into memory, but you can still look at it.
+This is an important section for big data. A file can be far larger than what you want to (or can) load into memory, but you can still look at it.
 
 We will now return to our downloaded file. The columns are `date`, `county`, `state`, `fips` (a numeric code for the county), `cases` and `deaths`. Source: The New York Times, based on reports from state and local health agencies, <https://github.com/nytimes/covid-19-data>.
 
@@ -399,157 +611,34 @@ less covid.csv        # scroll through a file (q quits, / searches)
 head covid.csv        # first 10 lines
 head -n 3 covid.csv   # first 3 lines
 tail covid.csv        # last 10 lines
-wc -l covid.csv       # count lines
+tail -n 3 covid.csv   # last 3 lines
 ```
 
-::: {.callout-tip}
-## Try it
-Run `cat covid.csv`. Then press Ctrl+C. Now run `head covid.csv` and `tail covid.csv`. Which ones are instant, and why?
-:::
+# Pipes (similar to redirection)
 
-`head` and `tail` take several options, and combining them lets you cut out any slice of a file:
+A redirect connects a command to a **file**. A **pipe** connects a command to **another command**. The symbol is `|`, called the pipe or the vertical bar (on most keyboards it is Shift+Backslash). It sends the stdout of the command on its left into the stdin of the command on its right:
+
+```
+command1 | command2        # command1's output becomes command2's input
+```
+
+Compare the two ways of counting the first three lines of a file:
 
 ```bash
-head -n 1 covid.csv                # just the header line
-tail -n 2 covid.csv                # the last 2 lines
-tail -n +2 covid.csv | head -n 3   # from line 2 on: skips the header
-head -n 1000 covid.csv | tail -n 3 # lines 998-1000: first 1000, then last 3
-head -c 30 covid.csv               # the first 30 bytes, not lines
+head -n 3 covid.csv > first3.txt   # with a redirect: save to a file...
+wc -l < first3.txt                 # ...then feed the file to the next command
+head -n 3 covid.csv | wc -l        # with a pipe: both steps at once, no file
 ```
 
-`wc` counts more than lines, and accepts many files at once:
+Both print 3, but the pipe needs no temporary file, and the second command starts working as soon as the first produces output. A few more small ones:
 
 ```bash
-wc covid.csv          # lines, words and bytes, in that order
-wc -l covid.csv       # lines only
-wc -w covid.csv       # words only
-wc -c covid.csv       # bytes (the file size)
-wc -l *.csv           # one count per file, plus a total
+ls | wc -l                    # how many items are in this folder?
+ls -l | head -n 3             # only the first 3 lines of a long listing
+echo "hello world" | wc -w    # 2: the text from echo became wc's input
 ```
 
-`less` is a small program with its own keys, and a few options:
-
-| Key | What it does |
-|-----|--------------|
-| Space / `b` | Page down / page up |
-| `g` / `G` | Jump to the start / to the end of the file |
-| `/text` +Enter | Search forward for "text" (`n` for next, `N` for previous) |
-| `q` | Quit |
-
-```bash
-less -N covid.csv     # show line numbers
-less -S covid.csv     # no line wrapping (scroll sideways)
-head -n 3 covid.csv | cat -n    # cat can number lines too
-```
-
-To read a CSV comfortably, line up the columns with `column` (the `|` sends one command's output into the next; it is explained below):
-
-```bash
-head covid.csv | column -s, -t    # -s, : fields are separated by commas
-```
-
-`tail -f` keeps showing new lines as they are added to a file, which is how you watch a log of a long-running job. To try it, open a second terminal and run the first line, which adds the date to `logfile.txt` every second. Then, in the first terminal, run the second line. Press Ctrl+C in both when done.
-
-```bash
-while true; do date >> logfile.txt; sleep 1; done    # terminal 2
-tail -f logfile.txt                                  # terminal 1
-```
-
-How much space are things taking?
-
-```bash
-du -sh .                  # total size of this directory
-du -sh ~/workspace/HUJI_52002_Fall_2026   # ...or of any directory you name
-du -h -d 1 .              # size of each subdirectory, one level deep
-du -sh *                  # size of each item here
-du -sh * | sort -h        # ...smallest to largest (sort comes below)
-ls -lh                    # sizes of the files in a listing
-ls -lhS                   # largest file first (S = sort by size)
-ls -lht                   # newest file first (t = sort by time)
-ls -lhtr                  # oldest first (r reverses any of these)
-ls -R                     # list subfolders too (R = recursive)
-df -h                     # free space on every disk
-df -h ~                   # free space on the disk holding your home directory
-```
-
-And what is in a file?
-
-```bash
-file covid.csv            # what kind of file is it? (a file's name can lie)
-stat covid.csv            # size, permissions, timestamps (differs on a Mac)
-```
-
-How long does a command take? Put `time` in front of it:
-
-```bash
-time wc -l covid.csv
-```
-
-`real` is the wall-clock time. We'll use `time` all semester to compare methods.
-
-# Redirection and pipes
-
-By default, output goes to the screen. You can send it to a file instead:
-
-```bash
-echo "hello" > greeting.txt     # write to a file (replaces its contents!)
-echo "again" >> greeting.txt    # append to a file
-cat greeting.txt                # two lines
-echo "oops" > greeting.txt      # > replaced everything: one line again
-cat greeting.txt greeting.txt > twice.txt   # cat joins files: two copies
-head -n 1000 covid.csv > sample.csv         # a small file to experiment on
-head -n 1 covid.csv > header.txt            # save just the header line
-tail -n +2 covid.csv > body.csv             # the data without the header
-```
-
-## Standard output, standard error and standard input
-
-Every command has three channels. **Standard input** (stdin, number 0) is where it reads from, the keyboard by default. **Standard output** (stdout, number 1) is where its results go, the screen by default. **Standard error** (stderr, number 2) is where it reports problems, also the screen by default. Error messages travel on their own channel so that they don't end up mixed into your results.
-
-That has a surprising consequence: `>` only redirects stdout. Errors still appear on the screen. To redirect stderr, put its number in front, `2>`:
-
-```bash
-ls /nonexistent                      # an error message (stderr)
-ls /nonexistent > out.txt            # still on screen: out.txt is empty
-ls /nonexistent 2> err.txt           # now the screen is quiet
-ls . /nonexistent > out.txt 2> err.txt    # results and errors, separately
-ls . /nonexistent > all.txt 2>&1     # both into one file
-ls . /nonexistent &> all.txt         # bash shortcut for the line above
-ls . /nonexistent 2>> err.txt        # append errors, like >>
-```
-
-`2>&1` reads "send channel 2 to wherever channel 1 is going", so it must come *after* the `>` it refers to. Written the other way round, `2>&1 > all.txt`, it sends the errors to the screen instead.
-
-The place to put output you don't want is `/dev/null`, a special file that throws away everything written to it:
-
-```bash
-ls . /nonexistent 2>/dev/null        # hide the errors, keep the results
-ls . /nonexistent > /dev/null        # hide the results, keep the errors
-ls . /nonexistent > /dev/null 2>&1   # hide everything
-```
-
-This is what the `find / -name "Rscript" 2>/dev/null` from earlier was doing: hiding the "Permission denied" errors.
-
-Input can be redirected as well, with `<`:
-
-```bash
-wc -l covid.csv          # prints the count and the file's name
-wc -l < covid.csv        # the file feeds stdin: no name printed
-sort < covid.csv | head -n 3     # the same as: sort covid.csv | head -n 3
-```
-
-The second form is handy when you want the number alone, for example to use in a script (see below).
-
-Finally, `tee` copies its input to a file and also passes it along, like a T-junction in a pipe:
-
-```bash
-head -n 3 covid.csv | tee first3.txt | wc -l    # saves a copy, counts lines
-echo "extra" | tee -a first3.txt                # -a appends, like >>
-```
-
-## Pipes
-
-The **pipe**, `|`, sends the stdout of one command into the stdin of the next. Each command does one small job, and you chain them:
+You can chain as many commands as you like. Each one does one small job:
 
 ```bash
 grep ",California," covid.csv | head    # rows for California, first 10
@@ -569,6 +658,32 @@ ls . /nonexistent 2>&1 | wc -l       # now the error line is counted too
 ## Why this matters for big data
 Pipes process data as a **stream**: each command reads a line, handles it, and passes it on. None of these commands loads the whole file into memory, which is why they work on files much bigger than your RAM. This is the idea behind the one-pass algorithms we'll study later.
 :::
+
+## Input from a file, and `tee`
+
+A pipe feeds a command from another command. To feed a command from a **file** instead, use the input redirect `<`:
+
+```bash
+wc -l covid.csv          # prints the count and the file's name
+wc -l < covid.csv        # the file feeds stdin: no name printed
+sort < covid.csv | head -n 3     # the same as: sort covid.csv | head -n 3
+```
+
+The second form is handy when you want the number alone, for example to use in a script (see below).
+
+Finally, `tee` copies its input to a file and also passes it along, like a T-junction in a pipe:
+
+```bash
+head -n 3 covid.csv | tee first3.txt | wc -l    # saves a copy, counts lines
+echo "extra" | tee -a first3.txt                # -a appends, like >>
+```
+
+
+To read a CSV comfortably, line up the columns with `column` (it is a command that you pipe data into):
+
+```bash
+head covid.csv | column -s, -t    # -s, : fields are separated by commas
+```
 
 ## Searching inside files with grep
 
@@ -703,6 +818,90 @@ Both are patterns, and the characters look alike, but they are different languag
 3. How many rows are for the *state* of Washington? Careful: `grep ",Washington,"` also matches the many counties named Washington.
 4. List the distinct states whose name starts with "New".
 :::
+
+
+`tail -f` keeps showing new lines as they are added to a file, which is how you watch a log of a long-running job. To try it, open a second terminal and run the first line, which adds the date to `logfile.txt` every second. Then, in the first terminal, run the second line. Press Ctrl+C in both when done.
+
+```bash
+cd ~/workspace/HUJI_52002_Fall_2026/scratch/lec01    # terminal 2
+while true; do date >> logfile.txt; sleep 1; done    # terminal 2
+tail -f logfile.txt                                  # terminal 1
+```
+
+What if we forget to close terminal 2?
+
+## Finding and stopping a process
+
+Every running program is a **process** with an ID number (its **PID**). Let's open a third terminal. The command `ps` lists processes:
+
+```bash
+ps                    # your processes in this terminal (not super interesting)
+                      # note "bash" is running - it's the program actually receiving your prompt commands
+ps -u $USER | head    # just your processes, from every terminal
+ps aux | head         # every process on the machine
+```
+
+In `ps aux`, `a` means processes of all users, `u` means a user-oriented format (with the owner, PID, `%CPU`, `%MEM` and command) and `x` includes programs that have no terminal. The list is long, so we use `head`. To find one process by name, filter the list with `grep`:
+
+```bash
+ps aux | grep sleep   # find a process by name (grep filters the list)
+pgrep -a sleep        # the same, simpler: PID and full command of matches
+```
+
+The first command prints something like this (your numbers will differ):
+
+```
+kapelner   4821  0.0  0.0  17664  8064 pts/0  S+  18:02  0:00 sleep 1
+kapelner   4830  0.0  0.0   6716  2560 pts/2  S+  18:02  0:00 grep sleep
+```
+
+The second line is the `grep` command itself, because its own command line contains the word "sleep". `pgrep` leaves itself out, which is one reason to prefer it.
+
+**Why did we search for `sleep` and not for `while`?** There is no program called `while`. The loop is part of the bash language, so it is run by the shell itself, the `bash` in terminal 2. What you can see is the loop's children: every second it starts a new `sleep 1`, which exits after one second, so its PID is different each time you look. What stays the same is the **parent**. Ask `ps` for the parent PID (PPID) of each process, and then look up the parent:
+
+```bash
+ps -axo pid,ppid,command | grep "[s]leep"   # PID, parent PID, command
+#  4821  4702 sleep 1                       # the loop's shell is process 4702
+ps -p 4702                                  # who is process 4702?
+#    PID TTY          TIME CMD
+#   4702 pts/0    00:00:00 bash
+```
+
+The `[s]leep` is a pattern that matches the word "sleep" but not its own text, so `grep` doesn't list itself. The `-axo` form of `ps` works on both Linux and a Mac.
+
+To watch processes live instead, use `htop`, and press `q` to quit:
+
+```bash
+htop                  # live view of every process, CPU and memory
+top                   # the older version, available everywhere
+```
+
+On Ubuntu, install `htop` with `sudo apt install htop`. On a Mac, `top` is already there, `brew install htop` gets `htop`, and the Activity Monitor app shows the same information in a window. In `htop`, F4 filters the list (type `sleep`), F5 shows the processes as a tree (the loop's `bash` with its `sleep` below it), F9 sends a signal to the selected process, and `q` quits.
+
+**Stopping a process.** The command `kill` takes a PID. Despite its name, it sends the process a **signal**, and the default signal is a polite request to stop, which lets the program clean up (close files, remove temporary data):
+
+```bash
+kill 4702             # ask process 4702 to stop (signal SIGTERM)
+kill -9 4702          # force it to stop at once (SIGKILL): last resort
+pkill sleep           # stop every process named sleep
+pkill -f long_job.py  # -f: match the whole command line, not just the name
+```
+
+`kill -9` cannot be refused, but the program gets no chance to clean up and may leave half-written files behind, so try plain `kill` first. You can only stop your own processes. Someone else's, or root's, needs `sudo`.
+
+Our loop teaches two lessons about this:
+
+- **Stop the parent, not the child.** `pkill sleep` stops the current `sleep 1`, but the loop immediately starts a new one. The loop only ends when its shell stops.
+- **Interactive shells ignore the polite request.** `kill 4702` on the shell in terminal 2 appears to do nothing, because an interactive shell ignores SIGTERM. `kill -9 4702` works, but it ends the shell itself, and terminal 2 usually closes. The normal way to stop a loop is **Ctrl+C in its own terminal**, which sends the process a different signal, SIGINT (number 2).
+
+::: {.callout-tip}
+## Try it
+In terminal 2 run `sleep 300`, which blocks the prompt. In terminal 3 run `pgrep -a sleep` to see its PID, then `kill` that PID. Terminal 2 prints `Terminated` and gives the prompt back. Then run it again and stop it with `kill -9`, and compare.
+:::
+
+
+
+
 
 ## Columns, sorting and counting
 
@@ -933,17 +1132,7 @@ type ll                             # what kind of name is ll?
 
 # Processes
 
-Every running program is a **process** with an ID number (PID).
-
-```bash
-ps                    # your processes in this terminal
-ps aux | head         # every process on the machine
-ps -u $USER | head    # just your processes, from every terminal
-ps aux | grep python  # find a process by name (grep filters the list)
-pgrep -l python       # the same, simpler: PID and name of matches
-htop                  # live view of CPU and memory (q quits)
-top                   # the older version, available everywhere
-```
+We already met `ps`, `htop` and `kill` for finding and stopping a process (in "Finding and stopping a process" above). Here we look at how big the machine is, and at running things in the background.
 
 How big is the machine you are on? This matters for deciding how much data fits and how many things can run in parallel:
 
@@ -965,9 +1154,7 @@ The `&` runs it in the **background**, so you get your prompt back. Now manage i
 jobs                  # list background jobs in this terminal
 fg                    # bring it to the foreground (then Ctrl+C stops it)
 kill %1               # or: stop background job number 1
-pkill yes             # or: stop every process named yes
-kill 12345            # or: stop a process by its PID
-kill -9 12345         # last resort: force it
+pkill yes             # or: stop every process named yes (or kill its PID)
 ```
 
 Forgot the `&`? You can still get your prompt back. Run something slow in the foreground, such as `sleep 300`, and then:
