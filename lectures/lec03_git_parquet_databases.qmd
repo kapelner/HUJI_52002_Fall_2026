@@ -95,7 +95,7 @@ A change to a file passes through several places on its way to GitHub:
         <----------------------- git pull ------------------------|
 ```
 
-The *staging area* is the part that confuses people. It lets you choose exactly which changes go into the next commit: `add` puts changes into the staging area, `commit` saves what is staged as one snapshot. And `git status` tells you what is where.
+Each level is confusing. The *staging area* lets you choose exactly which changes go into the next commit: `add` puts changes into the staging area, `commit` saves what is staged as one snapshot. And `git status` tells you what is where. Finally, `push` sends it to the mothership.
 
 ## The everyday loop
 
@@ -105,18 +105,65 @@ The *staging area* is the part that confuses people. It lets you choose exactly 
 #do not run the commands in this chunk on your machine --- this is for me, the owner of the course repo only
 cd ~/workspace/HUJI_52002_Fall_2026
 vi .gitignore                       # let's look at all the files that are ignored by git
-git status                          # which branch? what has changed?
-echo >> lectures/lec02_linux_advanced.qmd   # append one empty line: a change git can see
-git diff --stat                     # which files changed, and by how many lines
+git status                          # which branch am I on (we'll discuss this soon)? what has changed in this branch?
+echo "a new line with new text" >> lectures/lec02_linux_advanced.qmd   # append a line of text
+echo >> lectures/lec02_linux_advanced.qmd   # append a blank line as well: a change git can see
+git diff --stat                        # which files changed, how, and by how many lines
 git diff --ignore-blank-lines --stat   # git can also ignore blank lines: our line no longer counts
 git add lectures/lec02_linux_advanced.qmd   # stage just that file
 git commit -m "lec02: whitespace, live git demo"
 git push                            # upload; now refresh the file's page on GitHub
 git log --oneline -n 3              # our commit is on top
+#the top line should be
+#<commit code> (HEAD -> main, origin/main, origin/HEAD) lec02: whitespace, live git demo 
 #now I'll open https://github.com/kapelner/HUJI_52002_Fall_2026 and click on "commits" and look at the diff
 ```
 
-Note that the commit contains *everything* that was changed in that file, not only the blank line, since git saves whole files, not "the edit we just made". Now let's play on a branch that we throw away afterward:
+What do these things mean?
+
+HEAD: the current branch, and through it the current commit
+main            your local branch (moves when you commit)
+origin/main     what you last saw on GitHub for main (moves when you push, pull or fetch)
+origin/HEAD     which branch on GitHub is the default (almost always main)
+
+Each commit contains all files compressed at that specific point in history. This makes it very fast to "checkout" code at any point. This sounds wasteful but it's not because if the file doesn't change at all, it just points to a previous commit. But this is the reason saving large files that constantly change is NOT a good idea. This is why large files should be gitignored!
+
+You can design the system to just save the diffs each time and then replay the diffs at every point in history (CVS, SVN) but git chooses to be faster for checkout.
+
+**Going back in time.** Because every commit is a complete snapshot, it's easy to "go back in time" if you feel like you messed something up. Going back one step just means pointing git at the commit below ours in `git log`. We first check to ensure this is where we want to rewind to:
+
+```bash
+git log --oneline -n 3
+git show --stat HEAD~1          # "one commit before HEAD" (HEAD~2 is two before, and so on)
+```
+
+If you want to check an arbitrary point in the past, you can use the commit code:
+
+```bash
+git log --oneline -n 10
+git show --stat a23dd65   # or just paste the code of that commit from git log --oneline
+```
+
+`git show` only *looks*. To put the whole working folder back to that point:
+
+```bash
+wc -l lectures/lec02_linux_advanced.qmd     # the number of lines now
+git switch --detach HEAD~1      # rewind the working folder one step; main does not move
+wc -l lectures/lec02_linux_advanced.qmd     # one line fewer: our blank line is gone
+git status                      # "HEAD detached at <code>"
+git log --oneline main -n 3     # main still points at the newest commit
+git switch main                 # come back to the present (git switch - also works)
+wc -l lectures/lec02_linux_advanced.qmd     # the blank line is back
+```
+
+These all go back one step in the same way: `git switch --detach HEAD~1`, `git switch --detach HEAD^`, `git switch --detach <commit code>`, and the old spelling `git checkout HEAD~1` (see `checkout` below). To see just one file as it was, without moving anything, use `git show HEAD~1:lectures/lec02_linux_advanced.qmd`.
+
+After `git switch --detach`, `HEAD` points straight at a commit instead of at a branch (a **detached HEAD**), as if you were visiting the old snapshot. It is safe for looking around, since `main` has not moved. Don't commit while detached: a commit made there belongs to no branch and is easy to lose. If you want to start work from the old snapshot, give it a branch first with `git switch -c new-branch-name`.
+
+Visiting is not undoing. To make the past version the *new* present, with a commit, use `git revert`; to move the branch back, use `git reset`; to bring back just one file, use `git restore`. We do those in "Undoing things, place by place" below.
+
+Now let's talk about a powerful.
+
 
 ```bash
 git switch -c lec02-demo        # switch to a new, throw-away branch called lec02-demo to play on (more on branches below)
@@ -510,16 +557,9 @@ The demo commits disappear with the branches, so nothing from the demo ever reac
 :::
 
 
-# Parquet: a better file than CSV
+# Tabular data and its types
 
-Everything so far used the CSV: plain text, one row per line. It is the universal format and you will receive data in it for the rest of your career. But a CSV is just the bare table: no column types, nothing about what is inside, and no way to read part of it without reading all of it. Before we go all the way to a database, there is a middle step that is still just a file you can copy, `scp` and commit: **Parquet**.
-
-Think of Parquet as **annotated tabular data**. It stores the same table as the CSV, plus notes about the table, written into the file itself: the name and type of every column, how each column was compressed, and a summary (the smallest and largest value) of every block of rows. Those annotations are what make it
-
-* **fast to read**: a program knows the types in advance, so it does not parse and guess, and it can read just the columns it needs, and
-* **fast to query**: the summaries let a program skip the blocks that cannot contain the answer without even reading them.
-
-This unit defines tabular data and its column types, motivates the annotated format, converts `covid.csv`, and then shows what happens when the data is really large: it keeps working, in R and in Python, when the CSV would not even fit in memory.
+Everything so far in this course focused on the CSV: plain text, one row per line. Before we look for a better file format, we should say precisely what kind of data a CSV holds, because the kind of data decides what a good format for it looks like. This unit defines **tabular data** (rows and columns) and the **types** of the values in a column. The next unit uses both words to motivate a new file format.
 
 Make a scratch folder for this lecture and bring the data along (we use it again in the database unit):
 
@@ -531,7 +571,7 @@ cp ../lec01/covid.csv .
 
 ## What is tabular data?
 
-Parquet, like the CSV, stores **tabular data**, so let us define it. A table is a rectangle with two directions:
+A CSV holds **tabular data**, so let us define it. A table is a rectangle with two directions:
 
 * Each **row** is one **object** (also called a subject, an observation, a case, a record, a unit, an example or an instance): one thing that we measured.
 * Each **column** is one **attribute** (also called a feature, a characteristic, a variable, a field or a predictor): one property that we measured, for every object.
@@ -569,7 +609,7 @@ Different communities use different words for the same two ideas:
 
 : The same rectangle, in four vocabularies. You will see all of them in this course.
 
-Not all data is tabular. A nested JSON record, an image, or a paragraph of text is not a rectangle of objects by attributes. But for now, we will be focusing on tables.
+Not all data is tabular. A nested JSON record (e.g., `{"name": "Kapelner", "address": {"city": "London"}, "langs": ["R", "Python"]}`, which has a record inside a record and a list inside a record), an image, or a paragraph of text is not a rectangle of objects by attributes. But for now, we will be focusing on tables.
 
 ## Data types (= column types)
 
@@ -577,84 +617,92 @@ Every column has a **type**: the kind of thing its values are, which decides wha
 
 **What the values mean.** The classical scheme sorts a column by the operations that make sense on it:
 
-+----------------+-----------------+------------------+------------------+----------------+
-| Type           | Question it     | Example          | What makes sense | In `covid.csv` |
-|                | answers         |                  |                  |                |
-+:===============+:================+:=================+:=================+:===============+
-| **Categorical, | which group?    | state, blood     | equal or not     | `state`,       |
-| nominal**      |                 | type, country    | equal; counting; | `county`       |
-|                |                 |                  | no order         |                |
-+----------------+-----------------+------------------+------------------+----------------+
-| **Categorical, | which group, in | grade (A, B, C), | order (<, >) but | none           |
-| ordinal**      | a *ranked*      | shirt size (S,   | the gaps between |                |
-|                | order?          | M, L), "disagree | levels are not   |                |
-|                |                 | / neutral /      | meaningful       |                |
-|                |                 | agree"           |                  |                |
-+----------------+-----------------+------------------+------------------+----------------+
-| **Interval**   | how far apart?  | temperature in   | differences      | `date`         |
-|                |                 | Celsius, a       | (30°C is 10°     |                |
-|                |                 | calendar date    | warmer than      |                |
-|                |                 |                  | 20°C), but no    |                |
-|                |                 |                  | ratios: the zero |                |
-|                |                 |                  | is arbitrary, so |                |
-|                |                 |                  | 30°C is not "1.5 |                |
-|                |                 |                  | times as hot" as |                |
-|                |                 |                  | 20°C             |                |
-+----------------+-----------------+------------------+------------------+----------------+
-| **Ratio**      | how many or how | cases, height,   | everything:      | `cases`,       |
-|                | much?           | income, age      | differences      | `deaths`       |
-|                |                 |                  | *and* ratios,    |                |
-|                |                 |                  | because zero     |                |
-|                |                 |                  | means "none"     |                |
-+----------------+-----------------+------------------+------------------+----------------+
-| **Character**  | what was        | a tweet, an      | search and parse | none           |
-| (free text)    | written?        | address, a       | it; not a        |                |
-|                |                 | comment          | category until   |                |
-|                |                 |                  | you extract one  |                |
-+----------------+-----------------+------------------+------------------+----------------+
++------------------+------------------------+------------------------+----------------------------+----------------+
+| Type             | Subtype                | Example                | What makes sense           | In `covid.csv` |
++:=================+:=======================+:=======================+:===========================+:===============+
+| **Categorical**  | **nominal**: which     | state, blood type,     | equal or not equal;        | `state`,       |
+| (a fixed set of  | group?                 | country                | counting; no order         | `county`       |
+| levels)          +------------------------+------------------------+----------------------------+----------------+
+|                  | **ordinal**: which     | grade (A, B, C), shirt | order (<, >), but the gaps | none           |
+|                  | group, in a *ranked*   | size (S, M, L),        | between levels are not     |                |
+|                  | order?                 | "disagree / neutral /  | meaningful                 |                |
+|                  |                        | agree"                 |                            |                |
++------------------+------------------------+------------------------+----------------------------+----------------+
+| **Numeric**      | **interval**: how far  | temperature in         | differences (30°C is 10°   | `date`         |
+| (arithmetic      | apart?                 | Celsius, a calendar    | warmer than 20°C), but no  |                |
+| makes sense, at  |                        | date                   | ratios: the zero is        |                |
+| least in part)   |                        |                        | arbitrary, so 30°C is not  |                |
+|                  |                        |                        | "1.5 times as hot" as 20°C |                |
+|                  +------------------------+------------------------+----------------------------+----------------+
+|                  | **ratio, continuous**: | height, weight,        | everything: differences    | none           |
+|                  | how much?              | income, time spent,    | *and* ratios, because zero |                |
+|                  |                        | temperature in Kelvin  | means "none" (20 kg is     |                |
+|                  |                        |                        | twice 10 kg)               |                |
+|                  +------------------------+------------------------+----------------------------+----------------+
+|                  | **ratio, discrete**:   | number of cases,       | everything a ratio allows, | `cases`,       |
+|                  | how many whole things? | children in a family,  | but the values are only    | `deaths`       |
+|                  | (a **count**)          | clicks on a page       | the whole numbers 0, 1, 2, |                |
+|                  |                        |                        | ... (never 1.5)            |                |
++------------------+------------------------+------------------------+----------------------------+----------------+
+| **Text /**       |                        | a tweet, an address, a | search and parse it; not a | none           |
+| **character**    |                        | comment                | categorical until you      |                |
+| (free text):     |                        |                        | extract the L categories   |                |
+| what was         |                        |                        |                            |                |
+| written?         |                        |                        |                            |                |
++------------------+------------------------+------------------------+----------------------------+----------------+
 
-: The statistical types. Nominal and ordinal are together called **categorical** (a fixed set of levels). Interval and ratio are together called **numeric**.
+: The statistical types. A **categorical** column has a fixed set of levels (nominal or ordinal), and a **numeric** column holds numbers (interval or ratio). A count is a ratio that is **discrete** (only whole numbers); the other numeric subtypes are **continuous**.
 
 A few places where this is not obvious:
 
-* **A code that looks like a number is nominal.** `fips` is made of digits, but adding two FIPS codes or taking their mean is meaningless. It is a label for a county, so it should be stored as text. (Remember the `06059` that lost its zero.)
-* **A count is a ratio, and it is discrete.** `cases` can be 0, 1, 2, but never 1.5. A measured quantity such as height is continuous. Both are ratio-scale numbers, but you use different models for them later in the course.
+* **A code that looks like a number is nominal.** `fips` is made of digits, but adding two FIPS codes or taking their mean is meaningless. It is a label for a county, so it should be stored as text. (In the next unit we will watch a program silently turn the code `06059` into `6059`.)
+* **A count and a measurement are both ratios, but they behave differently.** `cases` can be 0, 1, 2, but never 1.5, so it is a discrete count. A measured quantity such as height is continuous. Both have a true zero, but you use different models for them later in the course, and they are stored differently (integer versus decimal, see below).
 * **A yes/no column is a special case**, called binary. It is nominal with exactly two levels (stored as `true` / `false`).
 * **Ordinal data is the one most often mishandled.** If you store grades A, B, C as 1, 2, 3, a program will happily average them, and it will treat the step from A to B as the same size as the step from B to C. Keep the order, but do not do arithmetic on it.
 * **Missing values are part of the type.** In `covid.csv`, 8,266 rows have no `fips` (mostly the county `Unknown`, plus a few cities) and 18,761 rows have no `deaths`. A column of integers cannot hold "missing" in many programs, so they silently turn the whole column into decimals: `pandas` read `deaths` as `float64` for this reason.
 
-**How the values are stored.** The computer needs a concrete representation for each statistical type. These are the storage types you will meet in R, `pandas` and Parquet:
+**How the values are stored.** The computer needs a concrete representation for each statistical type. These are the storage types you will meet in R and `pandas`:
 
-+------------------+-----------------+------------------+--------------+------------------+
-| Statistical type | Typical storage | R                | `pandas`     | Parquet / Arrow  |
-|                  | type            |                  |              |                  |
-+:=================+:================+:=================+:=============+:=================+
-| nominal          | text, or a      | `character`,     | `object` /   | string,          |
-|                  | dictionary of   | `factor`         | `string`,    | dictionary       |
-|                  | levels          |                  | `category`   |                  |
-+------------------+-----------------+------------------+--------------+------------------+
-| ordinal          | the same, with  | `ordered` factor | ordered      | dictionary (with |
-|                  | the level order |                  | `category`   | an "ordered"     |
-|                  | recorded        |                  |              | flag)            |
-+------------------+-----------------+------------------+--------------+------------------+
-| interval (a      | a date or a     | `Date`,          | `datetime64` | date32,          |
-| date)            | timestamp       | `POSIXct`        |              | timestamp        |
-+------------------+-----------------+------------------+--------------+------------------+
-| ratio, counts    | integer         | `integer`        | `int64`      | int32, int64     |
-+------------------+-----------------+------------------+--------------+------------------+
-| ratio,           | decimal         | `numeric`        | `float64`    | float, double    |
-| measurements     | ("floating      |                  |              |                  |
-|                  | point")         |                  |              |                  |
-+------------------+-----------------+------------------+--------------+------------------+
-| binary           | boolean         | `logical`        | `bool`       | boolean          |
-+------------------+-----------------+------------------+--------------+------------------+
-| character (free  | text            | `character`      | `object` /   | string           |
-| text)            |                 |                  | `string`     |                  |
-+------------------+-----------------+------------------+--------------+------------------+
++----------------------+-----------------------+-----------------------+----------------------+
+| Statistical type     | Typical storage type  | R                     | `pandas`             |
++:=====================+:======================+:======================+:=====================+
+| nominal              | text, or a dictionary | `character`, `factor` | `object` / `string`, |
+|                      | of levels             |                       | `category`           |
++----------------------+-----------------------+-----------------------+----------------------+
+| ordinal              | the same, with the    | `ordered` factor      | ordered `category`   |
+|                      | level order recorded  |                       |                      |
++----------------------+-----------------------+-----------------------+----------------------+
+| interval or ratio, a | decimal ("floating    | `numeric`             | `float64`            |
+| measurement          | point")               |                       |                      |
+| (Celsius, height,    |                       |                       |                      |
+| income)              |                       |                       |                      |
++----------------------+-----------------------+-----------------------+----------------------+
+| count                | integer               | `integer`             | `int64`              |
++----------------------+-----------------------+-----------------------+----------------------+
+| date or time         | a date or a timestamp | `Date`, `POSIXct`     | `datetime64`         |
++----------------------+-----------------------+-----------------------+----------------------+
+| binary               | boolean               | `logical`             | `bool`               |
++----------------------+-----------------------+-----------------------+----------------------+
+| character (free      | text                  | `character`           | `object` / `string`  |
+| text)                |                       |                       |                      |
++----------------------+-----------------------+-----------------------+----------------------+
 
-: The storage types, row by row. The names differ but the ideas are the same, which is what lets Python and R share a Parquet file.
+: The storage types. The names differ between R and Python, but the ideas are the same. The interval and ratio rows are one row, on purpose.
 
-A CSV stores all of these as text and leaves every program to guess the storage type. Parquet stores the type in the file, so a `date` stays a date, `cases` stays an integer and `fips` stays text. For a nominal column such as `state`, with 55 distinct values repeated on 885,000 rows, it stores the small list of levels once and then a short code per row (**dictionary encoding**, which we will see again below), which is also why the column compresses so well. The same idea in R is a `factor` and in `pandas` is a `category`.
+Notice that programs do not distinguish interval from ratio: both are stored as decimals, and the difference exists only in what you may sensibly compute with them (a ratio of two Celsius temperatures is a number, but a meaningless one). What programs *do* distinguish is integer from decimal (`integer` versus `numeric` in R, `int64` versus `float64` in `pandas`), which is why counts get their own row. A date is stored as a number of days since a fixed starting day, with a label that says to show it as a date.
+
+A CSV stores all of these as text and leaves every program to guess the storage type, which is what goes wrong with `fips` in the next unit. A better file format would store the type with the data, so that a `date` stays a date, `cases` stays an integer and `fips` stays text. For a nominal column such as `state`, with 55 distinct values repeated on 885,000 rows, it could store the small list of levels once and then a short code per row (**dictionary encoding**), which also makes the column small. The same idea in R is a `factor` and in `pandas` is a `category`.
+
+# A better data format than CSV?
+
+The CSV is the universal format for tabular data, and you will receive data in it for the rest of your career. But a CSV is just the bare table: no column types, nothing about what is inside, and no way to read part of it without reading all of it. Before we go all the way to a database, there is a middle step that is still just a file you can copy, send to others and commit in your repo: **Parquet**.
+
+Think of Parquet as **annotated tabular data**. It stores the same table as the CSV, plus notes about the table, written into the file itself: the name and type of every column, how each column was compressed, and a summary (the smallest and largest value) of every block of rows. Those annotations are what make it
+
+* **fast to read**: a program knows the types in advance, so it does not parse and guess, and it can read just the columns it needs, and
+* **fast to query**: the summaries let a program skip the blocks that cannot contain the answer without even reading them.
+
+This unit motivates the annotated format, converts `covid.csv`, and then shows what happens when the data is really large: it keeps working, in R and in Python, when the CSV would not even fit in memory.
 
 ## What is wrong with a CSV?
 
@@ -669,6 +717,8 @@ python3 -c 'import pandas as pd; print(pd.read_csv("covid.csv", nrows=1000).dtyp
 ```
 
 3. **You must read everything to get anything.** A CSV is stored row by row, so a question about two columns still reads (and parses) all six. The lectures' `cut -d, -f3` has to scan every byte of every line to find the third comma.
+
+Parquet stores the column types (text, integers, decimals, dates and timestamps, true/false, and a dictionary form for columns with few distinct values) in the file itself, so the guessing is gone.
 
 What we want is the same table with annotations: a file that is **smaller**, **typed**, and lets us **read only the columns we need**. That is Parquet.
 
