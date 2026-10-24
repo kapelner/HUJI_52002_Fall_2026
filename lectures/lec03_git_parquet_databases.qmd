@@ -267,8 +267,9 @@ git restore notes.txt                      # and discard that too
 `git reset` **moves the branch** back to an earlier commit and, depending on the option, what happens to your edits. Let's drop the revert commit and then the bad commit:
 
 ```bash
-git reset --hard HEAD~1                    # branch moves back one commit; the working folder is made to match (the revert commit is gone)
-git log --oneline -n 3                     # the bad commit is on top again
+echo "scribble" >> notes.txt
+git -am "made a bad scribble"
+git log --oneline -n 3                     # we have a bad commit on top again
 git reset --soft HEAD~1                    # branch moves back, but the change stays STAGED
 git status                                 # "Changes to be committed": notes.txt still has the BAD line
 git reset                                  # un-stage it (--mixed is the default): the change stays in the file, but not staged
