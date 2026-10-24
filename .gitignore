@@ -109,3 +109,4 @@ rsconnect/
 #### AI ignores
 .ignore
 /graft/
+big.csv
