@@ -194,10 +194,15 @@ Now we can play with the undo commands safely.
 ```bash
 git switch -c undo-demo                    # throw-away branch to play on
 echo "good line" > notes.txt
+git status
 git add notes.txt
+git status
 git commit -m "add notes"
+git status
 echo "BAD line" >> notes.txt
+git status
 git commit -am "oops: a bad line"
+git status
 git log --oneline -n 3                     # the bad commit is on top
 ```
 
