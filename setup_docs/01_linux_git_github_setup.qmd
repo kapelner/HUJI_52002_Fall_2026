@@ -74,7 +74,7 @@ The first step is to make sure you have git on your computer. It comes preinstal
 git --version
 ```
 
-If you see "git version \<number\>", then it's installed. If you are on MAC and this command is not recognized, you can install git by opening the terminal and running
+If you see "git version \<number\>", then it's installed. You need git 2.23 or newer; check with `git --version`. If you are on MAC and this command is not recognized, you can install git by opening the terminal and running
 
 ```bash
 brew install git
