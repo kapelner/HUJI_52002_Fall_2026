@@ -904,3 +904,5 @@ What each license lets you do, and what it asks of you in return:
 +-------------------+--------------------------+------------------------------------------------------+
 
 : Check any project yourself: the license is usually in a file called `LICENSE` or `COPYING` in the repository (`ls`, `head LICENSE`), and GitHub shows it on the repository page.
+a new line with new text
+

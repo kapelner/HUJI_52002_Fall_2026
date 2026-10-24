@@ -106,12 +106,20 @@ Each level is confusing. The *staging area* lets you choose exactly which change
 cd ~/workspace/HUJI_52002_Fall_2026
 vi .gitignore                       # let's look at all the files that are ignored by git
 git status                          # which branch am I on (we'll discuss this soon)? what has changed in this branch?
-echo "a new line with new text" >> lectures/lec02_linux_advanced.qmd   # append a line of text
-echo >> lectures/lec02_linux_advanced.qmd   # append a blank line as well: a change git can see
+#I'm going to make an edit in this file (delete a word, add a word, add a blank line)
+git status
 git diff --stat                        # which files changed, how, and by how many lines
 git diff --ignore-blank-lines --stat   # git can also ignore blank lines: our line no longer counts
-git add lectures/lec02_linux_advanced.qmd   # stage just that file
-git commit -m "lec02: whitespace, live git demo"
+git diff                               #see the diff itself (additions are colored green and subtractions are colored red)
+git add lectures/lec03_git_parquet_databases.qmd   # stage just that file ("git add ."" means stage all files that were edited)
+git diff                               #clean as diff measures difference between
+git diff --staged                      # but the change is in the staging area: this is what the next commit would contain
+git restore --staged lectures/lec03_git_parquet_databases.qmd   # undo the staging (old spelling: git reset lectures/lec02_linux_advanced.qmd); our edit stays in the file
+git status                             # "Changes not staged for commit" again
+git diff                               # and the change is back in the diff
+git add lectures/lec03_git_parquet_databases.qmd   # stage it again, to go on
+
+git commit -m "lec03: small changes and whitespace, live git demo"
 git push                            # upload; now refresh the file's page on GitHub
 git log --oneline -n 3              # our commit is on top
 #the top line should be
