@@ -131,10 +131,9 @@ What do these things mean?
 
 HEAD: the current branch, and through it the current commit
 main            your local branch (moves when you commit)
-origin/main     what you last saw on GitHub for main (moves when you push, pull or fetch)
-origin/HEAD     which branch on GitHub is the default (almost always main)
+origin/main and origin/HEAD we'll discuss later if we have time
 
-Each commit contains all files compressed at that specific point in history. This makes it very fast to "checkout" code at any point. This sounds wasteful but it's not because if the file doesn't change at all, it just points to a previous commit. But this is the reason saving large files that constantly change is NOT a good idea. This is why large files should be gitignored!
+Each commit contains all files compressed at that specific point in history (if the file doesn't change between commits, it just points to a previous commit so it's not actually wasteful). This makes it very fast to "checkout" code at any point. But this is the reason saving large files that constantly change is NOT a good idea. This is why large files should be gitignored!
 
 You can design the system to just save the diffs each time and then replay the diffs at every point in history (CVS, SVN) but git chooses to be faster for checkout.
 
@@ -155,13 +154,13 @@ git show --stat a23dd65   # or just paste the code of that commit from git log -
 `git show` only *looks*. To put the whole working folder back to that point:
 
 ```bash
-wc -l lectures/lec02_linux_advanced.qmd     # the number of lines now
+wc -l lectures/lec03_git_parquet_databases.qmd     # the number of lines now
 git switch --detach HEAD~1      # rewind the working folder one step; main does not move
-wc -l lectures/lec02_linux_advanced.qmd     # one line fewer: our blank line is gone
+wc -l lectures/lec03_git_parquet_databases.qmd     # one line fewer: our blank line is gone
 git status                      # "HEAD detached at <code>"
 git log --oneline main -n 3     # main still points at the newest commit
 git switch main                 # come back to the present (git switch - also works)
-wc -l lectures/lec02_linux_advanced.qmd     # the blank line is back
+wc -l lectures/lec03_git_parquet_databases.qmd     # the blank line is back
 ```
 
 These all go back one step in the same way: `git switch --detach HEAD~1`, `git switch --detach HEAD^`, `git switch --detach <commit code>`, and the old spelling `git checkout HEAD~1` (see `checkout` below). To see just one file as it was, without moving anything, use `git show HEAD~1:lectures/lec02_linux_advanced.qmd`.
