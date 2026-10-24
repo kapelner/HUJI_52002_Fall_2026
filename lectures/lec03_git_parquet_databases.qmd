@@ -259,17 +259,25 @@ cat notes.txt
 git add -a notes.txt
 git status
 
-git restore --source=HEAD~1 notes.txt      # copy the file as it was one commit ago (the BAD version) into the working folder
-git status                                 # modified, not committed: we are still on the same commit
-git restore notes.txt                      # and discard that too
+git restore -staged notes.txt              # copy the file as it was one commit ago (the BAD version) into the working folder
+git restore notes.txt                      # throw away uncommitted edits
+git status                                 # should be clean
 ```
 
 `git reset` **moves the branch** back to an earlier commit and, depending on the option, what happens to your edits. Let's drop the revert commit and then the bad commit:
 
 ```bash
 echo "scribble" >> notes.txt
-git -am "made a bad scribble"
-git log --oneline -n 3                     # we have a bad commit on top again
+git commit -am "made a bad scribble"
+git reset --hard HEAD~1                    # branch moves back, scribble is gone but everything else you were working on as well
+git log --oneline -n 3                     # no more bad commit - it's struck from history
+```
+
+Now let's show the preferred route:
+
+```bash
+echo "scribble" >> notes.txt
+git commit -am "made a bad scribble"
 git reset --soft HEAD~1                    # branch moves back, but the change stays STAGED
 git status                                 # "Changes to be committed": notes.txt still has the BAD line
 git reset                                  # un-stage it (--mixed is the default): the change stays in the file, but not staged
