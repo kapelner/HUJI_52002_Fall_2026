@@ -202,6 +202,7 @@ git status
 echo "BAD line" >> notes.txt
 git status
 git commit -am "oops: a bad line"
+cat notes.txt
 git status
 git log --oneline -n 3                     # the bad commit is on top
 ```
@@ -210,25 +211,18 @@ git log --oneline -n 3                     # the bad commit is on top
 
 ```bash
 git log --oneline -n 3
-git show --stat HEAD~1          # "one commit before HEAD" (HEAD~2 is two before, and so on)
+git show --stat HEAD~1          # "one commit before HEAD" (HEAD~2 is two before, and so on) which is equivalent to using the commit code
 ```
 
-If you want to check an arbitrary point in the past, you can use the commit code:
-
-```bash
-git log --oneline -n 10
-git show --stat a23dd65   # or just paste the code of that commit from git log --oneline
-```
-
-`git show` only *looks*. To put the whole working folder back to that point 
+`git show` only *looks*. To put the whole working folder back to that point, we need to undo. There are a few types based on what you specifically want to do:
 
 * To undo a commit by adding a *new* commit that undoes the previous commit, use `git revert`. History is only added to, so this is the safe choice for pushed commits. Reverting D gives a new commit D' where D' undoes D to get back to C (to get back to B, revert twice, etc):
 
   ```
-  A->B->C->D   --git revert D-->   A->B->C->D->D'
+  A->B->C->D   --git revert D-->   A->B->C->D->D' (where D' is the anti-D, reversing it so we arrive at state-of-affairs C)
   ```
 
-* To move the branch back, use `git reset --mixed` or `git reset --hard`. C and D will no longer be on the branch so you are destroying the work in C and D
+* To rewrite history and get the branch's old state back, use `git reset --mixed` or `git reset --hard`. C and D will no longer be on the branch so you are destroying the work in C and D
 
   ```
   A->B->C->D   --git reset --mixed B-->   A->B   (files still contain C's and D's changes, un-staged)
@@ -247,7 +241,7 @@ I can demo these different types of "undo" but I don't want to mess up the cours
 `git revert` undoes a commit by making a **new** commit that does the opposite. History is only added to, never rewritten, so it is the safe choice for anything you have already pushed:
 
 ```bash
-git revert --no-edit HEAD                  # new commit "Revert 'oops: a bad line'"
+git revert HEAD                            # new commit "Revert 'oops: a bad line'"
 git log --oneline -n 4                     # the bad commit is still there, followed by its undo
 cat notes.txt                              # the BAD line is gone
 ```
@@ -256,7 +250,11 @@ cat notes.txt                              # the BAD line is gone
 
 ```bash
 echo "scribble" >> notes.txt
+cat notes.txt
+git status
 git restore notes.txt                      # throw away uncommitted edits: the file is back to the last commit (cannot be undone!)
+cat notes.txt
+echo "scribble" >> notes.txt
 git restore --source=HEAD~1 notes.txt      # copy the file as it was one commit ago (the BAD version) into the working folder
 git status                                 # modified, not committed: we are still on the same commit
 git restore notes.txt                      # and discard that too
