@@ -297,48 +297,12 @@ git switch main
 git branch -D undo-demo                    # delete the throw-away branch (-D because it was never merged)
 ```
 
-
-
-Now let's talk about a powerful.
-
-
-```bash
-git switch -c lec03-demo        # switch to a new, throw-away branch called lec03-demo to play on (more on branches below)
-echo "first line" > demo_notes.txt  #make a new file
-git status                      # demo_notes.txt is "untracked": git sees it but does not track it
-git add demo_notes.txt          # stage it
-git status                      # now "to be committed"
-git commit -m "add demo notes"  # save the snapshot
-git log --oneline               # the history, one line per commit
-```
-
-Edit the file and look at what changed before you commit it:
-
-```bash
-echo "second line" >> demo_notes.txt
-git diff                        # unstaged changes: working folder vs. the last add
-git add demo_notes.txt
-git diff --staged               # staged changes: what the next commit will contain
-git commit -m "extend demo notes"
-```
-
-
-Looking back at the history:
-
-```bash
-git log --oneline --graph       # compact history; --graph draws the branches
-git log -p demo_notes.txt       # every change ever made to one file
-git show HEAD                   # the last commit in full (HEAD means "where I am now")
-git show HEAD~1                 # the commit before it
-git blame demo_notes.txt        # who wrote each line, and in which commit
-```
-
 ## What git should not hold: `.gitignore`
 
 Git is made for code and small text files. It is **not** made for big data: every version of a file is stored forever, and GitHub rejects any single file over 100 MB. Data, results and scratch files are kept out of the repository with a plain-text file called `.gitignore`, which lives in the repository (so it is versioned and shared like any other file). Each line is a pattern for files git should pretend not to see. Our own repo already has one:
 
 ```bash
-cat .gitignore                  # includes the scratch/ line you added in Lab 1
+vi .gitignore                  # includes the scratch/ line you added in Lab 1
 git status --ignored            # also list what is being ignored
 git check-ignore -v scratch/lec03/covid.csv   # WHICH rule ignores this file? (prints the file and line)
 ```
@@ -367,13 +331,10 @@ The pattern rules are short:
 
 The last rule is read top to bottom and the last matching line wins, so put exceptions after the pattern they relax:
 
+
 ```bash
-printf '*.log\n*.gz\n!important.log\n' >> .gitignore
-touch a.log important.log data.csv.gz
-git status -s                   # only important.log shows up as untracked
-git check-ignore -v a.log       # shows the rule: .gitignore:NN:*.log
-git add .gitignore && git commit -m "ignore logs and gz files"
-rm a.log important.log data.csv.gz
+git status --ignored                          # also list what is being ignored
+git check-ignore -v scratch/lec03/covid.csv   # audit: which rule ignores this file? (prints the file and line)
 ```
 
 Three things trip people up:
@@ -381,11 +342,14 @@ Three things trip people up:
 * **Ignoring does not untrack.** `.gitignore` only affects files git is *not yet* tracking. If you already committed `covid.csv`, adding it to `.gitignore` changes nothing. Tell git to stop tracking it, and leave the file on disk:
 
 ```bash
-echo "big data" > big.csv
+echo "bigggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg" > big.csv
+git status
 git add big.csv                 # oops: a data file gets added...
 git commit -m "oops, committed data"
 echo "big.csv" >> .gitignore    # ...adding it to .gitignore now does nothing: git already tracks it
+git status --ignored            # it's not being ignored! 
 git rm --cached big.csv         # stop tracking; the file stays in the folder
+git status --ignored            # now it's ignored
 git add .gitignore && git commit -m "stop tracking big.csv"
 rm big.csv                      # (demo only) delete the leftover file
 git status
@@ -395,155 +359,28 @@ The file is still in the *old* commits. Removing a big file from the history is 
 * **Ignore rules are per repository.** Junk that belongs to *your* machine and editor (`.DS_Store`, `*.swp`, `.vscode/`) can go in a personal global file instead of every project's `.gitignore`: `git config --global core.excludesFile ~/.gitignore_global`.
 * **Empty folders are not tracked.** Git tracks files, not folders. The usual trick to keep an empty folder is a placeholder file inside it, e.g. `data/.gitkeep`, plus the lines `data/*` and `!data/.gitkeep` in `.gitignore`.
 
-## Undoing things, place by place
+## Merging branches
 
-Which undo you want depends on how far the mistake has travelled. Look at the picture of the places again, find where the mistake is now, and use the matching tool:
-
-+-------------------------+-----------------------------+------------------------------+
-| The mistake is in...    | Use                         | Is it safe?                  |
-+:========================+:============================+:=============================+
-| the working folder      | `git restore file`          | **loses** the edits for good |
-| (edited, not added)     |                             |                              |
-+-------------------------+-----------------------------+------------------------------+
-| the staging area        | `git restore --staged file` | safe, nothing is lost        |
-| (added, not committed)  |                             |                              |
-+-------------------------+-----------------------------+------------------------------+
-| the local repository    | `git reset`,                | safe for you alone; commits  |
-| (committed, not pushed) | `git commit --amend`        | can be recovered with        |
-|                         |                             | `git reflog`                 |
-+-------------------------+-----------------------------+------------------------------+
-| the remote (pushed)     | `git revert`, then          | safe for everybody           |
-|                         | `git push`                  |                              |
-+-------------------------+-----------------------------+------------------------------+
-
-### Out of the staging area
-
-You ran `git add` on something you did not mean to, say a big data file. Unstage it. The file stays in your folder; git just stops planning to commit it:
-
-```bash
-echo "oops" > big.csv
-git add big.csv                     # whoops
-git status                          # "Changes to be committed: new file: big.csv"
-git restore --staged big.csv        # out of the staging area; big.csv is still in the folder
-git status                          # big.csv is "untracked" again
-rm big.csv                          # (demo only)
-```
-
-`git restore --staged .` unstages everything at once. For a file that git already tracks, `--staged` keeps your edits in the folder and only removes them from the next commit, which is also how you split one pile of edits into two commits. (You will see the older spelling `git reset HEAD file` in tutorials; it does the same thing.) Do not confuse this with plain `git restore file`, which throws the *edits* away.
-
-### Out of the local repository
-
-You already ran `git commit`, but have not pushed. Nobody else has seen it, so you are free to rewrite it:
-
-```bash
-# the last commit has the wrong message, or you forgot a file:
-git add forgotten.txt
-git commit --amend -m "better message"      # replaces the last commit with a corrected one
-
-# the last commit should not exist at all:
-echo "oops" > big.csv
-git add big.csv && git commit -m "add big.csv by mistake"
-git reset --soft HEAD~1             # undo the commit, but leave the changes STAGED
-git reset HEAD~1                    # undo the commit, and leave the changes in the folder, unstaged
-git reset --hard HEAD~1             # undo the commit AND delete the changes (dangerous)
-```
-
-`HEAD~1` means "one commit before where I am"; `HEAD~3` goes back three. The three flavors of `git reset` differ only in how far back the changes are taken: `--soft` moves only the branch, the default (`--mixed`) also empties the staging area, and `--hard` also overwrites the working folder.
-
-A very common case in this course is a big file that was committed by accident but not yet pushed. Remove it from the commit itself, so that it never exists in the history that you push:
-
-```bash
-git rm --cached big.csv             # take it out of git's tracking, but keep the file on disk
-git commit --amend --no-edit        # rewrite the last commit without it, keeping the message
-```
-
-(If it was buried a few commits back, `git reset --soft HEAD~3` uncommits the last three, you unstage the file, and you commit again.)
-
-**Safety net: `git reflog`.** Even after `reset --hard`, committed work is almost never gone. Git keeps a private log of everywhere `HEAD` has been, for about three months:
-
-```bash
-git reset --hard HEAD~1             # oops, that threw away a commit we wanted
-git reflog                          # newest first; HEAD@{1} is where we were before the reset
-git reset --hard HEAD@{1}           # go back
-```
-
-This rescues *commits*. It cannot rescue edits that you never added or committed (`git restore file` and `reset --hard` really do lose those), which is why committing early and often, or `git stash`, is cheap insurance.
-
-### Out of the remote (`origin`)
-
-You already ran `git push`. Other people (and your other computers) may have pulled these commits, so rewriting them now would give everybody conflicting histories. The standard, safe undo is a **new commit that cancels the old one**:
-
-```bash
-git log --oneline -n 3              # find the id of the bad commit
-git revert a1b2c3d                  # new commit that undoes commit a1b2c3d (git opens an editor; save and close)
-git push                            # the history only grows, so a plain push works
-git revert HEAD                     # shortcut: undo the very last commit
-```
-
-If you are the **only** person using that branch (say, your own homework branch) you can rewrite the history instead, and then overwrite the remote with a *force* push:
-
-```bash
-git reset --hard HEAD~1             # remove the last commit locally
-git push --force-with-lease         # overwrite origin; refuses if somebody pushed in the meantime
-```
-
-Use `--force-with-lease`, not plain `--force`: it only overwrites what you last saw, so you cannot silently destroy a colleague's commit. Anyone else who already has the old commits must repair their copy, and shared branches such as `main` are often protected against force pushes, so this is the exception.
-
-Two special cases:
-
-* **A branch on origin you want gone:** `git push origin --delete lec03-demo` (your local copy of the branch is separate: `git branch -D`).
-* **A secret or a huge file was pushed.** Deleting it in a later commit does not help; it stays in the history, and anybody can check out the old commit. A pushed password, token or key must be treated as **public**: change it at once, and only then clean the history (with a tool such as `git filter-repo` plus a force push). For a file over 100 MB, GitHub refuses the push, but the bad commit still exists in your *local* repository: fix it locally as above (`reset --soft`, or `rm --cached` plus `--amend`), and push again.
-
-We will not run the remote commands live in the demo, since we never push the demo branches.
-
-## `checkout`: moving around
-
-`git checkout` is the old Swiss-army knife of git. It does several unrelated jobs depending on what you give it:
-
-```bash
-git checkout lec03-demo             # switch to the branch lec03-demo
-git checkout -b lec03-exp           # create the branch lec03-exp and switch to it
-git checkout a1b2c3d                # look at the folder as it was at an old commit
-git checkout -- demo_notes.txt      # throw away uncommitted edits in demo_notes.txt
-```
-
-Because that is confusing, since git 2.23 the jobs were split into two clearer commands: `git switch` (for branches: `git switch lec03-demo`, `git switch -c lec03-exp`) and `git restore` (for files, as above). Both spellings work, and you will see `checkout` in most tutorials and answers online, so you need to read both.
-
-Checking out an old commit puts you in a "detached HEAD" state: you are looking at the past, and anything you commit there belongs to no branch. Look around, and then go back with `git switch -` (back to where you were) or `git switch lec03-demo`.
-
-## Branches and merging
-
-A **branch** is a separate line of commits. It lets you try something (a new analysis, a risky rewrite) without touching the main line, and join it back when it works. (For the demo, `lec03-demo` plays the role of `main`.)
+We went over that a **branch** is a separate line of commits. It lets you try something (a new analysis, a risky rewrite) without touching the main line. When you are sure this work is correct, you can join it back to main; this is called a "merge".
 
 ```bash
 git branch                          # list branches (the current one has a *)
-git branch --show-current           # just the name of the branch you are on
-git switch -c lec03-exp             # new branch, and move onto it
+git switch -c lec03-development     # new branch, and move onto it
                                     # (= `git branch lec03-exp` to create it, then `git switch lec03-exp`)
 echo "an idea" >> demo_notes.txt
 git commit -m "try an idea" demo_notes.txt
-git switch lec03-demo               # back: demo_notes.txt no longer has the idea!
-git merge lec03-exp                 # bring the experiment's commits in
-git branch -d lec03-exp             # delete a branch you are done with
+git switch main                     # back: demo_notes.txt no longer has the idea!
+git branch 
+git merge lec03-development         # bring the experiment's commits in
+ls
+rm demo_notes.txt                   # cleanup so we don't pollute production branch
+git branch -d lec03-development     # delete a branch you are done with
+git status
 ```
 
-`git branch` *manages* branches (list, create, rename with `git branch -m new-name`, delete); `git switch` *moves* between them. `git branch -a` also lists the branches that exist on GitHub.
+## Resolving conflicts
 
-When two branches changed the *same lines*, git cannot choose and reports a **merge conflict**. Make one on purpose:
-
-```bash
-git switch -c lec03-fix
-echo "from fix" > conflict.txt
-git add conflict.txt && git commit -m "fix: add conflict.txt"
-git switch lec03-demo
-echo "from demo" > conflict.txt
-git add conflict.txt && git commit -m "demo: add conflict.txt"
-git merge lec03-fix                 # CONFLICT (add/add) in conflict.txt
-git status                          # "both added: conflict.txt"
-cat conflict.txt
-```
-
-git marks the file for you:
+Git can combine two sets of changes automatically as long as they touch *different* parts of a file. This happens when you merge a branch into `main`, and also when you `git pull` (a pull is just a `git fetch` from remote followed by a `git merge`). A **conflict** happens when both sides changed the *same lines* in different ways. `git` cannot guess which version you want, so it stops, marks the problem lines in the file, and leaves you to decide. For example:
 
 ```
 <<<<<<< HEAD
@@ -556,7 +393,7 @@ from fix
 Everything between `<<<<<<<` and `=======` is your side, and the rest up to `>>>>>>>` is the other branch's side. To resolve it, edit the file into what you want (and delete the three marker lines), then finish the merge:
 
 ```bash
-echo "resolved" > conflict.txt      # or edit it by hand
+#edit the conflict.txt file by hand using your IDE or text editor like vi
 git add conflict.txt
 git commit                          # git suggests a merge message; save and close the editor
 ```
@@ -619,73 +456,14 @@ git branch -D lec03-wt                      # the branch is separate; delete it 
 
 It is far cheaper than a second `git clone`, since the history is stored only once. Two rules: a branch can be checked out in only one worktree at a time, and always remove a worktree with `git worktree remove` (if you just delete the folder, `git worktree prune` clears the leftover record). Tools like Claude Code use throw-away worktrees to try changes without touching your files.
 
-## Working with GitHub
-
-```bash
-git clone https://github.com/<user>/<repo>.git   # copy a repository (history included) to your computer
-git remote -v                       # where is "origin"?
-git fetch                           # download new commits but do not change your files
-git pull                            # fetch + merge into your current branch
-git push                            # upload your commits
-```
-
-If `git push` is rejected with "failed to push some refs" or "Updates were rejected because the remote contains work that you do not have", somebody (maybe you, from another computer) pushed first. Run `git pull`, fix any conflicts as above, and push again.
-
-## Clean up the demo
+Ensure we're clean
 
 ```bash
 git stash list                      # should be empty (or only stashes that are really yours)
 git switch main                     # back to the real branch
 git worktree list                   # should show only the main folder
-git branch -D lec03-demo lec03-fix  # -D : delete even though these were never merged into main
-rm -f demo_notes.txt conflict.txt big.csv   # leftovers, if any (normally there are none)
 git status                          # back to exactly where we started
 ```
-
-The demo commits disappear with the branches, so nothing from the demo ever reaches GitHub.
-
-## Cheat sheet
-
-+-------------------------------------------+---------------------------------------------+
-| I want to...                              | Command                                     |
-+===========================================+=============================================+
-| see what changed                          | `git status`, `git diff`                    |
-+-------------------------------------------+---------------------------------------------+
-| save my work                              | `git add .` then `git commit -m "msg"`      |
-+-------------------------------------------+---------------------------------------------+
-| share it                                  | `git push`                                  |
-+-------------------------------------------+---------------------------------------------+
-| get others' work                          | `git pull`                                  |
-+-------------------------------------------+---------------------------------------------+
-| see the history                           | `git log --oneline --graph`                 |
-+-------------------------------------------+---------------------------------------------+
-| discard edits to a file                   | `git restore file`                          |
-+-------------------------------------------+---------------------------------------------+
-| un-stage a file                           | `git restore --staged file`                 |
-+-------------------------------------------+---------------------------------------------+
-| undo a pushed commit                      | `git revert <id>`                           |
-+-------------------------------------------+---------------------------------------------+
-| try something on the side                 | `git switch -c name`, then `git merge name` |
-+-------------------------------------------+---------------------------------------------+
-| set unfinished work aside                 | `git stash`, later `git stash pop`          |
-+-------------------------------------------+---------------------------------------------+
-| work on another branch in a second folder | `git worktree add ../name -b name`, later   |
-|                                           | `git worktree remove ../name`               |
-+-------------------------------------------+---------------------------------------------+
-| see which branch I am on                  | `git branch --show-current`                 |
-+-------------------------------------------+---------------------------------------------+
-| keep a file out of git                    | add it to `.gitignore`                      |
-+-------------------------------------------+---------------------------------------------+
-| stop tracking a big file                  | `git rm --cached file` and add it to        |
-|                                           | `.gitignore`                                |
-+-------------------------------------------+---------------------------------------------+
-| find out why a file is ignored            | `git check-ignore -v file`                  |
-+-------------------------------------------+---------------------------------------------+
-
-::: {.callout-tip}
-## Try it
-(1) On a new branch, change `demo_notes.txt` and commit. (2) Switch to another branch, make an uncommitted edit to the same file, and try to switch back or merge. What does git say? Use `git stash` to get out of it, and then `git stash pop`. (3) Which of `restore`, `revert` and `reset` would you use for a mistake that is only in your working folder, for one that you committed but did not push, and for one that you already pushed? (4) Add `*.tmp` to `.gitignore`, create `x.tmp`, and use `git check-ignore -v x.tmp` to see which line ignores it. Then clean up the demo.
-:::
 
 
 # Tabular data and its types
