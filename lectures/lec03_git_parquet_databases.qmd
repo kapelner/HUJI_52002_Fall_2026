@@ -45,7 +45,10 @@ The setup guide explains the `git add` - `git commit` - `git push` idiom to hand
 
 : Version control systems, ordered by share of developers. Survey figures are approximate and the 2025 numbers are secondhand (via [RhodeCode's summary](https://rhodecode.com/insights) of the Stack Overflow survey); Perforce and CVS have no reliable current figure, so their order is a rough judgement from [a Gartner legacy-project poll](https://www.gartner.com/peer-community/poll/what-version-control-system-vcs-are-you-using-for-legacy-projects).
 
-`git` is the tool; GitHub is a website/company (owned by Microsoft) that hosts `git` repositories (which are called the "remotes" and are usually named `origin`, `master`, `main`). GitHub also manages "pull requests", issue tracking and so on. Here is a list of places where `git` is served:
+
+# GitHub
+
+`git` is the tool; GitHub is a website/company (owned by Microsoft) that hosts `git` repositories (which are called the "remotes" and are usually named `origin`, `master`, `main`). GitHub also manages "pull requests" (PRs), issue tracking and so on. Here is a list of places where `git` is served:
 
 +----------------------+-----------+--------------------+--------------------------------------+
 | Host                 | Owner     | Accounts (approx.) | Notes                                |
@@ -70,10 +73,10 @@ The setup guide explains the `git add` - `git commit` - `git push` idiom to hand
 GitHub is the biggest venue for open source software in the world. Most of the projects we met in the previous section keep their code there: [Python](https://github.com/python/cpython), [R](https://github.com/wch/r-source) (a mirror, see below), [Linux](https://github.com/torvalds/linux) (also a mirror), [`pandas`](https://github.com/pandas-dev/pandas), [`NumPy`](https://github.com/numpy/numpy), [`TensorFlow`](https://github.com/tensorflow/tensorflow), [`PyTorch`](https://github.com/pytorch/pytorch), [`Kubernetes`](https://github.com/kubernetes/kubernetes), [`VS Code`](https://github.com/microsoft/vscode) and [Quarto](https://github.com/quarto-dev/quarto-cli), [`git`](https://github.com/git/git) itself, along with millions of smaller libraries. Even projects that develop elsewhere keep a mirror on GitHub, such as the Linux kernel (developed through mailing lists), R (developed in Subversion) and [PostgreSQL](https://github.com/postgres/postgres) (which runs its own git server), because that is where people look for code. It became the default for three reasons:
 
 * **Network effect:** with about 180 million developers, a project on GitHub is where its potential users and contributors already are.
-* **Low friction:** anyone can **fork** (copy) a project, change it and propose the change back with a **pull request**, with no permission needed. Issues, discussion and automated testing live on the same page.
-* **Visibility:** search, **stars** and your commit history on your profile make GitHub a public CV, and employers often look at it. In a 2017 [HackerRank survey](https://www.hackerrank.com/research/developer-skills/2018), most hiring managers said they look for proven skill such as previous work and projects/GitHub, and in interviews with employers ([Marlow and Dabbish, 2013](https://www.researchgate.net/publication/262248832_Activity_traces_and_signals_in_software_developer_recruitment_and_hiring)) they said they trust visible activity more than résumé claims. Microsoft bought GitHub in 2018 for about $7.5 billion likely because they wanted to buy the network of all the developers.
+* **Low friction:** anyone can **fork** (copy) a public project (i.e. in a repo), change it and propose the change back with a **pull request**, with no permission needed. Issues, discussion and automated testing live on the same page.
+* **Visibility:** search, **stars** and your commit history on your profile make GitHub a public CV, and employers often look at it. In a 2017 [HackerRank survey](https://www.hackerrank.com/research/developer-skills/2018), most hiring managers said they look for proven skill such as previous work and projects/GitHub, and in interviews with employers ([Marlow and Dabbish, 2013](https://www.researchgate.net/publication/262248832_Activity_traces_and_signals_in_software_developer_recruitment_and_hiring)) they said they trust visible activity more than résumé claims. Microsoft bought GitHub in 2018 for about $7.5B likely because they wanted to buy the network of all the developers.
 
-That is also why you hand in your labs through it: the habits you build in this course (commit, push, pull request) are the ones used by open source projects everywhere and companies everywhere. You are learning the standard for any sort of software engineering and data science.
+That is also why you hand in your labs by using `git` on GitHub it: the habits you build in this course are the ones used by open source projects everywhere and companies everywhere. You are learning the standard for any sort of software engineering and data science. And this is why I'm using class time to teach it. I wish someone taught it to me rather than having to learn it by trial and error and many lost hours.
 
 ::: {.callout-warning}
 ## Demo rules
@@ -476,14 +479,15 @@ Make a scratch folder for this lecture and bring the data along (we use it again
 mkdir -p ~/workspace/HUJI_52002_Fall_2026/scratch/lec03
 cd ~/workspace/HUJI_52002_Fall_2026/scratch/lec03
 cp ../lec01/covid.csv .
+ls -alh
 ```
 
-## What is tabular data?
+## What is "tabular data" or a "data table" or a "table"?
 
-A CSV holds **tabular data**, so let us define it. A table is a rectangle with two directions:
+A CSV holds **tabular data**, so let us define it. A table is a rectangle with two directions. Because everyone uses data, there are many equivalent English vocabulary terms:
 
-* Each **row** is one **object** (also called a subject, an observation, a case, a record, a unit, an example or an instance): one thing that we measured.
-* Each **column** is one **attribute** (also called a feature, a characteristic, a variable, a field or a predictor): one property that we measured, for every object.
+* Each **row** is one **object** (AKA a subject, an observation, a case, a record, a unit, an example, an instance and others): one thing that we measured.
+* Each **column** is one **attribute** (AKA a feature, a characteristic, a variable, a field, a predictor and others): one property that we measured, for every object. 
 
 Usually the # of rows is denoted $n$ and the number of columns denoted $p$.
 
@@ -493,32 +497,77 @@ Every row has the same columns, and every column holds one kind of value (all da
 head -n 4 covid.csv | column -s, -t
 ```
 
-```
-date        county     state       fips   cases  deaths
-2020-01-21  Snohomish  Washington  53061  1      0
-2020-01-22  Snohomish  Washington  53061  1      0
-2020-01-23  Snohomish  Washington  53061  1      0
-```
+The six columns are the attributes. Each row is one object. What is the definition of object in this table data set?
 
-The six columns are the attributes. Each row is one object, and here the *object* is the **report for one county on one day**: "Snohomish County on 2020-01-21". It is *not* a county, since Snohomish appears in many rows (`date`, `county` and `state` together identify a row, because many states have a Washington County), and deciding what one row stands for is the first question to ask of any dataset. In this context, the vocabulary I would use is "this file has 884,737 records and 6 fields per record".
 
-Different communities use different words for the same two ideas:
 
-+------------------+------------------------+------------------------------------------+
-|                  | Rows                   | Columns                                  |
-+:=================+:=======================+:=========================================+
-| Statistics       | subjects, observations | variables                                |
-+------------------+------------------------+------------------------------------------+
-| Machine learning | examples, instances    | features (the $X$s), the label (the $y$) |
-+------------------+------------------------+------------------------------------------+
-| Databases        | records, tuples        | fields, attributes                       |
-+------------------+------------------------+------------------------------------------+
-| R / Python       | rows of a data frame   | columns of a data frame                  |
-+------------------+------------------------+------------------------------------------+
 
-: The same rectangle, in four vocabularies. You will see all of them in this course.
 
-Not all data is tabular. A nested JSON record (e.g., `{"name": "Kapelner", "address": {"city": "London"}, "langs": ["R", "Python"]}`, which has a record inside a record and a list inside a record), an image, or a paragraph of text is not a rectangle of objects by attributes. But for now, we will be focusing on tables.
+
+
+
+
+Here the *object* is the **report for one county on one day**: "Snohomish County on 2020-01-21". The object is *not* a county, since Snohomish appears in many rows (`date`, `county` and `state` together identify a row, because many states have a Washington County), and deciding what one row stands for is the first question to ask of any dataset. In this context, the vocabulary I would use is "this file has 884,737 records and 6 fields per record".
+
+In science, there are generally two goals when using data: prediction or inference (we will see these topics later). If you are operating under one of these goals, there is one (sometimes more than one) column that is special. Because there are many fields of science that operate under these two goals and they emerged independently, there are once again many equivalent English vocabulary terms. This special column is called the **output** (AKA endpoint, outcome, response, label and others) of interest. And the other columns then are called **inputs** (AKA covariates, regressors, predictors and others)
+
+Is our goal to predict anything? Are we explaining anything? Is there an output of interest?
+
+
+
+
+
+
+
+
+
+We were given no prediction or inference frame. Hence there is no special column that is distinguished as the response.
+
+Here is a table that summarizes the vocabulary terms across fields. There's a lot of words!!
+
++------------------+------------------------------+--------------------------------------+--------------------------------+
+|                  | Rows                         | Columns                                                               |
+|                  |                              +--------------------------------------+--------------------------------+
+|                  |                              | inputs (the $X$s)                    | output (the $y$)               |
++:=================+:=============================+:=====================================+:===============================+
+| Statistics       | subjects, observations,      | independent variables, predictors,   | dependent variable, response,  |
+|                  | units, cases                 | covariates, explanatory variables    | outcome                        |
++------------------+------------------------------+--------------------------------------+--------------------------------+
+| Machine learning | examples, instances,         | features, attributes, inputs (the    | label, target, output (the     |
+|                  | samples, data points         | $X$s)                                | $y$)                           |
++------------------+------------------------------+--------------------------------------+--------------------------------+
+| Econometrics     | observations, units          | regressors, explanatory variables,   | regressand, dependent          |
+|                  | (individuals, firms,         | independent variables, covariates,   | variable, outcome              |
+|                  | countries)                   | controls                             |                                |
++------------------+------------------------------+--------------------------------------+--------------------------------+
+| Psychology       | participants, subjects,      | independent variables (what the      | dependent variable (the        |
+|                  | cases                        | experimenter manipulates),           | measured outcome), scale score |
+|                  |                              | predictors, items (one per survey    |                                |
+|                  |                              | question)                            |                                |
++------------------+------------------------------+--------------------------------------+--------------------------------+
+| Sociology        | respondents, cases, units of | independent variables, covariates,   | dependent variable, outcome    |
+|                  | analysis                     | indicators                           |                                |
++------------------+------------------------------+--------------------------------------+--------------------------------+
+| Physics          | events, measurements, runs,  | independent variables (what is set   | dependent variables,           |
+|                  | data points                  | or varied), controlled quantities    | observables (what is           |
+|                  |                              |                                      | measured), channels            |
++------------------+------------------------------+--------------------------------------+--------------------------------+
+| Databases        | records, tuples              | fields, attributes (no special output column)                         |
++------------------+------------------------------+-----------------------------------------------------------------------+
+| R / Python       | rows of a data frame         | columns of a data frame (no special output column)                    |
++------------------+------------------------------+-----------------------------------------------------------------------+
+
+: The same rectangle, in several vocabularies. You will see all of them in this course.
+
+Not all data is tabular. E.g.
+
+* A nested JSON record (e.g., `{"name": "Kapelner", "address": {"city": "London"}, "langs": ["R", "Python"]}`, which has a record inside a record and a list inside a record), 
+* an image, 
+* a sound clip,
+* a video,
+* a paragraph of text is not a rectangle of objects by attributes. 
+
+For now, we will be focusing on tables. We will see how far we get. I would love to cover handling big data for non-tabular datasets. As for the nested JSON record, we will be kind of covering nested tables / joins when we get to multi-table datasets.
 
 ## Data types (= column types)
 
@@ -564,11 +613,19 @@ Every column has a **type**: the kind of thing its values are, which decides wha
 
 A few places where this is not obvious:
 
+```bash
+head -n 4 covid.csv | column -s, -t
+```
+
 * **A code that looks like a number is nominal.** `fips` is made of digits, but adding two FIPS codes or taking their mean is meaningless. It is a label for a county, so it should be stored as text. (In the next unit we will watch a program silently turn the code `06059` into `6059`.)
-* **A count and a measurement are both ratios, but they behave differently.** `cases` can be 0, 1, 2, but never 1.5, so it is a discrete count. A measured quantity such as height is continuous. Both have a true zero, but you use different models for them later in the course, and they are stored differently (integer versus decimal, see below).
-* **A yes/no column is a special case**, called binary. It is nominal with exactly two levels (stored as `true` / `false`).
-* **Ordinal data is the one most often mishandled.** If you store grades A, B, C as 1, 2, 3, a program will happily average them, and it will treat the step from A to B as the same size as the step from B to C. Keep the order, but do not do arithmetic on it.
+* **Discrete and continuous are both numeric, but they behave differently.** `cases` can be 0, 1, 2, but never 1.5, so it is a discrete count. A measured quantity such as height is continuous. Both have a true zero, but you use different models for them, and they are stored differently (integer versus decimal, see below).
+* **A yes/no column is a special case**, called binary. It is nominal or ordinal with exactly two levels (stored as `true` / `false`). It is also a count with 0 or 1.
+* **Ordinal data is the one most often mishandled.** If you store grades A, B, C as 1, 2, 3, a program will happily average them, and it will treat the step from A to B as the same size as the step from B to C. Keep the order, but do not do arithmetic on them.
 * **Missing values are part of the type.** In `covid.csv`, 8,266 rows have no `fips` (mostly the county `Unknown`, plus a few cities) and 18,761 rows have no `deaths`. A column of integers cannot hold "missing" in many programs, so they silently turn the whole column into decimals: `pandas` read `deaths` as `float64` for this reason.
+
+```bash
+awk -F, 'NR>1 && $4=="" && $2=="Unknown" {u++} END {print u}' covid.csv
+```
 
 **How the values are stored.** The computer needs a concrete representation for each statistical type. These are the storage types you will meet in R and `pandas`:
 
