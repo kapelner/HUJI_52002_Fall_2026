@@ -201,8 +201,6 @@ git commit -am "oops: a bad line"
 git log --oneline -n 3                     # the bad commit is on top
 ```
 
-
-
 **Going back in time.** Because every commit is a complete snapshot, it's easy to "go back in time" if you feel like you messed something up. Going back one step just means pointing git at the commit below ours in `git log`. We first check to ensure this is where we want to rewind to:
 
 ```bash
@@ -217,23 +215,7 @@ git log --oneline -n 10
 git show --stat a23dd65   # or just paste the code of that commit from git log --oneline
 ```
 
-`git show` only *looks*. To put the whole working folder back to that point:
-
-```bash
-wc -l lectures/lec03_git_parquet_databases.qmd     # the number of lines now
-git switch --detach HEAD~1      # rewind the working folder one step; main does not move
-wc -l lectures/lec03_git_parquet_databases.qmd     # one line fewer: our blank line is gone
-git status                      # "HEAD detached at <code>"
-git log --oneline main -n 3     # main still points at the newest commit
-git switch main                 # come back to the present (git switch - also works)
-wc -l lectures/lec03_git_parquet_databases.qmd     # the blank line is back
-```
-
-These all go back one step in the same way: `git switch --detach HEAD~1`, `git switch --detach HEAD^`, `git switch --detach <commit code>`, and the old spelling `git checkout HEAD~1` (see `checkout` below). To see just one file as it was, without moving anything, use `git show HEAD~1:lectures/lec03_git_parquet_databases.qmd`.
-
-After `git switch --detach`, `HEAD` points straight at a commit instead of at a branch (a **detached HEAD**), as if you were visiting the old snapshot. It is safe for looking around, since `main` has not moved. Don't commit while detached: a commit made there belongs to no branch and is easy to lose. If you want to start work from the old snapshot, give it a branch first with `git switch -c new-branch-name`.
-
-"Visiting" is not undoing. Here are the three types of "undos":
+`git show` only *looks*. To put the whole working folder back to that point 
 
 * To undo a commit by adding a *new* commit that undoes the previous commit, use `git revert`. History is only added to, so this is the safe choice for pushed commits. Reverting D gives a new commit D' where D' undoes D to get back to C (to get back to B, revert twice, etc):
 
@@ -288,24 +270,16 @@ git reset --hard                           # now throw the change away: the file
 cat notes.txt                              # just the good line
 ```
 
-+----------------------+-----------+-----------+---------------------------+
-| `git reset` option   | moves the | un-stages | changes your files        |
-|                      | branch    |           |                           |
-+:=====================+:=========:+:=========:+:==========================+
-| `--soft`             | yes       | no        | no                        |
-+----------------------+-----------+-----------+---------------------------+
-| `--mixed` (default)  | yes       | yes       | no                        |
-+----------------------+-----------+-----------+---------------------------+
-| `--hard`             | yes       | yes       | **yes** (destroys         |
-|                      |           |           | uncommitted work)         |
-+----------------------+-----------+-----------+---------------------------+
+Because `reset` rewrites history, don't use it on commits you have already pushed (use `revert` for those). If you reset too far, `git reflog` lists where HEAD has been, and `git reset --hard <code>` returns there. There is also a temporary "visit a previous commit" which can be done with `git switch --detach <commit>`, `HEAD` points straight at a commit instead of at a branch (a **detached HEAD**), as if you were visiting the old snapshot. It is safe for looking around, since `main` has not moved. Don't commit while detached: a commit made there belongs to no branch and is easy to lose. If you want to start work from the old snapshot, you can start a branch once detached.
 
-Because `reset` rewrites history, don't use it on commits you have already pushed (use `revert` for those). If you reset too far, `git reflog` lists where HEAD has been, and `git reset --hard <code>` returns there. Clean up the playground:
+Clean up the playground:
 
 ```bash
 git switch main
 git branch -D undo-demo                    # delete the throw-away branch (-D because it was never merged)
 ```
+
+
 
 Now let's talk about a powerful.
 
