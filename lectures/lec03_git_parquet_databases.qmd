@@ -269,6 +269,7 @@ git status                                 # should be clean
 ```bash
 echo "scribble" >> notes.txt
 git commit -am "made a bad scribble"
+git log --oneline -n 3                     # bad commit atop
 git reset --hard HEAD~1                    # branch moves back, scribble is gone but everything else you were working on as well
 git log --oneline -n 3                     # no more bad commit - it's struck from history
 ```
