@@ -105,11 +105,13 @@ Each level is confusing. The *staging area* lets you choose exactly which change
 **Live demo: commit and push this lecture.** Let's save the file you are reading to GitHub. Add a blank line at the end of the lecture file (any whitespace will do). First we take a look at what is gitignored.
 
 ```bash
-#do not run the commands in this chunk on your machine --- this is for me, the owner of the course repo only
+#do not run the cmds in this chunk on your machine --- this is for me, the owner of the course repo only
 cd ~/workspace/HUJI_52002_Fall_2026
 ```
 
-Now we walk through the add-commit-push path. 
+Now we walk through the 
+add-commit-push path. 
+
 
 ```bash
 git status                          # which branch am I on (we'll discuss this soon)? what has changed in this branch?
