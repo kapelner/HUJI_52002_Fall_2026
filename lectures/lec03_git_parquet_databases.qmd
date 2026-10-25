@@ -156,7 +156,7 @@ Remember: once you hit `git push`, it sends your new commits to GitHub, the moth
 What will likely not be useful `git` commands for you in this class:
 
 * `git pull` brings other people's (or your other computer's) commits down. Pull before you start working, and push when you are done. Since nobody else is pushing to your repo, there is nothing ever to pull!
-* Set your working directory to your main worksapce folder then `git init <new repo_name>` creates a new repo on your local machine. Useful for you own tracking. There's no mothership unless you connect it to one. `git` can work without a mothership. But if Zohar's cat eats your computer... Also, don't run `git init` inside a folder that is already inside another repo, because that creates a repo within a repo. That's a huge mess... To connect your local repo to the mothership, make a new repo on the mothership then use `git remote add origin <url>`.
+* Set your working directory to your main worksapce folder then `git init <new repo_name>` creates a new repo on your local machine. Useful for you own tracking. There's no mothership unless you connect it to one. `git` can work without a mothership. But if Zohar's cats pee on your computer... Also, don't run `git init` inside a folder that is already inside another repo, because that creates a repo within a repo. That's a huge mess... To connect your local repo to the mothership, make a new repo on the mothership then use `git remote add origin <url>`.
 
 
 ## What is a branch?
@@ -767,7 +767,7 @@ The Parquet files are about **10 times smaller** than the CSV, and even smaller 
 +---------------------------+----------------------------+----------------------------+
 |                           | `covid_R.parquet`          | `covid_python.parquet`     |
 +:==========================+:===========================+:===========================+
-| Writer                    | parquet-cpp-arrow 24.0.0   | parquet-cpp-arrow 25.0.1   |
+| Writer                    | parquet-cpp-arrow 26.0.0   | parquet-cpp-arrow 25.0.1   |
 +---------------------------+----------------------------+----------------------------+
 | `date`                    | `date32` (a date)          | `timestamp[us]`            |
 +---------------------------+----------------------------+----------------------------+
@@ -828,99 +828,54 @@ rm covid_R.parquet covid_python.parquet #cleanup
 
 ## When the data is really large
 
-Everything above fits in memory on any laptop. So let us make a dataset that is 50 times bigger: `covid.csv` stacked 50 times, with a `copy` column saying which copy a row came from. That's' 44 million rows. (The numbers are copies of each other, so this is a toy dataset, but the size and the shape are real.) The script is in `lectures/scripts/lec03/` and writes the data twice: once as a single big CSV, and once as a single big Parquet file:
+Everything above fits in memory on any laptop. So let us make a dataset that is 50 times bigger: `covid.csv` stacked 50 times. That's 44 million rows. (The 50 blocks are identical copies of each other, so this is a toy dataset, but the size and the shape are real.) The script is in `lectures/scripts/lec03/` and writes the data twice: once as a single big CSV, and then converts it to a single big Parquet file. We may see later why the convention is many parquet files that get stitched together.
 
 ```bash
 python3 ../../lectures/scripts/lec03/make_covid_big.py covid.csv 50 --csv   # about 80 seconds
-ls -alh # 1.8G raw CSV vs 163M parquet
+ls -alh # about 1.8 GB raw CSV vs 170 MB parquet
 ```
 
-The question for both versions: *what is the total of `cases` in Texas, separately for every copy?*
+Consider asking the question: *what is the total of `cases` in Texas?*
 
 We will not examine the R/Python code for this as we will leave it for another lecture. Here are the results, split into the time to **load** the data and the time to **ask** the question (median of 3 runs on a 12-core machine with 41 GB of memory, with the file already in the operating system's cache; yours will differ but the ranking should not). every tool that can use several cores (`fread`, the `pyarrow` CSV reader in `pandas`, `arrow` and `pyarrow`) was limited to 6 threads, which is the default of `data.table`, so the comparison is fair (`awk` always uses one). A tool that streams (`awk`) or reads lazily (`arrow`) has no load step:
 
 +------------------+-------------------------------+--------------+---------+---------+-------------+
 | Format           | Tool                          | Load         | Ask     | Total   | Peak memory |
 +:=================+:==============================+=============:+========:+========:+============:+
-| CSV (1.8 GB)     | R: `data.table::fread`        | 13.8 s       | 2.0 s   | 15.8 s  | 3.5 GB      |
+| CSV (1.8 GB)     | R: `data.table::fread`        | 6.8 s        | 1.1 s   | 7.9 s   | 3.3 GB      |
 |                  +-------------------------------+--------------+---------+---------+-------------+
-|                  | Python: `pandas` with         | 8.2 s        | 3.8 s   | 12.0 s  | 6.1 GB      |
+|                  | Python: `pandas` with         | 3.0 s        | 0.3 s   | 3.3 s   | 5.8 GB      |
 |                  | `engine="pyarrow"`            |              |         |         |             |
 |                  +-------------------------------+--------------+---------+---------+-------------+
-|                  | `awk` (`gawk`)                | none         | 64 s    | 64 s    | 5 MB        |
+|                  | `awk` (`gawk`)                | none         | 36 s    | 36 s    | 5 MB        |
 |                  +-------------------------------+--------------+---------+---------+-------------+
-|                  | `awk` (`mawk`)[^mawk]         | none         | 20 s    | 20 s    | 3 MB        |
+|                  | `awk` (`mawk`)[^mawk]         | none         | 9 s     | 9 s     | 3 MB        |
 +------------------+-------------------------------+--------------+---------+---------+-------------+
-| Parquet (163 MB) | R: `arrow`                    | none         | 1.7 s   | 1.7 s   | 0.5 GB      |
+| Parquet (170 MB) | R: `arrow`                    | ~0*          | 0.8 s   | 0.8 s   | 0.5 GB      |
 |                  +-------------------------------+--------------+---------+---------+-------------+
-|                  | Python: `pyarrow`             | none         | 1.1 s   | 1.1 s   | 0.5 GB      |
+|                  | Python: `pyarrow`             | ~0*          | 0.65 s  | 0.65 s  | 0.5 GB      |
 +------------------+-------------------------------+--------------+---------+---------+-------------+
 
-: The same question on the CSV and on the Parquet file. Peak memory is the most that Linux reports the whole run used. The machine was also busy with other work during these runs, so the times are on the slow side; the ranking is what matters.
+: The same question on the CSV and on the Parquet file. Peak memory is the most that Linux reports the whole run used. * Opening takes milliseconds. All it does is read the schema in the footer.
 
-[^mawk]: `mawk` is a different implementation of `awk` that is faster than the default `gawk` on massive datasets (about three times faster here), and it runs the same programs: the syntax of everything in this course is identical. It lacks some GNU-only extras (for example the functions `asort` and `gensub`). We are not covering it officially but if you want to use it, install it with `sudo apt install mawk` (on a Mac: `brew install mawk`) and run `mawk` in place of `awk`.
+[^mawk]: `mawk` is a different implementation of `awk` that is faster than the default `gawk` on massive datasets (about four times faster here), and it runs the same programs: the syntax of everything in this course is identical. It lacks some GNU-only extras (for example the functions `asort` and `gensub`). We are not covering it officially but if you want to use it, install it with `sudo apt install mawk` (on a Mac: `brew install mawk`) and run `mawk` in place of `awk`.
 
-With its default CSV reader, `pandas` is much slower: 80 s to load (about 85 s in total) and 5.4 GB. 
+Note: with its default CSV reader, `pandas` is much slower: 30 s to load (about 33 s in total) and 4.1 GB. Use the more modern engine in Python.
 
 WARNING*** `pandas engine="pyarrow"`: it guesses the type of every column itself, so it turns `fips` into a number and drops the leading zero (e.g., `06001` becomes `6001`). That could be bad - double check always your data types when loading CSVs!!
 
-Read the Load and memory columns carefully. `fread` and `pandas` need several gigabytes *because they load all the data first*, and that is the number that decides whether your laptop can do the job at all. On a laptop with 8 GB of memory and a file double or triple this size, they simply fail with "out of memory". `awk` and the Parquet versions never hold the whole data: `awk` keeps only a running total for each `copy` (megabytes), and `arrow` streams through the file a piece at a time and keeps only the running totals (about 0.5 GB). The same code would work on a 500 GB file. (The 163 MB is flattering: the 50 copies are identical, which compresses much better than real data does. The memory and the speed advantage are the real result.)
+Read the Load and memory columns carefully. `fread` and `pandas` need several gigabytes *because they load all the data first*, and that is the number that decides whether your laptop can do the job at all. On a laptop with 8 GB of memory and a file double or triple this size, they simply fail with "out of memory". `awk` and the Parquet versions never hold the whole data: `awk` keeps only a single running total (megabytes), and `arrow` streams through the file a piece at a time and keeps only the running totals (about 0.5 GB). The same code would work on a 500 GB file. (The 170 MB is a little flattering: covid data is very regular, with the same county and state names repeated down the column, which compresses better than many real datasets do. The memory and the speed advantage are the real result.)
 
-How can parquet be this much faster? The annotations again:
+How can parquet be this much faster?
 
-* It read **3 of the 7 columns** (`state`, `cases`, `copy`) and never touched the others.
-* It used the **row-group statistics** to skip blocks that cannot contain Texas.
+* It read **2 of the 6 columns** (`state` and `cases`) and never reads or touches the others whatsoever.
+* Each *row group* (a block of rows) stores the minimum and maximum of every column in the footer. A query can read those **row-group statistics** and skip any block that cannot contain a match, without decompressing it. (Our Texas question cannot use this, since every block of this file contains every state. But a question like "cases after March 2021" on a file sorted by date would skip most of the blocks.)
 * It processed **one row group at a time**, so memory never held the whole dataset.
-* It can skip row groups using the `copy` column's min and max. Each copy is its own row group, so asking only about the first five copies reads only five of the 50 row groups. That took 0.5 s in R and 0.13 s in Python on our machine (versus 1.7 s and 1.1 s for all 50):
 
-```r
-open_dataset("covid_big.parquet") |> filter(state == "Texas", copy < 5) |> group_by(copy) |> summarise(cases = sum(cases)) |> collect()
-```
-
-(Parquet can also be split over many files, one folder per value of a column, so whole files can be skipped. That is called *partitioning*, and we will return to it in a later lecture.)
-
-The same file can be asked with SQL by DuckDB, a database that runs on Parquet files and is available in both R and Python. In R, the `duckdb` package (also with 6 threads) gave the same answer in 0.9 s:
-
-```r
-con <- DBI::dbConnect(duckdb::duckdb())
-DBI::dbGetQuery(con, "SELECT copy, sum(cases) AS cases
-                      FROM read_parquet('covid_big.parquet')
-                      WHERE state = 'Texas' GROUP BY copy")
-```
-
-### Can't `awk` do this in constant memory?
-
-Yes, and that is a fair objection, because a streaming tool never loads the data. Count the rows in each state, first with `awk` on the CSV and then with `arrow` on the Parquet file:
 
 ```bash
-awk -F, 'NR>1 {n[$3]++} END {for (s in n) print s "," n[s]}' covid_big.csv | sort -t, -k2,2nr | head -n 3
+rm covid_big.parquet #cleanup
 ```
-
-```r
-open_dataset("covid_big.parquet") |> count(state) |> arrange(desc(n)) |> collect()
-```
-
-Both give the same answer (Texas 3,350,100, Georgia 2,260,450, Virginia 1,844,300). We also timed a second question with each tool, the total of Texas `cases` for each `copy`:
-
-+--------------------------------------+---------------------+-----------------------+
-|                                      | `awk` on the CSV    | `arrow` on Parquet    |
-+:=====================================+====================:+======================:+
-| Rows per state: time                 | 68 s                | 1.5 s                 |
-+--------------------------------------+---------------------+-----------------------+
-| Texas cases per copy: time           | 64 s                | 1.7 s                 |
-+--------------------------------------+---------------------+-----------------------+
-| Peak memory (rows per state)         | 4.6 MB              | 420 MB                |
-+--------------------------------------+---------------------+-----------------------+
-
-: One run, one machine. `awk` uses one core, `arrow` uses six.
-
-On memory, `awk` wins by a factor of nearly a hundred: 4.6 MB, because it keeps only a counter for each of the 55 states. The price is **time**. `awk` has to read and split every one of the 1.8 GB for *every* question, so each question costs about a minute, and ten questions cost more than ten minutes (`mawk` is about three times faster than `gawk` here, so about 20 s per question). `arrow` answered in about two seconds, because the first question needed only the `state` column (one of seven) and it spread the work over several cores. Converting the CSV to Parquet costs one pass, once, and then every later question is cheap.
-
-Streaming also has limits that Parquet does not. `awk` stays at constant memory only when the number of groups is small: a table of 44 million different keys would not fit in a hash map. A median needs all the values, a sort needs temporary files, and a join needs one of the two tables in memory. And as the `cut` example earlier showed, it breaks on a CSV with quoted fields (note that we had to turn quoting off to write `covid_big.csv`, or `awk` would see `"Texas"` with the quotes).
-
-So the honest rule is: for a single question about a file you will read once, `awk` on the CSV is fine and Parquet does not help. Parquet pays off when you will ask **many** questions about the **same** large table, and when each question touches only some of its columns.
-
-Clean up the big files when you are done, since they take about 2 GB: `rm covid_big.parquet covid_big.csv`.
 
 ## What it cannot do
 
@@ -976,38 +931,257 @@ Putting the four formats side by side, for tabular data like `covid.csv`. A ✓ 
 |                  | data to anyone | sending        | data             | tabular data  |
 +------------------+----------------+----------------+------------------+---------------+
 
-: Notes: JSON gets *partly* for appending because a JSON Lines file (one record per line) can be appended to, but an ordinary JSON array cannot. CSV and CSV + `xz` get *partly* for bigger-than-memory queries because `awk` and friends stream through the file, but they have to read all of it, every time.
+No format wins on every consideration! 
+* CSV wins on universality, 
+* `xz` on size, 
+* JSON on non-tabular data (nested data), 
+* Parquet on *reading* and *querying* a lot of tabular data quickly, which is why it is the one that data engineers choose for analysis.
 
-No format wins every row. CSV wins on universality, `xz` on size, JSON on nesting, and Parquet wins on everything about *reading a lot of tabular data quickly*, which is why it is the one that data engineers choose for analysis.
+# Databases: when Parquet is not enough
 
-# Databases: when a CSV is not enough
-
-A CSV is a fine way to *ship* data, and the tools from the last two lectures are fine for a quick look. But as soon as you ask many questions of the same data, or change it, or share it, the file starts to hurt. In this unit we feel the pain first, and then fix it with a **database**: a program that stores data in a structured way and answers questions about it quickly. We will use **PostgreSQL** ("Postgres"), which you installed in the setup guide.
+Parquet fixed a lot: it is small, it remembers the column types, and it reads only the columns you ask for. For a big table that you write once and then analyze, it is often all you need. But as soon as you want to find a few rows quickly, *change* the data, let several people or programs use it at once, or enforce rules about what may be stored, Parquet starts to hurt. In this unit we feel that pain first, and then fix it with a **database**: a program that stores data in a structured way and answers questions about it quickly. 
 
 We keep working in the same scratch folder as the Parquet unit above (`scratch/lec03`, with `covid.csv` in it).
 
-## Where a CSV hurts
+## Where a Parquet file hurts
 
-**1. Every question is a full scan.** A CSV has no way to jump to the rows you want, so each question reads the whole file from the top:
+**1. Finding a few rows still means scanning.** Parquet reads only the columns you need and can skip row groups whose min/max cannot match, but it has no way to jump straight to "Harris, Texas". Unless the file happens to be sorted by the column you filter on, every row group must still be read and decompressed. A question that wants 300 rows out of 884,737 still reads all of the `state` and `county` columns. On a 35 MB file that is instant. On a 1.8 GB file it is many seconds, **for every question you ask**.
 
-```bash
-time awk -F, '$3=="Texas" && $2=="Harris"' covid.csv | wc -l   # about 1.3 s
-time awk -F, '$3=="Texas" && $2=="Harris"' covid.csv | wc -l   # again: same
+Let us feel it on the 44-million-row `covid_big.parquet` from before. Imagine an application that must look up a single county on a single day, again and again for different counties. Here are 20 such lookups:
+
+```{r}
+library(arrow)
+library(dplyr)
+
+setwd("~/workspace/HUJI_52002_Fall_2026/scratch/lec03")
+
+ds <- open_dataset("covid_big.parquet")
+set.seed(1)
+counties <- ds |> distinct(state, county) |> collect()
+counties <- counties[sample(nrow(counties), 20), ]   # 20 random counties
+
+system.time(
+  for (i in 1:20) {
+    ds |>
+      filter(state == counties$state[i], county == counties$county[i], date == as.Date("2020-12-31")) |>
+      summarise(cases = max(cases)) |>
+      collect()
+  }
+)
 ```
 
-The second run is no faster than the first. On this 35 MB file a second is fine. On a 35 GB file it is twenty minutes, **for every question you ask**.
+About a second per lookup, and 18 seconds for 20. The time does not depend on how many rows match (a lookup that matches 50 rows costs the same as one that matches 3 million), only on how much data must be read to *find* them. No rows can be skipped and Parquet reads the whole `state`, `county` and `date` columns each time. An application that has to answer thousands of these cannot wait a second for each one. We will run the very same 20 lookups in Postgres below.
 
-**2. The file doesn't know what the data means.** To `grep` and `awk`, a CSV is just text. Recall that `grep Texas` counts 67,497 rows while the right answer is 67,002: it also counted the 495 rows of Texas *County*, in Missouri and Oklahoma. And nothing stops a `cases` column from containing `N/A` or an empty string.
+**2. The file is write-once.** To fix a single number, you rewrite the whole file (or a whole row group, plus the footer). There is no `UPDATE`, and appending one row means writing a new file or rewriting an old one. A CSV is no better for a row in the middle.[^csv-append] Databases pay for their structure when you load data, and win when you ask questions and make small changes.
 
-**3. Changing one value means rewriting the file.** To fix a single number in the middle of a CSV, `sed -i` reads and writes the entire file.
+Let us feel it. We insert one new row in the *middle* of the 44-million-row `covid_big.parquet`. Since there is no `INSERT`, we must read the whole table, split it at the middle, put the new row in between, and write everything back out. (We write to a new file because we still need the original.)
 
-**4. Several people or programs at once.** Two jobs appending to the same CSV at the same time can interleave their lines and corrupt it. There is no protection if the machine crashes halfway through a write.
+```{r}
+library(arrow)
 
-**5. Combining files.** Adding each state's population to every row needs a second CSV and a `join`, with both files sorted first.
+setwd("~/workspace/HUJI_52002_Fall_2026/scratch/lec03")
 
-One more thing is *not* a problem. **Adding a line to a CSV is very fast**, faster than inserting into a database. Databases pay for their structure when you load data, and win when you ask questions.
+new_row <- data.frame(date = as.Date("2021-01-01"), county = "Harris", state = "Texas",
+                      fips = "48201", cases = 1L, deaths = 0L)
 
-## Connecting to PostgreSQL
+system.time({
+  tbl <- read_parquet("covid_big.parquet", as_data_frame = FALSE)   # stay in Arrow memory
+  mid <- tbl$num_rows %/% 2
+  tbl <- concat_tables(tbl$Slice(0, mid), arrow_table(new_row, schema = tbl$schema), tbl$Slice(mid))
+  write_parquet(tbl, "covid_big_plus1.parquet", compression = "zstd")
+})
+```
+
+About 12 seconds on our machine, for one row. The CSV is not much better. A text file has no gaps, so to put a line in the middle the program streams the first half, writes the new line, and streams the rest. Here `sed` does it on a copy (`22118426i` means "insert before line 22,118,426"):
+
+```bash
+cp covid_big.csv covid_big_middle.csv
+time sed -i '22118426i 2021-01-01,Harris,Texas,48201,1,0' covid_big_middle.csv   # about 6 seconds
+sed -n '22118425,22118427p' covid_big_middle.csv                                  # our row is there
+```
+
+The CSV is faster here only because it does not have to re-encode and re-compress the data. Both cost time is O(n) where n is the number or rows, not to the one row: double the file and the time doubles, and a thousand single-row changes cost a thousand rewrites.
+
+```bash
+rm covid_big_plus1.parquet covid_big_middle.csv #cleanup
+```
+
+[^csv-append]: Appending a line to the *end* of a CSV is the exception: the operating system just writes after the last byte, so it is very fast however large the file is.
+
+**3. Several people or programs at once.** Nothing stops two jobs from writing the same Parquet file at the same time, and a reader can open it while it is half written. There is no protection if the machine crashes halfway through a write.
+
+Let us feel it. First, four jobs save their own version of the table to the same file at the same time (threads stand in for four programs):
+
+```{python}
+import os
+import subprocess
+import sys
+import time
+from concurrent.futures import ThreadPoolExecutor
+
+import pandas as pd
+import pyarrow.parquet as pq
+
+os.chdir(os.path.expanduser("~/workspace/HUJI_52002_Fall_2026/scratch/lec03"))
+
+df = pd.read_parquet("covid_python.parquet")
+
+def save(job):                                        # each job saves its version to the SAME file
+    df.assign(job=job).to_parquet("shared.parquet")
+
+with ThreadPoolExecutor(4) as pool:                   # 4 jobs save at the same time
+    list(pool.map(save, range(4)))
+
+print(pq.read_table("shared.parquet").column("job").unique().to_pylist())   # which job's data is in the file?
+```
+
+No error, and the file opens. But it holds the data of only one job (run it a few times and it changes), and the other three jobs' work is gone without a warning. This is a *lost update*, and nobody was told. (Writing the same file at the same instant can also interleave the bytes of two jobs, which is worse. We were lucky here: the threads mostly took turns.)
+
+Now the worse case. One job rewrites a big file, which takes about 10 seconds. While it is still writing, a reader opens the file. Then the machine "crashes" (we kill the job) halfway:
+
+```{python}
+rewrite = """
+import pyarrow.parquet as pq
+pq.write_table(pq.read_table('covid_big.parquet'), 'shared.parquet', compression='zstd')
+"""
+
+writer = subprocess.Popen([sys.executable, "-c", rewrite])   # start rewriting shared.parquet
+time.sleep(4)                                                 # let it get partway through
+try:
+    pq.read_table("shared.parquet")                           # a reader opens it mid-write
+except Exception as e:
+    print("reader:", e)
+writer.kill()                                                 # the crash
+writer.wait()
+print(os.path.getsize("shared.parquet"), "bytes left behind")
+```
+
+```{python}
+#| error: true
+pq.read_table("shared.parquet")                               # try to use the file afterwards
+```
+
+The error is `Parquet magic bytes not found in footer. Either the file is corrupted or this is not a parquet file.` A Parquet file ends with its footer (the metadata that says where everything is), and the footer is written last. A file whose writer stopped early has no footer, so the whole file is unreadable. All the data that did get written is useless, and the good file that used to be there was already overwritten. The same error is what a reader sees if it arrives while the writer is working. A database never shows a reader a half-finished change: it writes a log first, and a crash is undone when it restarts. We see this below.
+
+```bash
+rm shared.parquet #cleanup
+```
+
+**4. Types, but no rules.** Parquet knows that `cases` is an integer, which a CSV does not. But it knows nothing about what values *make sense*: nothing refuses a negative `cases`, a `state` that is not a state, or the same county and date appearing twice. The writer decides, and nobody checks it when the data arrives.
+
+Let us put three pieces of nonsense into the data (a negative `cases`, a `state` called "Israel" and a repeated row) and write it to Parquet:
+
+```{r}
+library(arrow)
+library(dplyr)
+
+setwd("~/workspace/HUJI_52002_Fall_2026/scratch/lec03")
+
+df <- read_csv_arrow("covid.csv", col_types = schema(fips = string()))
+df$cases[1] <- -5000L                 # nonsense example 1: negative cases
+df$state[2] <- "Israel"               # nonsense example 2: not an American state
+df <- bind_rows(df, df[3, ])          # nonsense example 3: the same county and date twice
+write_parquet(df, "bad.parquet")      # it writes the nonsense permanently to the dataset without throwing any error
+
+bad <- read_parquet("bad.parquet")
+bad |> slice(c(1, 2, 3, n())) |> select(date, county, state, cases)
+```
+
+Parquet wrote all of it without a single warning, and it will hand it back to the next person who reads the file. Compare what Postgres does with a bad row in "The database checks your data" below.
+
+```bash
+rm bad.parquet
+```
+
+**5. Combining tables.** Adding each state's population to every row needs a second table and a program that can join them. Parquet only stores the tables; the joining is left to whichever tool reads them.
+
+**6. Relationships between tables.** Suppose counties live in one table and their cases in another. Nothing in Parquet knows that every row of the second must point to a row of the first, so you can delete a county and leave its cases behind, or add cases for a county that does not exist. A database can state this rule once (a *foreign key*) and then refuse to break it.
+
+**7. Reading a whole row.** Parquet stores each column in its own block, which is wonderful for adding up one column and poor for fetching *everything* about one record (for example, one customer's name, address, orders and balance for a web page). Assembling a single row means reading from every column's block. A database stores rows together and, with an index, goes straight there.
+
+**8. Changing the schema.** To add a column or change a type, you rewrite every file. If you only rewrite some of them, the files now disagree and every reader has to cope with the mix. A database changes the definition of the table once (`ALTER TABLE`) and handles the old rows itself.
+
+**9. Who may see what.** A Parquet file is a file, so permissions are all-or-nothing: whoever can open it can read every column and every row. A database has users and roles, and can allow one person to see only some tables, columns or rows, and another to change them. That matters as soon as a table holds anything private.
+
+**10. Deleting data.** Privacy rules (such as the GDPR "right to be forgotten") require you to remove one person's records on request. In Parquet that means rewriting the files that contain them, and the old copies in backups and downloads are still there. In a database it is a single `DELETE`, and the history is managed in one place.
+
+**11. Backups, history and recovery.** If a bad job overwrites a Parquet file, the old version is gone unless somebody remembered to copy it, and nothing records who changed what. A database keeps a log of every change, so it can restore the data to the state it had at any chosen minute, and can copy itself to a second machine continuously in case the first one dies.
+
+Parquet is not to blame here. It was never meant to do all these jobs!! It is just a *file format* for storing a table well, and everything on this list is a service that a *database* provides on top of storing the table.
+
+## Databases!
+
+### A short history
+
++-----------+----------------------------------------------------------------------------------------------+
+| Year      | What happened                                                                                |
++:==========+:=============================================================================================+
+| 1970      | **Edgar Codd** at IBM publishes "A Relational Model of Data for Large Shared Data Banks":    |
+|           | store data in tables (relations) and ask for it by *what* you want, not by how to find it.   |
+|           | Until then, databases were tangled networks of pointers that programmers navigated by hand.  |
++-----------+----------------------------------------------------------------------------------------------+
+| 1974-79   | IBM builds **System R** and invents the query language that becomes **SQL**. At Berkeley,    |
+|           | **Michael Stonebraker** builds **Ingres**, a second relational system.                       |
++-----------+----------------------------------------------------------------------------------------------+
+| 1977-79   | **Larry Ellison** founds the company that becomes **Oracle**, and in 1979 it sells the first |
+|           | commercial SQL database. IBM's **DB2** follows in 1983.                                      |
++-----------+----------------------------------------------------------------------------------------------+
+| 1986-87   | SQL becomes an ANSI standard (and an ISO standard a year later), so queries move between     |
+|           | products. Stonebraker starts **Postgres** ("post-Ingres") at Berkeley.                       |
++-----------+----------------------------------------------------------------------------------------------+
+| 1989      | **Microsoft SQL Server** ships, built with Sybase.                                           |
++-----------+----------------------------------------------------------------------------------------------+
+| 1995      | **MySQL** is released by a small Swedish company and, being free and easy, becomes the       |
+|           | database behind the early web (the "LAMP" stack).                                            |
++-----------+----------------------------------------------------------------------------------------------+
+| 1996      | Postgres gets SQL support and is renamed **PostgreSQL**. It stays open-source and            |
+|           | community-owned.                                                                             |
++-----------+----------------------------------------------------------------------------------------------+
+| 2000      | **SQLite**: a database that is just one file, with no server at all. It ends up inside every |
+|           | phone and web browser.                                                                       |
++-----------+----------------------------------------------------------------------------------------------+
+| 2009-10   | The **NoSQL** wave (**MongoDB**, **Redis**, Cassandra) trades some of SQL's guarantees for   |
+|           | easier scaling. Oracle buys Sun, and with it MySQL, so MySQL's creators fork it as           |
+|           | **MariaDB**.                                                                                 |
++-----------+----------------------------------------------------------------------------------------------+
+| 2010s     | Cloud warehouses appear (BigQuery, Redshift, Snowflake) that run SQL over columnar data, the |
+|           | same idea as Parquet. Most NoSQL systems then add SQL back.                                  |
++-----------+----------------------------------------------------------------------------------------------+
+| 2019      | **DuckDB** appears: SQLite's "just a file" idea, but for analytics, and it queries Parquet   |
+|           | directly.                                                                                    |
++-----------+----------------------------------------------------------------------------------------------+
+
+: Dates are from my memory of each project's history; check before quoting one.
+
+### Who uses what?
+
+Nobody counts the users of a database, because most are free to download and run anywhere. The best public number is the annual **Stack Overflow Developer Survey**, which asked developers which databases they had done extensive development work with in the past year. (Developers could name several, so the percentages add up to more than 100%.)
+
++----------------------+-------------+------------------------------------------+---------------------+
+| Database             | Born        | Who makes it                             | Developers using it |
++:=====================+:============+:=========================================+====================:+
+| PostgreSQL           | 1986 (1996) | open-source community                    | 55.6%               |
++----------------------+-------------+------------------------------------------+---------------------+
+| MySQL                | 1995        | Oracle (since 2010)                      | 40.5%               |
++----------------------+-------------+------------------------------------------+---------------------+
+| SQLite               | 2000        | D. Richard Hipp's small team             | 37.5%               |
++----------------------+-------------+------------------------------------------+---------------------+
+| Microsoft SQL Server | 1989        | Microsoft                                | 30.1%               |
++----------------------+-------------+------------------------------------------+---------------------+
+| Redis                | 2009        | Redis Ltd. (key-value store, not SQL)    | 28.0%               |
++----------------------+-------------+------------------------------------------+---------------------+
+| MongoDB              | 2009        | MongoDB Inc. (document store, not SQL)   | 24.0%               |
++----------------------+-------------+------------------------------------------+---------------------+
+| MariaDB              | 2009        | MariaDB Foundation (a fork of MySQL)     | 22.5%               |
++----------------------+-------------+------------------------------------------+---------------------+
+| Oracle               | 1979        | Oracle                                   | 10.6%               |
++----------------------+-------------+------------------------------------------+---------------------+
+
+: Share of all respondents of the 2025 Stack Overflow Developer Survey (<https://survey.stackoverflow.co/2025/technology>). Oracle is a big earner but is used by a small fraction of developers: it is common inside big companies and rare in new projects.
+
+PostgreSQL has been the most used for a few years now, which is one reason we use it here. Everything we do in this unit is standard SQL and works, with small changes, in all of the relational systems above.
+
+We will use **PostgreSQL** ("Postgres"), which you installed in the setup guide.
 
 Check that the server is running and that you can log in:
 
@@ -1091,6 +1265,48 @@ The plan changes to an `Index Scan` (or `Bitmap Index Scan`) and the time drops 
 
 The time to answer is now almost independent of the table's size. That is the reason databases exist. The cost is paid once, when you build the index (about 1.2 seconds here), plus a little extra on every insert to keep the index up to date and some extra disk space.
 
+## Indexes at scale
+
+Now the same 20 lookups as in the Parquet unit, but against the 44-million-row `covid_big.csv`. Load it into a table of its own and build an index on the three columns we filter by (the load takes about a minute, the index about another minute and a quarter, and the table takes about 3 GB on disk, of which the index is 0.3 GB):
+
+```sql
+CREATE TABLE covid_big (date date, county text, state text, fips text, cases integer, deaths integer);
+\copy covid_big FROM 'covid_big.csv' CSV HEADER
+CREATE INDEX ON covid_big (state, county, date);
+```
+
+Then ask the same 20 questions from R, through the `DBI` package, which talks to Postgres:
+
+```{r}
+library(arrow)
+library(dplyr)
+library(DBI)
+
+setwd("~/workspace/HUJI_52002_Fall_2026/scratch/lec03")
+
+ds <- open_dataset("covid_big.parquet")
+set.seed(1)
+counties <- ds |> distinct(state, county) |> collect()
+counties <- counties[sample(nrow(counties), 20), ]   # the same 20 random counties
+
+con <- dbConnect(RPostgres::Postgres(), dbname = "lec03")
+system.time(
+  for (i in 1:20) {
+    dbGetQuery(con,
+      "SELECT max(cases) FROM covid_big WHERE state = $1 AND county = $2 AND date = $3",
+      params = list(counties$state[i], counties$county[i], as.Date("2020-12-31")))
+  }
+)
+dbDisconnect(con)
+```
+
+```
+   user  system elapsed 
+ ...        ...   0.03
+```
+
+0.03 seconds for all 20, about 1.5 ms each, compared with 19 seconds for Parquet: **roughly 600 times faster**. The index lets Postgres jump straight to the 50 matching rows instead of reading 44 million. Parquet is the better format for scanning entire columns (try adding up `cases` for the whole table: Parquet wins easily), and a database is the better tool for finding a few rows fast. Drop the big table when you are done: `DROP TABLE covid_big;`.
+
 ## The database checks your data
 
 Try to add a row with a nonsense value:
@@ -1111,7 +1327,7 @@ UPDATE covid SET deaths = deaths + 1
   WHERE state = 'Texas' AND county = 'Harris' AND date = '2020-12-31';
 ```
 
-Compare that with `sed -i` on a 35 GB file. You can also wrap several changes in a **transaction** (`BEGIN; ... COMMIT;`), and either all of them happen or none of them do. If the machine crashes halfway through, the database recovers to a consistent state.
+A database does not care where a row "goes": it writes the change into free space and updates its index, which takes a fraction of a millisecond. Compare that with rewriting a 35 GB Parquet file. You can also wrap several changes in a **transaction** (`BEGIN; ... COMMIT;`), and either all of them happen or none of them do. If the machine crashes halfway through, the database recovers to a consistent state.
 
 ## Using the database from the shell
 
@@ -1140,8 +1356,8 @@ psql -At -c "SELECT pg_size_pretty(sum(pg_database_size(datname)))
 
 That is a lot of space for a program whose job is to store rows. But look at what it bought you in this unit:
 
-- **Speed:** the same question went from 1.3 s with `awk` to under 1 ms with an index, and that stays true as the table grows.
-- **Correctness:** typed columns refused `'N/A'` as a number, and `state = 'Texas'` could not match a county.
+- **Speed:** the same question went from scanning every row (about 70 ms here, and growing with the table) to under 1 ms with an index, and that stays true as the table grows.
+- **Correctness:** typed columns refused `'N/A'` as a number, and rules such as `NOT NULL` and `UNIQUE` can refuse other nonsense when it arrives.
 - **Safe changes:** single-row updates and transactions that happen completely or not at all, even if the machine crashes.
 - **Many users at once:** many programs reading and writing the same tables at once without corrupting them.
 - **A query language** instead of one-off shell pipelines: SQL, with joins, grouping and sorting, and a planner that picks how to run each query.
