@@ -1,0 +1,63 @@
+---
+title: "Lecture 4: Remote Machines"
+subtitle: "Big Data Algorithms"
+format:
+  html:
+    toc: true
+    toc-depth: 2
+    number-sections: true
+    code-copy: true
+    embed-resources: true
+---
+
+This section was moved here from Lecture 3 so that it is taught once we have access to a remote machine. (The data lake section that used to be here is now in Lecture 13, `lec13_data_lakes_nosql_ethics.qmd`.)
+
+# Working on remote machines: `ssh`, `scp`, `rsync` and `tmux`
+
+Big data rarely lives on your laptop. You work on a server or a cluster: a computer in a machine room that you reach over the network, with far more cores, memory and disk than yours. Everything you have learned so far works there too, because you give it commands through a shell. The tools below get you there, move the files, and keep your jobs alive.
+
+(These examples need an account on a remote machine. Replace `user@server` with your own login.)
+
+## `ssh`: log in to another machine
+
+```bash
+ssh user@server          # log in; the prompt is now on the server
+ssh user@server "df -h"  # run one command there and come back
+exit                                 # leave the server (or Ctrl+D)
+```
+
+After `ssh` connects, you are typing into a shell on the server, and `pwd`, `ls`, `htop` and the rest refer to *that* machine. Check which one you are on by the prompt or with `hostname`.
+
+Typing a password each time gets tedious. A **key pair** replaces it: you create a private key that stays on your computer and a public key that you give to the server:
+
+```bash
+ssh-keygen -t ed25519                # make the key pair, once
+ssh-copy-id user@server  # install your public key on the server
+ssh user@server          # now logs in without a password
+```
+
+Never share the private key (`~/.ssh/id_ed25519`). The public one, `id_ed25519.pub`, is meant to be shared.
+
+## `scp` and `rsync`: copy files between machines
+
+`scp` ("secure copy") is `cp` across the network. The remote side is written `user@server:path`, and the colon is what says "this is on the server":
+
+```bash
+scp results.csv user@server:~/data/     # your computer to the server
+scp user@server:~/out/model.pkl .       # server to here (. : this folder)
+scp -r results/ user@server:~/          # -r : a whole folder
+```
+
+`rsync` does the same job better for anything big or repeated. It compares both sides and sends only what is missing or changed, so a second run of a large copy takes seconds, and an interrupted one can be resumed:
+
+```bash
+rsync -av data/ user@server:~/data/     # -a : keep folders, dates; -v : talk
+rsync -avz data/ user@server:~/data/    # -z : compress while sending
+rsync -avP data/ user@server:~/data/    # -P : progress, keep partial files
+rsync -avn data/ user@server:~/data/    # -n : dry run, only show the plan
+```
+
+::: {.callout-warning}
+## The trailing slash matters
+`rsync -av data/ dest/` copies the *contents* of `data` into `dest`. Without the slash, `rsync -av data dest/` creates `dest/data`. The same is true on the destination side. When in doubt, add `-n` first.
+:::

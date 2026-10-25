@@ -1,0 +1,212 @@
+---
+title: "Lecture 13: Data Lakes, NoSQL and Ethics (draft)"
+subtitle: "Big Data Algorithms"
+format:
+  html:
+    toc: true
+    toc-depth: 2
+    number-sections: true
+    code-copy: true
+    embed-resources: true
+---
+
+This section was moved here from Lecture 3 (and then Lecture 4) because it only makes sense after we have covered databases; it assumes the Lecture 3 sections on tabular data, data types and Parquet.
+
+# Beyond tables: unstructured data and data lakes
+
+Tabular data is the easy case, because it fits a rectangle with a known type for each column. A lot of the world's data does not. People sort data by how much structure it has:
+
++---------------------+-----------------------+-----------------------+-----------------------+
+| Kind                | What it looks like    | Examples              | Tools in this course  |
++:====================+:======================+:======================+:======================+
+| **Structured**      | rows by columns, a    | `covid.csv`, a        | `cut`, `awk`,         |
+| (tabular)           | fixed type per column | database table, a     | `data.table`,         |
+|                     |                       | Parquet file          | `pandas`, SQL         |
++---------------------+-----------------------+-----------------------+-----------------------+
+| **Semi-structured** | nested keys and       | JSON, XML, YAML, log  | `jq`, `jsonlite`,     |
+|                     | lists; the shape can  | files                 | `grep`                |
+|                     | vary from record to   |                       |                       |
+|                     | record                |                       |                       |
++---------------------+-----------------------+-----------------------+-----------------------+
+| **Unstructured**    | no rows or columns at | photos, video, audio, | other tools: image    |
+|                     | all: the content is   | PDFs, Word and        | and speech libraries, |
+|                     | the file              | PowerPoint files,     | and increasingly      |
+|                     |                       | scanned documents,    | machine learning      |
+|                     |                       | emails                | models                |
++---------------------+-----------------------+-----------------------+-----------------------+
+
+: Three levels of structure. People often claim that most of the world's data is unstructured; that number is quoted a lot and measured rarely, but the direction is right, and it is the fast-growing part.
+
+**Images, video and audio are numbers too, just not in a table.** A photo is a grid of pixels, each described by three numbers (red, green, blue). A 12-megapixel photo (4000 × 3000 pixels) is about 36 million numbers, which is 36 MB raw; a format like JPEG shrinks it to a few MB by throwing away detail we cannot see. An hour of 1080p video at 30 frames per second is about 670 GB raw (1920 × 1080 × 3 bytes × 30 frames × 3600 seconds), and video codecs bring that down to a few GB. Audio is a long list of loudness values, thousands per second. A PDF or Word file is a bundle of text, fonts and layout instructions.
+
+**What is different about them?**
+
+* **There is no "row" to cut out.** You cannot `grep` a photo for a county or `sort` a video by a column. The useful information (a face, a spoken word, a tumor in a scan) has to be *extracted* first, usually by a program or a model, and the extracted facts then go into a table.
+* **They are big and each one is a unit.** You work with whole files, one at a time, not with billions of small rows.
+* **They need a table next to them.** The usual pattern is a table of **metadata** (file path, date taken, size, who labeled it, the label itself) that points to the files. You query the table with the tools from this course, and open the files that the query selected. The files themselves are never edited in place, just stored, replaced or deleted.
+
+**Where does all of this live? In a data lake.** A **data lake** is one big, cheap storage area (usually cloud *object storage*, such as Amazon S3) where an organization puts data in whatever form it arrives: CSVs, Parquet files, JSON logs, images, videos, PDFs, side by side. Unlike a normal filesystem, object storage has no real folders, just a flat set of named objects, and an object, once written, is replaced and not edited. (That is also why Parquet files are written once.) The contrast with the tabular world is the order of the steps:
+
++------------------+-------------------------------------+-------------------------------------+
+|                  | **Data warehouse** (and a database) | **Data lake**                       |
++:=================+:====================================+:====================================+
+| Holds            | structured tables                   | anything: tables, semi-structured   |
+|                  |                                     | and unstructured files              |
++------------------+-------------------------------------+-------------------------------------+
+| Schema           | decided **before** loading (*schema | decided **when you read** (*schema  |
+|                  | on write*): the `CREATE TABLE` in   | on read*): the file is stored as it |
+|                  | the database unit of Lecture 3      | came, and you say what its columns  |
+|                  |                                     | are when you open it                |
++------------------+-------------------------------------+-------------------------------------+
+| Cost per GB      | higher                              | low                                 |
++------------------+-------------------------------------+-------------------------------------+
+| Quality          | curated and checked on the way in   | raw. Without care a lake turns into |
+|                  |                                     | a "data swamp": a lot of files that |
+|                  |                                     | nobody can find or trust            |
++------------------+-------------------------------------+-------------------------------------+
+| Typical question | SQL on clean tables                 | anything, including training a      |
+|                  |                                     | model on millions of images         |
++------------------+-------------------------------------+-------------------------------------+
+
+Newer systems blur the line. A **lakehouse** (Delta Lake and Iceberg, from the Parquet history in Lecture 3) puts a table layer, with types, transactions and SQL, on top of the Parquet files in a lake. So a warehouse-like table can live in a lake. A Parquet file is how *tabular* data is stored in a lake, and the database unit of Lecture 3 is the warehouse side.
+
+
+# Where the other databases fit: a NoSQL and streaming landscape
+
+This is a talk, not a demo: nothing here is installed or run. The goal is that when you hear "we put that in Redis" or "it comes in over Kafka", you can place the tool against the two things we do know well, Postgres (Lecture 3) and Parquet files (Lecture 3, and the lake above).
+
+The word **NoSQL** covers several unrelated designs with one thing in common: they give up part of what Postgres offers (a fixed schema, joins, full transactions) in exchange for something else (speed, flexible shape, scale across machines). Three systems are enough to see the pattern:
+
++-------------+--------------------------+------------------------------------+----------------------------------------------+
+| System      | Data model               | What it is good at                 | Place it against Postgres and Parquet        |
++:============+:=========================+:===================================+:=============================================+
+| **Redis**   | key-value, held in RAM   | sub-millisecond lookups: caches,   | A giant in-memory hash map. Fast because it  |
+|             | (with optional disk      | sessions, counters, leaderboards,  | does little: no joins, no SQL, and the data  |
+|             | snapshots)               | queues                             | must fit in memory (or you pay for more      |
+|             |                          |                                    | machines). Not for analysis                  |
++-------------+--------------------------+------------------------------------+----------------------------------------------+
+| **MongoDB** | documents: JSON-like     | records whose shape varies or      | the JSON of Lecture 2 as a database. Schema  |
+|             | nested hash maps and     | changes often; one document holds  | on read, like a lake, but for single         |
+|             | arrays, no fixed schema  | everything about an item, so no    | records. Weak at joins and big scans;        |
+|             |                          | join is needed to read it          | Parquet and Postgres win for analytics       |
++-------------+--------------------------+------------------------------------+----------------------------------------------+
+| **Kafka**   | an append-only log of    | moving a continuous stream of      | not a store you query. It is the pipe that   |
+|             | events, split into       | events between systems, keeping    | feeds Postgres, a lake, or a stream          |
+|             | partitions and           | them for days or years, and        | processor. Where Parquet is the resting      |
+|             | replicated               | replaying them                     | place of data, Kafka is data in motion       |
++-------------+--------------------------+------------------------------------+----------------------------------------------+
+
+: The three systems at a glance. The right-hand column is the one to remember.
+
+Side by side with the two tools we know:
+
++-------------+----------------------+------------------------+----------------------+--------------------+----------------------+
+|             | Postgres             | Parquet (in a lake)    | Redis                | MongoDB            | Kafka                |
++:============+:=====================+:=======================+:=====================+:===================+:=====================+
+| **Unit**    | row in a table       | column chunk in a file | key and value        | document           | event in a log       |
++-------------+----------------------+------------------------+----------------------+--------------------+----------------------+
+| **Schema**  | on write             | in the file footer     | none                 | on read            | optional (a          |
+|             |                      |                        |                      |                    | registry)            |
++-------------+----------------------+------------------------+----------------------+--------------------+----------------------+
+| **Best at** | transactions, joins, | scanning columns of    | speed on small hot   | flexible records   | moving events        |
+|             | SQL                  | huge data              | data                 |                    |                      |
++-------------+----------------------+------------------------+----------------------+--------------------+----------------------+
+| **Bad at**  | one huge scan on a   | single-row updates     | big data, queries    | joins, analytics   | ad hoc queries       |
+|             | laptop               |                        |                      |                    |                      |
++-------------+----------------------+------------------------+----------------------+--------------------+----------------------+
+| **Lives     | disk, with a RAM     | files / object storage | RAM                  | disk               | disk, replicated     |
+| in**        | cache                |                        |                      |                    |                      |
++-------------+----------------------+------------------------+----------------------+--------------------+----------------------+
+
+: One line each. "Bad at" means "the wrong tool for", not "cannot".
+
+**The trade is always the same one.** Postgres checks your data, supports joins and keeps transactions correct. Every system above removes one of those to gain something. When you remove the joins, you get Mongo's one-document-per-item reads. When you keep everything in RAM, you get Redis's speed. When you only ever append, you get Kafka's throughput. None of them replaces Postgres for analysis; they sit in front of it, beside it or feeding it.
+
+## Batch versus streaming
+
+Everything we have done so far is **batch**: the data is a finished file, and a job reads all of it. A **stream** has no end: events keep arriving, and the answer has to be kept up to date. This is the setting of the one-pass algorithms in this course. You cannot sort a stream, you cannot revisit it, and you cannot hold it in memory, so you keep a running summary instead (a count, a mean, a sketch). Kafka is how the events reach the code that keeps that summary. A typical modern pipeline is:
+
+```
+app events --> Kafka --> stream job (running counts, sketches) --> Redis (fast lookups for the app)
+                    \---> lake of Parquet files (the full history, queried later with DuckDB)
+```
+
+Use the picture to see why one company runs all of these at once: each does one job that the others do badly.
+
+::: {.callout-note}
+## Licenses, again
+Kafka is Apache 2.0, like Spark. MongoDB and Redis changed to "source-available" licenses in recent years (MongoDB's SSPL; Redis moved away from the permissive BSD license in 2024), which is why forks and cloud-provider versions exist. Compare with the open-source section of Lecture 2.
+:::
+
+
+# Privacy and ethics
+
+Big data is mostly data about people, and the same techniques that find patterns can find *a person*. This section is short on purpose. The rule to carry out of it: **removing the name does not make a dataset anonymous.**
+
+## PII, and what counts as it
+
+**Personally identifiable information (PII)** is anything that identifies a person alone or in combination: name, ID number, email, phone, address, face, fingerprint, IP address, location history. The dangerous part is the *combination*. A column that is harmless alone (ZIP code, birth date, sex) is a **quasi-identifier**: together they can single out one person. Latanya Sweeney showed in the 1990s that ZIP code, birth date and sex alone identified most of the US population, and she found the then-governor of Massachusetts in "anonymized" hospital records by joining them against the voter roll. Note that the attack is just a **join** on the quasi-identifiers, which is a Lecture 3 skill.
+
+Real cases to remember:
+
+- **AOL search logs (2006):** released with user names replaced by numbers; reporters identified a person from their own searches.
+- **Netflix Prize (2006-2008):** movie ratings with names removed were matched to public IMDb reviews, identifying users (Narayanan and Shmatikov).
+- **Location data:** a handful of points in a phone's location history is enough to pick out most individuals.
+
+## Why the easy fixes fail
+
++------------------------------+--------------------------------------------+--------------------------------------------------------+
+| Idea                         | What it does                               | Why it is not enough                                   |
++:=============================+:===========================================+:=======================================================+
+| **Remove direct              | deletes the columns that name a person     | the remaining columns can still single people out; see |
+| identifiers** (name, ID      |                                            | quasi-identifiers below                                |
+| number, email)               |                                            |                                                        |
++------------------------------+--------------------------------------------+--------------------------------------------------------+
+| **Hash the identifier**      | replaces an ID with `sha256(id)`           | a hash is deterministic and fast, so someone can hash  |
+|                              |                                            | every possible phone number or ID and look yours up. A |
+|                              |                                            | salted hash helps, but the output is still a stable    |
+|                              |                                            | pseudonym that links records across datasets           |
++------------------------------+--------------------------------------------+--------------------------------------------------------+
+| **k-anonymity**              | generalizes columns (age 34 becomes 30-39, | fails when the k rows share the same sensitive value,  |
+|                              | ZIP 91904 becomes 919**) so that every     | and when the attacker brings a second dataset          |
+|                              | combination of quasi-identifiers is shared |                                                        |
+|                              | by at least k rows                         |                                                        |
++------------------------------+--------------------------------------------+--------------------------------------------------------+
+| **Aggregate only**           | publishes counts and means, never rows     | many overlapping aggregates can be subtracted from     |
+|                              |                                            | each other to recover one person (a differencing       |
+|                              |                                            | attack)                                                |
++------------------------------+--------------------------------------------+--------------------------------------------------------+
+
+: Common anonymization ideas, and why each one leaks. Hashing connects to the hash functions in this course: a hash is a good fingerprint of data, which is the opposite of what privacy needs.
+
+The pattern: every one of these fails to a **linkage attack**, where the attacker joins your "anonymous" dataset against another one they already have. You cannot know which other datasets exist, so you cannot prove a release is safe, only that it resists the attacks you thought of.
+
+## Differential privacy (a brief introduction)
+
+**Differential privacy (DP)** changes the question. Instead of asking "is this table anonymous?", it asks about the *algorithm*: would its output look about the same whether or not any one person's data was included? If so, the output reveals almost nothing about any individual, no matter what else the attacker knows.
+
+The standard recipe adds random noise to each answer. To release a count, add noise drawn from a Laplace distribution; the noise is just large enough to hide one person's row. The knob is **epsilon**, the *privacy budget*:
+
+- small epsilon: a lot of noise, strong privacy, a less accurate answer;
+- large epsilon: little noise, weak privacy, an accurate answer.
+
+Each question you answer spends some of the budget, so you cannot ask unlimited questions: that is exactly what stops the differencing attack above. This is another **accuracy versus privacy** trade, the same shape as the accuracy-versus-memory trade in the streaming unit. Two facts about noise help intuition: a count over a million people barely moves when you add noise of size 10, but a count over 20 people is wrecked, so DP works best on big data. That is a nice reason to study it in this course.
+
+Who uses it: the US Census Bureau applied DP to the 2020 Census, and Apple, Google and others use it to collect usage statistics. It is not magic. It was debated hard in the Census case because the noise hurts small areas and small groups most.
+
+## Law and practice
+
+You do not need to be a lawyer, but you should know the rules exist. The EU's **GDPR** applies to anyone handling data about people in the EU, whatever their location. Israel has its own **Protection of Privacy Law**, amended recently to bring it closer to the GDPR. Check the current details with a lawyer or your employer's legal team before handling personal data, because the rules change.
+
+Habits that cost nothing:
+
+- **Collect less.** Data you never stored cannot leak.
+- **Know which columns are PII** before you share a file, and before you put it in a git repository (Lecture 3): a commit is permanent.
+- **Separate identifiers from analysis data**, and keep the lookup table somewhere more restricted.
+- **Never publish** row-level data about people without asking whether you need to.
+- Ask who could be harmed if the model or the dataset is wrong, or if it is right and misused. Accuracy is not the only question.
+
+::: {.callout-tip}
+## Think about it
+Your homework data (`covid.csv`) is county-level counts, so no individual appears in it. What if it were one row per patient with ZIP code, birth date and sex? Which columns would you remove, which would you generalize, and what could still go wrong?
+:::

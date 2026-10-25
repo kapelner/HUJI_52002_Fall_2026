@@ -586,21 +586,21 @@ Every column has a **type**: the kind of thing its values are, which decides wha
 |                  | order?                 | "disagree / neutral /  | meaningful                 |                |
 |                  |                        | agree"                 |                            |                |
 +------------------+------------------------+------------------------+----------------------------+----------------+
-| **Numeric**      | **interval**: how far  | temperature in         | differences (30°C is 10°   | `date`         |
-| (arithmetic      | apart?                 | Celsius, a calendar    | warmer than 20°C), but no  |                |
-| makes sense, at  |                        | date                   | ratios: the zero is        |                |
-| least in part)   |                        |                        | arbitrary, so 30°C is not  |                |
-|                  |                        |                        | "1.5 times as hot" as 20°C |                |
-|                  +------------------------+------------------------+----------------------------+----------------+
-|                  | **ratio, continuous**: | height, weight,        | everything: differences    | none           |
-|                  | how much?              | income, time spent,    | *and* ratios, because zero |                |
-|                  |                        | temperature in Kelvin  | means "none" (20 kg is     |                |
-|                  |                        |                        | twice 10 kg)               |                |
+| **Numeric**      | **ratio, continuous**: | height, weight,        | everything: differences    | none           |
+| (arithmetic      | how much?              | income, time spent,    | *and* ratios, because zero |                |
+| makes sense, at  |                        | temperature in Kelvin  | means "none" (20 kg is     |                |
+| least in part)   |                        |                        | twice 10 kg)               |                |
 |                  +------------------------+------------------------+----------------------------+----------------+
 |                  | **ratio, discrete**:   | number of cases,       | everything a ratio allows, | `cases`,       |
 |                  | how many whole things? | children in a family,  | but the values are only    | `deaths`       |
 |                  | (a **count**)          | clicks on a page       | the whole numbers 0, 1, 2, |                |
 |                  |                        |                        | ... (never 1.5)            |                |
+|                  +------------------------+------------------------+----------------------------+----------------+
+|                  | **interval**: how far  | temperature in         | differences (30°C is 10°   | `date`         |
+|                  | apart?                 | Celsius, a calendar    | warmer than 20°C), but no  |                |
+|                  |                        | date                   | ratios: the zero is        |                |
+|                  |                        |                        | arbitrary, so 30°C is not  |                |
+|                  |                        |                        | "1.5 times as hot" as 20°C |                |
 +------------------+------------------------+------------------------+----------------------------+----------------+
 | **Text /**       |                        | a tweet, an address, a | search and parse it; not a | none           |
 | **character**    |                        | comment                | categorical until you      |                |
@@ -618,50 +618,51 @@ head -n 4 covid.csv | column -s, -t
 ```
 
 * **A code that looks like a number is nominal.** `fips` is made of digits, but adding two FIPS codes or taking their mean is meaningless. It is a label for a county, so it should be stored as text. (In the next unit we will watch a program silently turn the code `06059` into `6059`.)
-* **Discrete and continuous are both numeric, but they behave differently.** `cases` can be 0, 1, 2, but never 1.5, so it is a discrete count. A measured quantity such as height is continuous. Both have a true zero, but you use different models for them, and they are stored differently (integer versus decimal, see below).
+* **Discrete and continuous are both numeric, but they behave differently.** `cases` can be 0, 1, 2, but never 1.5, so it is a discrete count. A measured quantity such as height is continuous. Both have a true zero, but you use different models for them, and they are stored differently (integer versus decimal, see "Parquet's data types" below).
 * **A yes/no column is a special case**, called binary. It is nominal or ordinal with exactly two levels (stored as `true` / `false`). It is also a count with 0 or 1.
 * **Ordinal data is the one most often mishandled.** If you store grades A, B, C as 1, 2, 3, a program will happily average them, and it will treat the step from A to B as the same size as the step from B to C. Keep the order, but do not do arithmetic on them.
-* **Missing values are part of the type.** In `covid.csv`, 8,266 rows have no `fips` (mostly the county `Unknown`, plus a few cities) and 18,761 rows have no `deaths`. A column of integers cannot hold "missing" in many programs, so they silently turn the whole column into decimals: `pandas` read `deaths` as `float64` for this reason.
+* **Missing values are part of the type.** In `covid.csv`, 8,266 rows have no `fips` (mostly the county `Unknown`, plus a few cities) and 18,761 rows have no `deaths`. A column of integers cannot hold "missing" in many programs.
 
 ```bash
+#date,county,state,fips,cases,deaths
+awk -F, 'NR>1 && $4=="" && $2=="Unknown"' covid.csv | head -n 10
 awk -F, 'NR>1 && $4=="" && $2=="Unknown" {u++} END {print u}' covid.csv
 ```
 
-**How the values are stored.** The computer needs a concrete representation for each statistical type. These are the storage types you will meet in R and `pandas`:
+A CSV stores all of these types (and subtypes) as text and leaves every program to guess the storage type, which is what goes wrong with `fips`. A better file format would store the type with the data, so that a `date` stays a date, `cases` stays an integer and `fips` stays text (so you can't take accidentally compute the nonsensical average of a bunch of `fips` values). For a nominal column such as `state`, with 55 distinct values repeated on 885,000 rows, it could store the small list of levels once and then a short code per row (**dictionary encoding**), which also makes the column small in contribution to file size. The same idea in R is a `factor` and in `pandas` is a `category`.
 
-+----------------------+-----------------------+-----------------------+----------------------+
-| Statistical type     | Typical storage type  | R                     | `pandas`             |
-+:=====================+:======================+:======================+:=====================+
-| nominal              | text, or a dictionary | `character`, `factor` | `object` / `string`, |
-|                      | of levels             |                       | `category`           |
-+----------------------+-----------------------+-----------------------+----------------------+
-| ordinal              | the same, with the    | `ordered` factor      | ordered `category`   |
-|                      | level order recorded  |                       |                      |
-+----------------------+-----------------------+-----------------------+----------------------+
-| interval or ratio, a | decimal ("floating    | `numeric`             | `float64`            |
-| measurement          | point")               |                       |                      |
-| (Celsius, height,    |                       |                       |                      |
-| income)              |                       |                       |                      |
-+----------------------+-----------------------+-----------------------+----------------------+
-| count                | integer               | `integer`             | `int64`              |
-+----------------------+-----------------------+-----------------------+----------------------+
-| date or time         | a date or a timestamp | `Date`, `POSIXct`     | `datetime64`         |
-+----------------------+-----------------------+-----------------------+----------------------+
-| binary               | boolean               | `logical`             | `bool`               |
-+----------------------+-----------------------+-----------------------+----------------------+
-| character (free      | text                  | `character`           | `object` / `string`  |
-| text)                |                       |                       |                      |
-+----------------------+-----------------------+-----------------------+----------------------+
++----------------------+----------------------+----------------------+----------------------+
+| Statistical type     | Typical storage type | R                    | `pandas`             |
++:=====================+:=====================+:=====================+:=====================+
+| nominal              | text, or a           | `character`,         | `object` / `string`, |
+|                      | dictionary of levels | `factor`             | `category`           |
++----------------------+----------------------+----------------------+----------------------+
+| ordinal              | the same, with the   | `ordered` factor     | ordered `category`   |
+|                      | level order recorded |                      |                      |
++----------------------+----------------------+----------------------+----------------------+
+| interval or ratio, a | decimal ("floating   | `numeric`            | `float64`            |
+| measurement          | point")              |                      |                      |
+| (Celsius, height,    |                      |                      |                      |
+| income)              |                      |                      |                      |
++----------------------+----------------------+----------------------+----------------------+
+| count                | integer              | `integer`            | `int64`              |
++----------------------+----------------------+----------------------+----------------------+
+| date or time         | a date or a          | `Date`, `POSIXct`    | `datetime64`         |
+|                      | timestamp            |                      |                      |
++----------------------+----------------------+----------------------+----------------------+
+| binary               | boolean              | `logical`            | `bool`               |
++----------------------+----------------------+----------------------+----------------------+
+| character (free      | text                 | `character`          | `object` / `string`  |
+| text)                |                      |                      |                      |
++----------------------+----------------------+----------------------+----------------------+
 
-: The storage types. The names differ between R and Python, but the ideas are the same. The interval and ratio rows are one row, on purpose.
+: Storage types of the data types in R and Python
 
 Notice that programs do not distinguish interval from ratio: both are stored as decimals, and the difference exists only in what you may sensibly compute with them (a ratio of two Celsius temperatures is a number, but a meaningless one). What programs *do* distinguish is integer from decimal (`integer` versus `numeric` in R, `int64` versus `float64` in `pandas`), which is why counts get their own row. A date is stored as a number of days since a fixed starting day, with a label that says to show it as a date.
 
-A CSV stores all of these as text and leaves every program to guess the storage type, which is what goes wrong with `fips` in the next unit. A better file format would store the type with the data, so that a `date` stays a date, `cases` stays an integer and `fips` stays text. For a nominal column such as `state`, with 55 distinct values repeated on 885,000 rows, it could store the small list of levels once and then a short code per row (**dictionary encoding**), which also makes the column small. The same idea in R is a `factor` and in `pandas` is a `category`.
-
 # A better data format than CSV?
 
-The CSV is the universal format for tabular data, and you will receive data in it for the rest of your career. But a CSV is just the bare table: no column types, nothing about what is inside, and no way to read part of it without reading all of it. Before we go all the way to a database, there is a middle step that is still just a file you can copy, send to others and commit in your repo: **Parquet**.
+The CSV is the universal format for tabular data, and you will receive data in it for the rest of your career. But a CSV is just the bare table: no column types, nothing about what is inside, and no way to read part of it without reading all of it. Before we go all the way to a database, there is a middle step that is still just a file you can copy, send to others and commit in your repo if it's small enough: **Parquet**. Parquet in French means "small space / room / compartment" because it's compressed down and tidied.
 
 Think of Parquet as **annotated tabular data**. It stores the same table as the CSV, plus notes about the table, written into the file itself: the name and type of every column, how each column was compressed, and a summary (the smallest and largest value) of every block of rows. Those annotations are what make it
 
@@ -675,18 +676,16 @@ This unit motivates the annotated format, converts `covid.csv`, and then shows w
 Three complaints that need no database at all:
 
 1. **It is big.** Text spends one byte per digit and writes `Texas` out again on 67,002 rows. Our `covid.csv` is 35 MB, and `gzip` can squeeze it to 9 MB, but then every tool must unpack it first.
-2. **It has no types.** A CSV does not know that `date` is a date, that `cases` is an integer, or that `fips` is a *code* and not a number. Every program guesses on every read. Guess `fips` is an integer and the code `06059` (Orange County, California) silently becomes `6059`. Compare what the two languages guess on the same file:
+2. **It has no types.** A CSV does not know that `date` is a date, that `cases` is an integer, or that `fips` is a numeric *code* but not actually a number. Every program guesses on every read. Guess `fips` is an integer and the code `06059` (Orange County, California) silently becomes `6059`. Compare what the two languages guess on the same file:
 
 ```bash
-Rscript -e 'library(data.table); str(fread("covid.csv", nrows = 1000))'     # fips: int
+Rscript -e 'library(data.table); str(fread("covid.csv", nrows = 1000))'                # fips: int
 python3 -c 'import pandas as pd; print(pd.read_csv("covid.csv", nrows=1000).dtypes)'   # fips: float64 (the column has missing values)
 ```
 
 3. **You must read everything to get anything.** A CSV is stored row by row, so a question about two columns still reads (and parses) all six. The lectures' `cut -d, -f3` has to scan every byte of every line to find the third comma.
 
-Parquet stores the column types (text, integers, decimals, dates and timestamps, true/false, and a dictionary form for columns with few distinct values) in the file itself, so the guessing is gone.
-
-What we want is the same table with annotations: a file that is **smaller**, **typed**, and lets us **read only the columns we need**. That is Parquet.
+Parquet stores the column types (text, integers, decimal numbers, dates and timestamps, true/false) in the file itself, so nobody has to guess them again. It also stores the columns separately, so a query can read only the columns it needs. A column with few distinct values (like the 55 states) is stored compactly as a small list of levels plus a short code per row (dictionary encoding).
 
 ## A short history
 
@@ -725,8 +724,8 @@ Parquet is not old, and it came out of a specific problem: companies with petaby
 There is no number like the "share of developers" we quoted for `git`, because nobody surveys file formats. What we can say is where it shows up, and that is nearly everywhere in data engineering:
 
 * **Engines read and write it.** Spark writes Parquet by default, and Snowflake, BigQuery, AWS Athena and DuckDB all load, export or query it directly.
-* **Table formats are built on it.** Delta Lake and Iceberg, the standard ways of organizing a company's folders of files into tables, store their data *as Parquet files* plus a layer of bookkeeping.
-* **Both our languages support it.** `pandas`, `polars`, and R's `arrow` read and write it, so a Parquet file made in Python opens in R unchanged. That makes it the format of choice for *handing data between tools*, unlike a `.pkl` or `.rds`.
+* **Table formats are built on it.** Delta Lake and Iceberg, the standard ways of organizing a company's folders of files into tables, default store their data *as Parquet files* plus a layer of bookkeeping.
+* **Both our languages support it.** Python's `pandas`, `polars` and R's `arrow` read and write it, so a Parquet file made in Python opens in R unchanged. That makes it the format of choice for *handing data between tools*, unlike a `.pkl` or `.rds`.
 * **Public data is published in it**, for example many datasets on the Hugging Face hub and large open datasets on cloud storage.
 
 It has rivals: **ORC** (the same idea, mostly in the Hive world), **Avro** (row-based, popular for streams of events), and newer formats still being tested. But if you join a data team and ask "what format is the data in?", the most likely answer today is "Parquet".
@@ -735,31 +734,55 @@ It has rivals: **ORC** (the same idea, mostly in the Hive world), **Avro** (row-
 
 First, say what each column *is*. In Python, `dtype` and `parse_dates` do it; then `to_parquet` writes the file (it needs the `pyarrow` package):
 
-```python
+```{python}
+import os
 import pandas as pd
+os.chdir(os.path.expanduser("~/workspace/HUJI_52002_Fall_2026/scratch/lec03"))   # where covid.csv lives
 df = pd.read_csv("covid.csv", dtype={"fips": str}, parse_dates=["date"])   # fips is a code (text), date is a date
 print(df.dtypes)
-df.to_parquet("covid.parquet", compression="zstd")
+df.to_parquet("covid_python.parquet", compression="zstd")
 ```
 
 In R, the `arrow` package does the same. `schema(fips = string())` overrides the guess for just that column:
 
-```r
+```{r}
 library(arrow)
+setwd("~/workspace/HUJI_52002_Fall_2026/scratch/lec03")   # where covid.csv lives
 df <- read_csv_arrow("covid.csv", col_types = schema(fips = string()))
-write_parquet(df, "covid.parquet", compression = "zstd")
+write_parquet(df, "covid_R.parquet", compression = "zstd")
 ```
 
-Now compare the files:
+Now examine the parquet files:
 
 ```bash
-ls -alh covid.csv covid.parquet     # 35M versus 3.4M
-file covid.parquet                  # Apache Parquet
-gzip -k covid.csv; ls -alh covid.csv.gz; rm covid.csv.gz     # 8.9M: the CSV zipped
-head -c 4 covid.parquet; echo; tail -c 4 covid.parquet       # PAR1 at both ends: the "magic bytes"
+ls -alh                             # 35M versus 3.3M
+file covid_python.parquet           # Apache Parquet
+file covid_R.parquet                # Apache Parquet
+gzip -k covid.csv; ls -alh covid.csv.gz; rm covid.csv.gz     # recall from lec 2: 8.9M: the CSV zipped
+head -c 4 covid_python.parquet; echo; tail -c 4 covid_python.parquet       # PAR1 at both ends: the "magic bytes"
 ```
 
-The Parquet file is about **10 times smaller** than the CSV, and even smaller than the gzipped CSV, **and** it can be read directly. Reading it back keeps the types, so `date` is still a date and `fips` is still the text `"06059"` without anybody guessing:
+The Parquet files are about **10 times smaller** than the CSV, and even smaller than the gzipped CSV, **and** they can be read directly. Are they exactly the same between R and Python?
+
++---------------------------+----------------------------+----------------------------+
+|                           | `covid_R.parquet`          | `covid_python.parquet`     |
++:==========================+:===========================+:===========================+
+| Writer                    | parquet-cpp-arrow 24.0.0   | parquet-cpp-arrow 25.0.1   |
++---------------------------+----------------------------+----------------------------+
+| `date`                    | `date32` (a date)          | `timestamp[us]`            |
++---------------------------+----------------------------+----------------------------+
+| `county`, `state`, `fips` | `string`                   | `large_string`             |
++---------------------------+----------------------------+----------------------------+
+| `cases`                   | `int32`                    | `int64`                    |
++---------------------------+----------------------------+----------------------------+
+| `deaths`                  | `int32`                    | `double`                   |
++---------------------------+----------------------------+----------------------------+
+| Extra metadata            | none                       | a `pandas` metadata block  |
++---------------------------+----------------------------+----------------------------+
+
+: The two Parquet files side by side. Same table, but each program chose its own column types a little bit differently, so the bytes differ. The values inside are identical. The two version of the parquet writers may differ in other ways as well. Nothing will change what comes next. 
+
+Reading it back keeps the types, so `date` is still a date and `fips` is still the text `"06059"` without anybody guessing:
 
 ```python
 pd.read_parquet("covid.parquet").dtypes
@@ -771,137 +794,110 @@ And you can ask for only the columns you want:
 pd.read_parquet("covid.parquet", columns=["state", "cases"])   # reads two of the six columns
 ```
 
-Here are our timings in `pandas` on this file (one run on one machine; yours will differ but the ranking should not):
+Here are our timings on this file (the median of 7 runs on one machine; yours will differ but the ranking should not). For the CSV the package is `data.table::fread` in R and `pandas.read_csv` in Python; for Parquet it is the `arrow` package in R and `pandas.read_parquet` in Python (which uses `pyarrow` underneath):
 
-+-------------------------------+---------+---------+
-| Task                          | CSV     | Parquet |
-+:==============================+========:+========:+
-| File size                     | 35.9 MB | 3.4 MB  |
-+-------------------------------+---------+---------+
-| Read the whole table          | 0.65 s  | 0.03 s  |
-+-------------------------------+---------+---------+
-| Read only `state` and `cases` | 0.31 s  | 0.02 s  |
-+-------------------------------+---------+---------+
++-------------------+----------------------------------+----------+----------+
+| Task              | Package                          | CSV      | Parquet  |
++:==================+:=================================+=========:+=========:+
+| File size         | (either package)                 | 35.9 MB  | 3.4 MB   |
++-------------------+----------------------------------+----------+----------+
+| Read the whole    | R (`data.table` for CSV, `arrow` | 0.16 s   | 0.05 s   |
+| table             | for Parquet)                     |          |          |
+|                   +----------------------------------+----------+----------+
+|                   | Python (`pandas`)                | 0.88 s   | 0.05 s   |
++-------------------+----------------------------------+----------+----------+
+| Read only `state` | R (`data.table` for CSV, `arrow` | 0.09 s   | 0.03 s   |
+| and `cases`       | for Parquet)                     |          |          |
+|                   +----------------------------------+----------+----------+
+|                   | Python (`pandas`)                | 0.37 s   | 0.02 s   |
++-------------------+----------------------------------+----------+----------+
 
-Notice that the CSV cannot make the two-column read much faster (`usecols` still has to scan every line), while Parquet gets faster because it never touches the other columns.
+: Reading `covid.csv` versus `covid.parquet`. The R Parquet times return an ordinary `data.frame`.
 
-Be fair to the CSV, though: those timings are for `pandas`, whose CSV reader is slow. R's `data.table::fread` is one of the fastest CSV readers there is, and on this 35 MB file it loads the whole table in 0.10 s, about as fast as reading the Parquet file (0.15 s into a `data.table`). The columns-only read is where Parquet already wins (0.025 s versus 0.05 s for `fread` with `select=`). At 35 MB nobody should care about any of this. The real difference shows up when the file is much bigger, and that is the section after next.
+Notice that the CSV cannot make the two-column read much faster (`select=` and `usecols` still have to scan every line), while Parquet gets faster because it never touches the other columns.
 
-## Why is it small and fast?
+Be fair to the CSV, though: `pandas` has a slow CSV reader, and R's `data.table::fread` is one of the fastest CSV readers there is. On this 35 MB file `fread` loads the whole table in 0.16 s, versus 0.05 s for the Parquet file. (If you then convert the Parquet result to a `data.table`, that conversion costs more than the read itself, and the total, 0.26 s, is slower than `fread`.) The columns-only read is where Parquet clearly wins (0.03 s versus 0.09 s). At 35 MB nobody should care about any of this. The real difference shows up when the file is much bigger, and that is the section after next.
 
-Three ideas, none of them magic:
+One limitation by design:
 
-* **Columns, not rows.** The values of one column are stored together. `state` becomes a long run of the same few dozen words, which compresses extremely well; `cases` is a run of integers. Mixing text and numbers in every line, as a CSV does, spoils both.
-* **Types and encodings.** An integer is stored as an integer, not as characters. A column with few distinct values (the 55 states) is stored as a small dictionary plus a list of codes (**dictionary encoding**).
-* **A footer of summary statistics.** At the end of the file, Parquet stores the min and max of every column for every block of rows (a **row group**). A query for `cases > 700000` can skip every block whose maximum is lower without reading it. You can see these:
+* **Ordinal is where Parquet itself stops, on purpose.** Parquet's types say how values are *stored* (which bytes, which encoding), not what they *mean*. The grades A, B, C take the same bytes whether they are nominal or ordinal, and the rule "A is better than B" belongs to the program doing the analysis, so Parquet leaves it to the reader. (For the same reason, it does not separate interval from ratio.) `pandas` and `arrow` write the order into the file's metadata and read it back (we checked that an ordered `category` comes back ordered), but another tool reading the same file just sees text.
 
-```python
-import pyarrow.parquet as pq
-pf = pq.ParquetFile("covid.parquet")
-print(pf.schema_arrow)                          # names and types
-print(pf.metadata.row_group(0).column(4))       # min, max, compression of the cases column
+```bash
+rm covid_R.parquet covid_python.parquet #cleanup
 ```
 
 ## When the data is really large
 
-Everything above fits in memory on any laptop. So let us make a dataset that is 50 times bigger: `covid.csv` stacked 50 times, with a `copy` column saying which copy a row came from. That is 44 million rows. (The numbers are copies of each other, so this is a toy dataset, but the size and the shape are real.) The script is in `lectures/scripts/lec03/` and writes the data twice: once as a single big CSV, and once as a **folder of Parquet files**, one file per copy:
+Everything above fits in memory on any laptop. So let us make a dataset that is 50 times bigger: `covid.csv` stacked 50 times, with a `copy` column saying which copy a row came from. That's' 44 million rows. (The numbers are copies of each other, so this is a toy dataset, but the size and the shape are real.) The script is in `lectures/scripts/lec03/` and writes the data twice: once as a single big CSV, and once as a single big Parquet file:
 
 ```bash
 python3 ../../lectures/scripts/lec03/make_covid_big.py covid.csv 50 --csv   # about 80 seconds
-ls -alh covid_big.csv        # 1.8G
-du -sh covid_big             # 163M: 50 Parquet files
-ls covid_big | head -3       # copy=0  copy=1  copy=10
-ls covid_big/copy=0          # part-0.parquet
+ls -alh # 1.8G raw CSV vs 163M parquet
 ```
 
-The folder names `copy=0`, `copy=1`, ... follow a convention called **hive partitioning**: the name of a folder holds the value of a column, so the column does not have to be stored inside the files. The question for both versions: *what is the total of `cases` in Texas, separately for every copy?*
+The question for both versions: *what is the total of `cases` in Texas, separately for every copy?*
 
-**The CSV way:** load everything, then ask. In R and in Python:
+We will not examine the R/Python code for this as we will leave it for another lecture. Here are the results, split into the time to **load** the data and the time to **ask** the question (median of 3 runs on a 12-core machine with 41 GB of memory, with the file already in the operating system's cache; yours will differ but the ranking should not). every tool that can use several cores (`fread`, the `pyarrow` CSV reader in `pandas`, `arrow` and `pyarrow`) was limited to 6 threads, which is the default of `data.table`, so the comparison is fair (`awk` always uses one). A tool that streams (`awk`) or reads lazily (`arrow`) has no load step:
 
-```r
-library(data.table)
-d <- fread("covid_big.csv")                                        # all 44M rows into memory
-d[state == "Texas", .(cases = sum(cases)), by = copy]
-```
++------------------+-------------------------------+--------------+---------+---------+-------------+
+| Format           | Tool                          | Load         | Ask     | Total   | Peak memory |
++:=================+:==============================+=============:+========:+========:+============:+
+| CSV (1.8 GB)     | R: `data.table::fread`        | 13.8 s       | 2.0 s   | 15.8 s  | 3.5 GB      |
+|                  +-------------------------------+--------------+---------+---------+-------------+
+|                  | Python: `pandas` with         | 8.2 s        | 3.8 s   | 12.0 s  | 6.1 GB      |
+|                  | `engine="pyarrow"`            |              |         |         |             |
+|                  +-------------------------------+--------------+---------+---------+-------------+
+|                  | `awk` (`gawk`)                | none         | 64 s    | 64 s    | 5 MB        |
+|                  +-------------------------------+--------------+---------+---------+-------------+
+|                  | `awk` (`mawk`)[^mawk]         | none         | 20 s    | 20 s    | 3 MB        |
++------------------+-------------------------------+--------------+---------+---------+-------------+
+| Parquet (163 MB) | R: `arrow`                    | none         | 1.7 s   | 1.7 s   | 0.5 GB      |
+|                  +-------------------------------+--------------+---------+---------+-------------+
+|                  | Python: `pyarrow`             | none         | 1.1 s   | 1.1 s   | 0.5 GB      |
++------------------+-------------------------------+--------------+---------+---------+-------------+
 
-```python
-import pandas as pd
-d = pd.read_csv("covid_big.csv", dtype={"fips": str})              # all 44M rows into memory
-d[d.state == "Texas"].groupby("copy").cases.sum()
-```
+: The same question on the CSV and on the Parquet file. Peak memory is the most that Linux reports the whole run used. The machine was also busy with other work during these runs, so the times are on the slow side; the ranking is what matters.
 
-**The Parquet way:** point at the folder and ask. Nothing is loaded up front. The program works out which parts of which files it needs, reads only those, and returns just the small answer:
+[^mawk]: `mawk` is a different implementation of `awk` that is faster than the default `gawk` on massive datasets (about three times faster here), and it runs the same programs: the syntax of everything in this course is identical. It lacks some GNU-only extras (for example the functions `asort` and `gensub`). We are not covering it officially but if you want to use it, install it with `sudo apt install mawk` (on a Mac: `brew install mawk`) and run `mawk` in place of `awk`.
 
-```r
-library(arrow); library(dplyr)
-open_dataset("covid_big") |>                                       # a lazy handle on the folder
-  filter(state == "Texas") |>
-  group_by(copy) |>
-  summarise(cases = sum(cases)) |>
-  collect()                                                        # now it runs, and returns 50 rows
-```
+With its default CSV reader, `pandas` is much slower: 80 s to load (about 85 s in total) and 5.4 GB. 
 
-```python
-import pyarrow.dataset as ds, pyarrow.compute as pc
-d = ds.dataset("covid_big", format="parquet", partitioning="hive")
-d.to_table(columns=["copy", "cases"], filter=pc.field("state") == "Texas") \
- .group_by("copy").aggregate([("cases", "sum")])
-```
+WARNING*** `pandas engine="pyarrow"`: it guesses the type of every column itself, so it turns `fips` into a number and drops the leading zero (e.g., `06001` becomes `6001`). That could be bad - double check always your data types when loading CSVs!!
 
-Time each one, and ask Linux for the most memory it used (the line `Maximum resident set size`):
+Read the Load and memory columns carefully. `fread` and `pandas` need several gigabytes *because they load all the data first*, and that is the number that decides whether your laptop can do the job at all. On a laptop with 8 GB of memory and a file double or triple this size, they simply fail with "out of memory". `awk` and the Parquet versions never hold the whole data: `awk` keeps only a running total for each `copy` (megabytes), and `arrow` streams through the file a piece at a time and keeps only the running totals (about 0.5 GB). The same code would work on a 500 GB file. (The 163 MB is flattering: the 50 copies are identical, which compresses much better than real data does. The memory and the speed advantage are the real result.)
 
-```bash
-/usr/bin/time -v Rscript query.R 2> time.txt; grep "Maximum resident" time.txt
-```
-
-Our results (one run on a 12-core machine with 41 GB of memory; yours will differ but the ranking should not):
-
-+------------------------+--------------------------------+--------------------------------+
-|                        | CSV: load everything, then ask | Parquet: ask the folder        |
-+:=======================+===============================:+===============================:+
-| File size on disk      | 1.8 GB                         | 163 MB                         |
-+------------------------+--------------------------------+--------------------------------+
-| R: time                | 29 s (`fread`)                 | 2.7 s (`arrow`)                |
-+------------------------+--------------------------------+--------------------------------+
-| R: peak memory         | 3.7 GB                         | 0.6 GB                         |
-+------------------------+--------------------------------+--------------------------------+
-| Python: time           | 113 s (`pandas`)               | 1.9 s (`pyarrow`)              |
-+------------------------+--------------------------------+--------------------------------+
-| Python: peak memory    | 6.5 GB                         | 0.6 GB                         |
-+------------------------+--------------------------------+--------------------------------+
-
-Read the memory rows carefully. The CSV versions need several gigabytes *because they load all the data first*, and that is the number that decides whether your laptop can do the job at all. On a laptop with 8 GB of memory and a file ten times this size, `fread` and `pandas` simply fail with "out of memory". The Parquet versions stay at about 0.6 GB, because they stream through the files a piece at a time and keep only the running totals. The same code would work on a 500 GB folder. (The 163 MB is flattering: the 50 copies are identical, which compresses much better than real data does. The memory and the speed advantage are the real result.)
-
-How can it be this much faster? The annotations again:
+How can parquet be this much faster? The annotations again:
 
 * It read **3 of the 7 columns** (`state`, `cases`, `copy`) and never touched the others.
 * It used the **row-group statistics** to skip blocks that cannot contain Texas.
-* It processed **one file at a time**, so memory never held the whole dataset.
-* And with the folder names it can skip files entirely. Ask only about the first five copies, and it opens only five folders (**partition pruning**). That took 0.34 s in R and 0.15 s in Python on our machine:
+* It processed **one row group at a time**, so memory never held the whole dataset.
+* It can skip row groups using the `copy` column's min and max. Each copy is its own row group, so asking only about the first five copies reads only five of the 50 row groups. That took 0.5 s in R and 0.13 s in Python on our machine (versus 1.7 s and 1.1 s for all 50):
 
 ```r
-open_dataset("covid_big") |> filter(state == "Texas", copy < 5) |> group_by(copy) |> summarise(cases = sum(cases)) |> collect()
+open_dataset("covid_big.parquet") |> filter(state == "Texas", copy < 5) |> group_by(copy) |> summarise(cases = sum(cases)) |> collect()
 ```
 
-The same folder can be asked with SQL by DuckDB, a database that runs on Parquet files and is available in both R and Python. In R, the `duckdb` package gave the same answer in 1.3 s:
+(Parquet can also be split over many files, one folder per value of a column, so whole files can be skipped. That is called *partitioning*, and we will return to it in a later lecture.)
+
+The same file can be asked with SQL by DuckDB, a database that runs on Parquet files and is available in both R and Python. In R, the `duckdb` package (also with 6 threads) gave the same answer in 0.9 s:
 
 ```r
 con <- DBI::dbConnect(duckdb::duckdb())
 DBI::dbGetQuery(con, "SELECT copy, sum(cases) AS cases
-                      FROM read_parquet('covid_big/*/*.parquet', hive_partitioning = true)
+                      FROM read_parquet('covid_big.parquet')
                       WHERE state = 'Texas' GROUP BY copy")
 ```
 
 ### Can't `awk` do this in constant memory?
 
-Yes, and that is a fair objection, because a streaming tool never loads the data. Count the rows in each state, first with `awk` on the CSV and then with `arrow` on the Parquet folder:
+Yes, and that is a fair objection, because a streaming tool never loads the data. Count the rows in each state, first with `awk` on the CSV and then with `arrow` on the Parquet file:
 
 ```bash
 awk -F, 'NR>1 {n[$3]++} END {for (s in n) print s "," n[s]}' covid_big.csv | sort -t, -k2,2nr | head -n 3
 ```
 
 ```r
-open_dataset("covid_big") |> count(state) |> arrange(desc(n)) |> collect()
+open_dataset("covid_big.parquet") |> count(state) |> arrange(desc(n)) |> collect()
 ```
 
 Both give the same answer (Texas 3,350,100, Georgia 2,260,450, Virginia 1,844,300). We also timed a second question with each tool, the total of Texas `cases` for each `copy`:
@@ -909,22 +905,22 @@ Both give the same answer (Texas 3,350,100, Georgia 2,260,450, Virginia 1,844,30
 +--------------------------------------+---------------------+-----------------------+
 |                                      | `awk` on the CSV    | `arrow` on Parquet    |
 +:=====================================+====================:+======================:+
-| Rows per state: time                 | 144 s               | 2.8 s                 |
+| Rows per state: time                 | 68 s                | 1.5 s                 |
 +--------------------------------------+---------------------+-----------------------+
-| Texas cases per copy: time           | 156 s               | 2.5 s                 |
+| Texas cases per copy: time           | 64 s                | 1.7 s                 |
 +--------------------------------------+---------------------+-----------------------+
-| Peak memory (rows per state)         | 4.6 MB              | 405 MB                |
+| Peak memory (rows per state)         | 4.6 MB              | 420 MB                |
 +--------------------------------------+---------------------+-----------------------+
 
-: One run, one machine. `awk` uses one core, `arrow` uses all twelve.
+: One run, one machine. `awk` uses one core, `arrow` uses six.
 
-On memory, `awk` wins by a factor of nearly a hundred: 4.6 MB, because it keeps only a counter for each of the 55 states. The price is **time**. `awk` has to read and split every one of the 1.8 GB for *every* question, so each question costs about two and a half minutes, and ten questions cost half an hour. `arrow` answered in under three seconds, because the first question needed only the `state` column (one of seven) and it spread the work over all the cores. Converting the CSV to Parquet costs one pass, once, and then every later question is cheap.
+On memory, `awk` wins by a factor of nearly a hundred: 4.6 MB, because it keeps only a counter for each of the 55 states. The price is **time**. `awk` has to read and split every one of the 1.8 GB for *every* question, so each question costs about a minute, and ten questions cost more than ten minutes (`mawk` is about three times faster than `gawk` here, so about 20 s per question). `arrow` answered in about two seconds, because the first question needed only the `state` column (one of seven) and it spread the work over several cores. Converting the CSV to Parquet costs one pass, once, and then every later question is cheap.
 
 Streaming also has limits that Parquet does not. `awk` stays at constant memory only when the number of groups is small: a table of 44 million different keys would not fit in a hash map. A median needs all the values, a sort needs temporary files, and a join needs one of the two tables in memory. And as the `cut` example earlier showed, it breaks on a CSV with quoted fields (note that we had to turn quoting off to write `covid_big.csv`, or `awk` would see `"Texas"` with the quotes).
 
 So the honest rule is: for a single question about a file you will read once, `awk` on the CSV is fine and Parquet does not help. Parquet pays off when you will ask **many** questions about the **same** large table, and when each question touches only some of its columns.
 
-Clean up the big files when you are done, since they take about 2 GB: `rm -r covid_big covid_big.csv`.
+Clean up the big files when you are done, since they take about 2 GB: `rm covid_big.parquet covid_big.csv`.
 
 ## What it cannot do
 
