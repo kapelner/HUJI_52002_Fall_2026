@@ -1120,8 +1120,9 @@ Parquet is not to blame here. It was never meant to do all these jobs!! It is ju
 |           | store data in tables (relations) and ask for it by *what* you want, not by how to find it.   |
 |           | Until then, databases were tangled networks of pointers that programmers navigated by hand.  |
 +-----------+----------------------------------------------------------------------------------------------+
-| 1974-79   | IBM builds **System R** and invents the query language that becomes **SQL**. At Berkeley,    |
-|           | **Michael Stonebraker** builds **Ingres**, a second relational system.                       |
+| 1974-79   | IBM builds **System R** (no related to the statistical language R) and invents the query     |
+|           | language that becomes **SQL**. At Berkeley, **Michael Stonebraker** builds                   |
+|           | **Ingres**, a second relational system.                                                      |
 +-----------+----------------------------------------------------------------------------------------------+
 | 1977-79   | **Larry Ellison** founds the company that becomes **Oracle**, and in 1979 it sells the first |
 |           | commercial SQL database. IBM's **DB2** follows in 1983.                                      |
@@ -1132,7 +1133,9 @@ Parquet is not to blame here. It was never meant to do all these jobs!! It is ju
 | 1989      | **Microsoft SQL Server** ships, built with Sybase.                                           |
 +-----------+----------------------------------------------------------------------------------------------+
 | 1995      | **MySQL** is released by a small Swedish company and, being free and easy, becomes the       |
-|           | database behind the early web (the "LAMP" stack).                                            |
+|           | database behind the early web, the "LAMP" stack (Linux, Apache, MySQL, PHP/Perl/Python).     |
+|           | Facebook, Wikipedia, Flickr, Yahoo and Slashdot all started on it, as did WordPress, which   |
+|           | still powers about 40% of websites.                                                          |
 +-----------+----------------------------------------------------------------------------------------------+
 | 1996      | Postgres gets SQL support and is renamed **PostgreSQL**. It stays open-source and            |
 |           | community-owned.                                                                             |
