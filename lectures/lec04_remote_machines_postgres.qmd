@@ -1,0 +1,434 @@
+---
+title: "Lecture 4: Remote Machines, PostgreSQL"
+subtitle: "Big Data Algorithms"
+format:
+  html:
+    toc: true
+    toc-depth: 2
+    number-sections: true
+    code-copy: true
+    embed-resources: true
+---
+
+# Working on remote machines: `ssh`, `scp`, `rsync` and `tmux`
+
+Big data rarely lives on your laptop. You work on a server or a cluster: a computer in a machine room that you reach over the network, with far more cores, memory and disk than yours. Everything you have learned so far works there too, because you give it commands through a shell. The tools below get you there, move the files, and keep your jobs alive.
+
+(These examples need an account on a remote machine. Replace `user@server` with your own login.)
+
+## `ssh`: log in to another machine
+
+```bash
+ssh user@server          # log in; the prompt is now on the server
+ssh user@server "df -h"  # run one command there and come back
+exit                                 # leave the server (or Ctrl+D)
+```
+
+After `ssh` connects, you are typing into a shell on the server, and `pwd`, `ls`, `htop` and the rest refer to *that* machine. Check which one you are on by the prompt or with `hostname`.
+
+Let's try it on Moriah, the HUJI cluster. Its login machine, `moriah-gw`, is not reached directly: you first hop through `bava`, and `-J` ("jump") does both hops in one command. Replace `kapelner` with your own login:
+
+```bash
+ssh -J kapelner@bava.cs.huji.ac.il kapelner@moriah-gw.cs.huji.ac.il
+hostname                         # the cluster's name, not your laptop's
+nproc                            # how many cores this machine has
+free -h                          # and how much memory
+exit                             # back to your own computer
+```
+
+You will be asked for a one-time code (from the app, browser extension or SMS you registered with the university) and then your password.
+
+Why two hops? Security. A machine that anyone on the internet can reach is attacked all day long: automated programs try common passwords on every address they can find. So the university's firewall lets the outside world reach only a few **gateway** machines, such as `bava`, which are kept small, up to date and closely watched. The cluster, with its valuable hardware and everyone's data, accepts `ssh` only from inside the network. An attacker must break into the gateway first, and that is the one machine the administrators watch most closely. This arrangement is common, and the gateway is often called a **jump host** or **bastion**.
+
+`-J` logs in to `bava` and asks it to pass a connection through to `moriah-gw`. The second login is then encrypted all the way from your computer to `moriah-gw`, so even `bava` never sees what you type there.
+
+Typing a password each time gets tedious. A **key pair** replaces it: you create a private key that stays on your computer and a public key that you give to the server:
+
+```bash
+ssh-keygen -t ed25519                # make the key pair, once
+ssh-copy-id user@server  # install your public key on the server
+ssh user@server          # now logs in without a password
+```
+
+Never share the private key (`~/.ssh/id_ed25519`). The public one, `id_ed25519.pub`, is meant to be shared.
+
+## `~/.ssh/config`: give the server a short name
+
+The Moriah command is long to type every time. Put the details in the file `~/.ssh/config` on your own computer (create it if it is not there), using your own login in place of `kapelner`:
+
+```
+Host moriah
+    HostName moriah-gw.cs.huji.ac.il
+    User kapelner
+    ProxyJump kapelner@bava.cs.huji.ac.il
+```
+
+`Host` is the short name you choose. `HostName` is the real address, `User` is your login, and `ProxyJump` is the same jump as `-J`. Now this is all you type:
+
+```bash
+ssh moriah
+```
+
+The short name works everywhere `ssh` is used underneath, including `ssh-copy-id`, `scp` and `rsync` below. To log in to Moriah without passwords, install your key on both machines, because each hop checks it:
+
+```bash
+ssh-copy-id kapelner@bava.cs.huji.ac.il   # the gateway
+ssh-copy-id moriah                        # the cluster
+```
+
+## `scp` and `rsync`: copy files between machines
+
+`scp` ("secure copy") is `cp` across the network. The remote side is written `user@server:path`, and the colon is what says "this is on the server":
+
+```bash
+scp results.csv user@server:~/data/     # your computer to the server
+scp user@server:~/out/model.pkl .       # server to here (. : this folder)
+scp -r results/ user@server:~/          # -r : a whole folder
+```
+
+`rsync` does the same job better for anything big or repeated. It compares both sides and sends only what is missing or changed, so a second run of a large copy takes seconds, and an interrupted one can be resumed:
+
+```bash
+rsync -av data/ user@server:~/data/     # -a : keep folders, dates; -v : talk
+rsync -avz data/ user@server:~/data/    # -z : compress while sending
+rsync -avP data/ user@server:~/data/    # -P : progress, keep partial files
+rsync -avn data/ user@server:~/data/    # -n : dry run, only show the plan
+```
+
+::: {.callout-warning}
+## The trailing slash matters
+`rsync -av data/ dest/` copies the *contents* of `data` into `dest`. Without the slash, `rsync -av data dest/` creates `dest/data`. The same is true on the destination side. When in doubt, add `-n` first.
+:::
+
+## `tmux` on the server: keep your work alive
+
+This is what `tmux` from Lecture 2 is for. Start it *on the server*, right after you log in, and run your long job inside it:
+
+```bash
+ssh user@server
+tmux new -s analysis             # a session on the server
+Rscript long_job.R               # start the long job
+# Ctrl+B then D : detach
+exit                             # log out; the job keeps running
+```
+
+Close your laptop, lose your Wi-Fi, go home. Later:
+
+```bash
+ssh user@server
+tmux ls                          # analysis: 1 windows ...
+tmux attach -t analysis          # back where you left off, output and all
+```
+
+The session lives on the server, not on your laptop, so it survives a dropped `ssh` connection as well as a deliberate logout.
+
+`nohup` from Lecture 2 also works for this but `tmux` is the safer choice where the job's terminal belongs to the `tmux` session, which never goes away when you log out. Neither one comes with a guarantee. A remote server is not your machine: the system administrator is in control and can kill anything they want. They may set the server to kill all of your processes when you log out, `tmux` included, or kill any job that runs too long or uses too much memory on a shared login machine. Read your server's rules, and on a cluster put long jobs in the "scheduler", which is what it is there for. We will return to the scheduler later (on moriah they use a program called SLURM).
+
+Make it a habit: whenever you `ssh` in to do something that takes more than a minute, start or attach to a `tmux` session first.
+
+
+# PostgreSQL ("postgres")
+
+
+## Logging in to the database
+
+Check that the postgres server is running and that you can log in. The command is to run postgres is `psql`:
+
+```bash
+psql -c "SELECT version();"      # a line starting with: PostgreSQL 18
+psql
+```
+
+Now we get a different prompt. We're inside the database program. Commands in bash don't work here. We use another language here. Recall our discussion on `awk` and recall this command
+
+```bash
+awk -F, 'NR>1 {n[$3]++} END {for (s in n) print s "," n[s]}' covid.csv #### don't run, we're not in bash anymore
+#        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+#        awk's own proprietary language which people
+#        call "awk", "awk program", "awk script"
+```
+
+So too PostgreSQL has its own language. In fact it's an internationally standardized language called "Structured Query Language" (SQL, pronounced "sequel" or "S-Q-L"), which was standardized in 1986 by ANSI, the American standards body, and in 1987 by ISO, the international one. It grew out of SEQUEL, a language IBM researchers designed in the early 1970s; the name was shortened to SQL because "SEQUEL" was already a trademark, but the old pronunciation stuck. The standard has been revised many times since, most recently in 2023. Every major database speaks SQL, so what you learn here carries over to MySQL, SQLite, Oracle, SQL Server and the rest. Each one adds its own extensions, called a "dialect". So the postgres backslash commands such as \timing and \copy are not SQL at all.
+
+Notice that you gave neither a username nor a password. The username is easy: when you do not give one (with `-U`), `psql` uses your Linux username. If you do not name a database, it also connects to the one with your username. Why no password? Your setup created a database user (Postgres calls it a **role**) with the same name as your Linux user. When `psql` connects to a server on the *same* machine, it does not go over the network. It uses a special file called a **socket**, and through a socket the server can ask the operating system which Linux user is on the other end. You already proved who you are when you logged in to the computer, so the server takes the operating system's word for it and lets you in as the role with your name. This is called **peer authentication**, and it is set by a rule in the server's configuration file `pg_hba.conf` ("host-based authentication").
+
+Connections from other machines arrive over the network, where the server has no way to ask anyone's operating system. They need a password or a key. So a database on another computer will always ask you to prove who you are.
+
+## Using Postgres on Moriah
+
+Log into moriah and try `psql`. You will most likely get `command not found`. A cluster serves hundreds of users who need different programs, and often different versions of the same program, so most software is installed side by side and switched off until you ask for it. The `module` command does the asking. First search for what is available:
+
+```bash
+ssh moriah
+psql #fails
+module spider postgres           # every Postgres version installed here
+module spider postgres/17        # details about one version
+```
+
+`module spider` only *searches*. To actually use a version, load it:
+
+```bash
+module load postgres/17          # adds psql and friends to your PATH
+which psql                       # now found
+psql --version
+```
+
+A loaded module lasts only until you log out, and the next login starts clean again. To load it every time, put the line into `~/.bashrc` on Moriah, which bash runs at the start of every session. Then `source` the file, which runs it in the current shell, so you do not have to log out and back in:
+
+```bash
+echo 'module load postgres/17' >> ~/.bashrc   # >> appends; > would wipe the file
+source ~/.bashrc
+```
+
+From now on Postgres is there every time you log in, and you never need to think about this whole `module` thing ever again.
+
+Let's go back to our local computers:
+
+```bash
+exit
+```
+## postgres databases
+
+What is a postgres "database"? One Postgres server holds many **databases** which in turn houses **tables** (to be explained shortly). The unit of the database is one that store data for a logical project, application or analysis. For example, a clinic's database might have patients, visits and prescriptions. These tables refer to each other (a visit belongs to a patient), and questions often need several of them at once. We will be seeing all this in good time. Grouping a project into one database pays off in four ways:
+
+* Queries: a query can combine tables only within one database, so tables that are used together must live together.
+* Names: each project has its own namespace, so two projects can each have a table called results in two different databases.
+* Permissions: you can give access to someone to one database without giving access to your other databases.
+* Lifecycle: you can back up a database as a unit (pg_dump lec04 > lec04.sql), copy it to another server, or delete it with dropdb, without touching the other projects.
+
+A database is **not** a file you can see. Postgres keeps all the databases together in its own storage folder, in a format only it reads, and you reach the data only by asking the server. (Compare SQLite, a smaller database where each database *is* one file.)
+
+By default, there are two databases already present:
+
+```
+your local Postgres server
+├── postgres       (made at setup; a default place to connect)
+├── kapelner       (the one named after you)
+```
+
+Which database are we in by default?
+
+```bash
+psql
+```
+
+You can read it from the default prompt "<username>=#". You can verify it and see more information here:
+
+```sql
+\conninfo
+```
+
+To list the databases on the server, type `\l`:
+
+```sql
+\l
+```
+
+As you can see, I'm using databases for other projects I'm involved with.
+
+You can live in one database per `psql` session. You can switch databases via `\c` is short for `\connect`:
+
+```sql
+\c postgres
+\c kapelner
+```
+
+Just like `ssh` you use `exit` to return to bash:
+
+```sql
+exit
+```
+
+We can create a database using the bash program `createdb`. We'll create one for this lecture and open postgres directly into it:
+
+```bash
+createdb lec04                   # a new, empty database
+psql lec04                       # the interactive prompt; \q quits
+```
+
+Again, this database is a named, walled-off collection of tables, a bit like a folder of files. You connect to **one** database at a time (`psql lec04`), and a query can only see the tables in that one. Two databases can each have a table called `covid` without any clash. That makes a database the natural unit for one project. Make one per project, and when the project is over, `dropdb` deletes it and everything in it in a single step.
+
+
+## Loading the CSV
+
+A database table, like parquet, has **typed columns**. We state them up front and then load the file with `\copy`, which reads a file on *your* machine:
+
+```sql
+\timing on
+CREATE TABLE covid (
+  date   date,
+  county text,
+  state  text,
+  fips   text,
+  cases  integer,
+  deaths integer
+);
+\copy covid FROM 'covid.csv' CSV HEADER
+SELECT count(*) FROM covid;      -- 884737, the same as wc -l minus the header
+```
+
+`CSV HEADER` tells Postgres that the first line holds column names and not data. The load takes about a second. (Use `\copy` and not plain `COPY`. `COPY` makes the *server* read the file, and the server is a different user who is not allowed into your home folder.)
+
+## Postgres non-SQL commands
+
+A few commands that start with a backslash belong to `psql` itself (and are not SQL):
+
++--------------+-----------------------------------------------+
+| Command      | What it does                                  |
++==============+===============================================+
+| `\timing on` | print how long each statement took            |
++--------------+-----------------------------------------------+
+| `\d covid`   | describe a table: its columns and their types |
++--------------+-----------------------------------------------+
+| `\dt`        | list the tables                               |
++--------------+-----------------------------------------------+
+| `\q`         | quit                                          |
++--------------+-----------------------------------------------+
+
+## Asking questions
+
+SQL describes *what* you want, not how to loop over lines. The questions from earlier lectures become:
+
+```sql
+SELECT count(*) FROM covid WHERE state = 'Texas';           -- 67002
+SELECT max(cases) FROM covid
+  WHERE state = 'Texas' AND county = 'Harris';              -- 237727
+SELECT state, count(*) FROM covid
+  GROUP BY state ORDER BY count(*) DESC LIMIT 5;            -- top 5 states
+```
+
+The first answer is exactly 67,002 with no regular expression and no counting of the wrong column. Because each column has a name and a type, `state = 'Texas'` cannot match a county. These queries take about 60 to 90 ms: faster than `awk`, but still reading the entire table. The real speed-up comes next.
+
+## Indexes
+
+An **index** is a sorted lookup structure that the database keeps beside the table, like the index at the back of a book. Instead of reading every page to find "Harris", it looks up the entry and jumps to the right pages.
+
+```sql
+EXPLAIN ANALYZE SELECT max(cases) FROM covid
+  WHERE state = 'Texas' AND county = 'Harris';
+```
+
+`EXPLAIN ANALYZE` shows how Postgres ran the query. Without an index you will see `Seq Scan` (a *sequential scan*: reading every row) and an execution time of about 70 ms. Now create the index and run the same `EXPLAIN ANALYZE` again:
+
+```sql
+CREATE INDEX ON covid (state, county);     -- takes about a second, once
+```
+
+The plan changes to an `Index Scan` (or `Bitmap Index Scan`) and the time drops to **under 1 ms**. The table has 884,737 rows, and the database looked at about 300 of them.
+
+The time to answer is now almost independent of the table's size. That is the reason databases exist. The cost is paid once, when you build the index (about 1.2 seconds here), plus a little extra on every insert to keep the index up to date and some extra disk space.
+
+## Indexes at scale
+
+Now the same 20 lookups as in the Parquet unit, but against the 44-million-row `covid_big.csv`. Load it into a table of its own and build an index on the three columns we filter by (the load takes about a minute, the index about another minute and a quarter, and the table takes about 3 GB on disk, of which the index is 0.3 GB):
+
+```sql
+CREATE TABLE covid_big (date date, county text, state text, fips text, cases integer, deaths integer);
+\copy covid_big FROM 'covid_big.csv' CSV HEADER
+CREATE INDEX ON covid_big (state, county, date);
+```
+
+Then ask the same 20 questions from R, through the `DBI` package, which talks to Postgres:
+
+```{r}
+library(arrow)
+library(dplyr)
+library(DBI)
+
+setwd("~/workspace/HUJI_52002_Fall_2026/scratch/lec04")
+
+ds <- open_dataset("covid_big.parquet")
+set.seed(1)
+counties <- ds |> distinct(state, county) |> collect()
+counties <- counties[sample(nrow(counties), 20), ]   # the same 20 random counties
+
+con <- dbConnect(RPostgres::Postgres(), dbname = "lec04")
+system.time(
+  for (i in 1:20) {
+    dbGetQuery(con,
+      "SELECT max(cases) FROM covid_big WHERE state = $1 AND county = $2 AND date = $3",
+      params = list(counties$state[i], counties$county[i], as.Date("2020-12-31")))
+  }
+)
+dbDisconnect(con)
+```
+
+```
+   user  system elapsed 
+ ...        ...   0.03
+```
+
+0.03 seconds for all 20, about 1.5 ms each, compared with 19 seconds for Parquet: **roughly 600 times faster**. The index lets Postgres jump straight to the 50 matching rows instead of reading 44 million. Parquet is the better format for scanning entire columns (try adding up `cases` for the whole table: Parquet wins easily), and a database is the better tool for finding a few rows fast. Drop the big table when you are done: `DROP TABLE covid_big;`.
+
+## The database checks your data
+
+Try to add a row with a nonsense value:
+
+```sql
+INSERT INTO covid VALUES ('2021-01-01', 'Harris', 'Texas', '48201', 'N/A', 0);
+-- ERROR:  invalid input syntax for type integer: "N/A"
+```
+
+A CSV would have accepted that line without complaint, and the problem would have appeared much later, in the middle of an analysis. A database refuses bad data at the door. Types are the simplest of its guarantees. Later you can add rules such as `NOT NULL`, `UNIQUE` and `CHECK`.
+
+## Changing data
+
+Fixing one value touches only the rows you name:
+
+```sql
+UPDATE covid SET deaths = deaths + 1
+  WHERE state = 'Texas' AND county = 'Harris' AND date = '2020-12-31';
+```
+
+A database does not care where a row "goes": it writes the change into free space and updates its index, which takes a fraction of a millisecond. Compare that with rewriting a 35 GB Parquet file. You can also wrap several changes in a **transaction** (`BEGIN; ... COMMIT;`), and either all of them happen or none of them do. If the machine crashes halfway through, the database recovers to a consistent state.
+
+## Using the database from the shell
+
+You do not need the interactive prompt. `psql -c` runs one statement, and the output can feed straight back into the pipes you already know:
+
+```bash
+psql lec04 -c "SELECT count(*) FROM covid"
+psql lec04 -At -c "SELECT county FROM covid WHERE state='Utah'" | sort -u
+psql lec04 -c "\copy (SELECT * FROM covid WHERE state='Utah') \
+  TO 'utah.csv' CSV HEADER"
+```
+
+`-A` turns off the table formatting and `-t` removes headers and footers, which leaves plain lines for `sort`, `wc` and friends. The last line goes the other way and writes the result of a query out as a CSV.
+
+## What did you install?
+
+Postgres is a lot of software. Add it up, with `du` ("disk usage") for the program files and the database itself for your data:
+
+```bash
+du -ch /usr/lib/postgresql /usr/share/postgresql | tail -n 1   # the program
+psql -At -c "SELECT pg_size_pretty(sum(pg_database_size(datname)))
+             FROM pg_database"                          # all your data
+```
+
+`du -c` adds a grand total at the end and `tail -n 1` keeps only that line. On Ubuntu the program is about 50 MB. (On a Mac with Homebrew, use `du -shL "$(brew --prefix postgresql@18)"`.) The `covid` table alone took about 63 MB with its index, almost twice the 35 MB CSV.
+
+That is a lot of space for a program whose job is to store rows. But look at what it bought you in this unit:
+
+- **Speed:** the same question went from scanning every row (about 70 ms here, and growing with the table) to under 1 ms with an index, and that stays true as the table grows.
+- **Correctness:** typed columns refused `'N/A'` as a number, and rules such as `NOT NULL` and `UNIQUE` can refuse other nonsense when it arrives.
+- **Safe changes:** single-row updates and transactions that happen completely or not at all, even if the machine crashes.
+- **Many users at once:** many programs reading and writing the same tables at once without corrupting them.
+- **A query language** instead of one-off shell pipelines: SQL, with joins, grouping and sorting, and a planner that picks how to run each query.
+
+PostgreSQL grew out of research at Berkeley in the 1980s and has had decades of engineering since. Nobody would write all of that again for one analysis. That is why it is worth the space: you get it for free, and it is already installed.
+
+## Clean up
+
+```bash
+dropdb lec04                     # delete the whole database
+```
+
+::: {.callout-tip}
+## Try it
+1. Find the five counties with the highest `deaths` on 2020-12-31, as a single SQL statement (`ORDER BY` and `LIMIT`). Your first attempt will probably list counties with *no* number at all. Some rows in the CSV have an empty `deaths`, which the database stores as `NULL`, and `ORDER BY ... DESC` puts `NULL` first. Fix it with `NULLS LAST`.
+2. Time the query "maximum `cases` in Harris, Texas" with and without the index (`DROP INDEX` to remove it). Then do the same with `awk` on the CSV. How many times faster is the indexed query?
+3. Load the CSV again into a second table, but declare `cases` as `text`. What changes, and which of the queries above breaks or gives wrong answers? (Try `max(cases)`: as text, `'9999'` sorts after `'237727'`.)
+:::
+
+
+This section was moved here from Lecture 3 so that it is taught once we have access to a remote machine. (The data lake section that used to be here is now in Lecture 13, `lec13_data_lakes_nosql_ethics.qmd`.)

@@ -815,6 +815,8 @@ Almost every tool in this course (Linux, `bash`, `awk`, `git`, Python, R, `panda
 * **2005-2008:** `git` is written (for Linux itself) and GitHub launches, which makes sharing and contributing easy.
 * **Now:** Sonatype estimated [about 6.6 trillion open source downloads in 2024](https://www.sonatype.com/en/press-releases/sonatypes-10th-annual-state-of-the-software-supply-chain-report), and about 90% of modern software is open source components. 
 
+Modern software applications are composed of roughly 85% open source components!
+
 ## The common licenses
 
 Licenses fall into two families. **Permissive** licenses (MIT, BSD, Apache) let you do almost anything, including putting the code inside a closed commercial product, as long as you keep the copyright notice. **Copyleft** licenses (GPL) add a condition: if you distribute software built on GPL code, you must release your version under the GPL too.

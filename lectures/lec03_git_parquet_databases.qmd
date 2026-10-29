@@ -347,16 +347,16 @@ Three things trip people up:
 * **Ignoring does not untrack.** `.gitignore` only affects files git is *not yet* tracking. If you already committed `covid.csv`, adding it to `.gitignore` changes nothing. Tell git to stop tracking it, and leave the file on disk:
 
 ```bash
-echo "bigggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg" > big.csv
+echo "bigggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg" > biggg.csv
 git status
-git add big.csv                 # oops: a data file gets added...
+git add biggg.csv                 # oops: a data file gets added...
 git commit -m "oops, committed data"
-echo "big.csv" >> .gitignore    # ...adding it to .gitignore now does nothing: git already tracks it
+echo "biggg.csv" >> .gitignore    # ...adding it to .gitignore now does nothing: git already tracks it
 git status --ignored            # it's not being ignored! 
-git rm --cached big.csv         # stop tracking; the file stays in the folder
+git rm --cached biggg.csv         # stop tracking; the file stays in the folder
 git status --ignored            # now it's ignored
-git add .gitignore && git commit -m "stop tracking big.csv"
-rm big.csv                      # (demo only) delete the leftover file
+git add .gitignore && git commit -m "stop tracking biggg.csv"
+rm biggg.csv                      # (demo only) delete the leftover file
 git status
  ```
 
@@ -373,6 +373,7 @@ git branch                          # list branches (the current one has a *)
 git switch -c lec03-development     # new branch, and move onto it
                                     # (= `git branch lec03-exp` to create it, then `git switch lec03-exp`)
 echo "an idea" >> demo_notes.txt
+git add .
 git commit -m "try an idea" demo_notes.txt
 git switch main                     # back: demo_notes.txt no longer has the idea!
 git branch 
@@ -786,14 +787,14 @@ The Parquet files are about **10 times smaller** than the CSV, and even smaller 
 
 Reading it back keeps the types, so `date` is still a date and `fips` is still the text `"06059"` without anybody guessing:
 
-```python
-pd.read_parquet("covid.parquet").dtypes
+```{python}
+pd.read_parquet("covid_python.parquet").dtypes
 ```
 
 And you can ask for only the columns you want:
 
-```python
-pd.read_parquet("covid.parquet", columns=["state", "cases"])   # reads two of the six columns
+```{python}
+pd.read_parquet("covid_python.parquet", columns=["state", "cases"])   # reads two of the six columns
 ```
 
 Here are our timings on this file (the median of 7 runs on one machine; yours will differ but the ranking should not). For the CSV the package is `data.table::fread` in R and `pandas.read_csv` in Python; for Parquet it is the `arrow` package in R and `pandas.read_parquet` in Python (which uses `pyarrow` underneath):
@@ -892,7 +893,7 @@ Putting the four formats side by side, for tabular data like `covid.csv`. A ✓ 
 +------------------+----------------+----------------+------------------+---------------+
 |                  | CSV            | CSV + `xz`     | JSON             | Parquet       |
 +:=================+:==============:+:==============:+:================:+:=============:+
-| Human-readable   | ✓              | ✗              | ✓                | ✗             |
+| Human-readable   | ✓             | ✗              | ✓                | ✗             |
 | in a text editor |                |                |                  |               |
 +------------------+----------------+----------------+------------------+---------------+
 | Opens            | ✓              | partly         | ✓                | ✗             |
@@ -1188,196 +1189,3 @@ PostgreSQL has been the most used for a few years now, which is one reason we us
 
 We will use **PostgreSQL** ("Postgres"), which you installed in the setup guide.
 
-Check that the server is running and that you can log in:
-
-```bash
-psql -c "SELECT version();"      # a line starting with: PostgreSQL 18
-```
-
-Notice that no password was needed. Your setup created a database user with the same name as your Linux user, and the server trusts connections made from your own machine by that user. (This is how Postgres is set up on a standard Ubuntu or Homebrew install. It is **not** how you will reach a remote database, which will ask for a password or a key.)
-
-Make a database for this lecture and open the SQL prompt in it:
-
-```bash
-createdb lec03                   # a new, empty database
-psql lec03                       # the interactive prompt; \q quits
-```
-
-A few commands that start with a backslash belong to `psql` itself and are not SQL:
-
-+--------------+-----------------------------------------------+
-| Command      | What it does                                  |
-+==============+===============================================+
-| `\timing on` | print how long each statement took            |
-+--------------+-----------------------------------------------+
-| `\d covid`   | describe a table: its columns and their types |
-+--------------+-----------------------------------------------+
-| `\dt`        | list the tables                               |
-+--------------+-----------------------------------------------+
-| `\q`         | quit                                          |
-+--------------+-----------------------------------------------+
-
-## Loading the CSV
-
-A database table has **typed columns**. We state them up front and then load the file with `\copy`, which reads a file on *your* machine:
-
-```sql
-\timing on
-CREATE TABLE covid (
-  date   date,
-  county text,
-  state  text,
-  fips   text,
-  cases  integer,
-  deaths integer
-);
-\copy covid FROM 'covid.csv' CSV HEADER
-SELECT count(*) FROM covid;      -- 884737, the same as wc -l minus the header
-```
-
-`CSV HEADER` tells Postgres that the first line holds column names and not data. The load takes about a second. (Use `\copy` and not plain `COPY`. `COPY` makes the *server* read the file, and the server is a different user who is not allowed into your home folder.)
-
-## Asking questions
-
-SQL describes *what* you want, not how to loop over lines. The questions from earlier lectures become:
-
-```sql
-SELECT count(*) FROM covid WHERE state = 'Texas';           -- 67002
-SELECT max(cases) FROM covid
-  WHERE state = 'Texas' AND county = 'Harris';              -- 237727
-SELECT state, count(*) FROM covid
-  GROUP BY state ORDER BY count(*) DESC LIMIT 5;            -- top 5 states
-```
-
-The first answer is exactly 67,002 with no regular expression and no counting of the wrong column. Because each column has a name and a type, `state = 'Texas'` cannot match a county. These queries take about 60 to 90 ms: faster than `awk`, but still reading the entire table. The real speed-up comes next.
-
-## Indexes
-
-An **index** is a sorted lookup structure that the database keeps beside the table, like the index at the back of a book. Instead of reading every page to find "Harris", it looks up the entry and jumps to the right pages.
-
-```sql
-EXPLAIN ANALYZE SELECT max(cases) FROM covid
-  WHERE state = 'Texas' AND county = 'Harris';
-```
-
-`EXPLAIN ANALYZE` shows how Postgres ran the query. Without an index you will see `Seq Scan` (a *sequential scan*: reading every row) and an execution time of about 70 ms. Now create the index and run the same `EXPLAIN ANALYZE` again:
-
-```sql
-CREATE INDEX ON covid (state, county);     -- takes about a second, once
-```
-
-The plan changes to an `Index Scan` (or `Bitmap Index Scan`) and the time drops to **under 1 ms**. The table has 884,737 rows, and the database looked at about 300 of them.
-
-The time to answer is now almost independent of the table's size. That is the reason databases exist. The cost is paid once, when you build the index (about 1.2 seconds here), plus a little extra on every insert to keep the index up to date and some extra disk space.
-
-## Indexes at scale
-
-Now the same 20 lookups as in the Parquet unit, but against the 44-million-row `covid_big.csv`. Load it into a table of its own and build an index on the three columns we filter by (the load takes about a minute, the index about another minute and a quarter, and the table takes about 3 GB on disk, of which the index is 0.3 GB):
-
-```sql
-CREATE TABLE covid_big (date date, county text, state text, fips text, cases integer, deaths integer);
-\copy covid_big FROM 'covid_big.csv' CSV HEADER
-CREATE INDEX ON covid_big (state, county, date);
-```
-
-Then ask the same 20 questions from R, through the `DBI` package, which talks to Postgres:
-
-```{r}
-library(arrow)
-library(dplyr)
-library(DBI)
-
-setwd("~/workspace/HUJI_52002_Fall_2026/scratch/lec03")
-
-ds <- open_dataset("covid_big.parquet")
-set.seed(1)
-counties <- ds |> distinct(state, county) |> collect()
-counties <- counties[sample(nrow(counties), 20), ]   # the same 20 random counties
-
-con <- dbConnect(RPostgres::Postgres(), dbname = "lec03")
-system.time(
-  for (i in 1:20) {
-    dbGetQuery(con,
-      "SELECT max(cases) FROM covid_big WHERE state = $1 AND county = $2 AND date = $3",
-      params = list(counties$state[i], counties$county[i], as.Date("2020-12-31")))
-  }
-)
-dbDisconnect(con)
-```
-
-```
-   user  system elapsed 
- ...        ...   0.03
-```
-
-0.03 seconds for all 20, about 1.5 ms each, compared with 19 seconds for Parquet: **roughly 600 times faster**. The index lets Postgres jump straight to the 50 matching rows instead of reading 44 million. Parquet is the better format for scanning entire columns (try adding up `cases` for the whole table: Parquet wins easily), and a database is the better tool for finding a few rows fast. Drop the big table when you are done: `DROP TABLE covid_big;`.
-
-## The database checks your data
-
-Try to add a row with a nonsense value:
-
-```sql
-INSERT INTO covid VALUES ('2021-01-01', 'Harris', 'Texas', '48201', 'N/A', 0);
--- ERROR:  invalid input syntax for type integer: "N/A"
-```
-
-A CSV would have accepted that line without complaint, and the problem would have appeared much later, in the middle of an analysis. A database refuses bad data at the door. Types are the simplest of its guarantees. Later you can add rules such as `NOT NULL`, `UNIQUE` and `CHECK`.
-
-## Changing data
-
-Fixing one value touches only the rows you name:
-
-```sql
-UPDATE covid SET deaths = deaths + 1
-  WHERE state = 'Texas' AND county = 'Harris' AND date = '2020-12-31';
-```
-
-A database does not care where a row "goes": it writes the change into free space and updates its index, which takes a fraction of a millisecond. Compare that with rewriting a 35 GB Parquet file. You can also wrap several changes in a **transaction** (`BEGIN; ... COMMIT;`), and either all of them happen or none of them do. If the machine crashes halfway through, the database recovers to a consistent state.
-
-## Using the database from the shell
-
-You do not need the interactive prompt. `psql -c` runs one statement, and the output can feed straight back into the pipes you already know:
-
-```bash
-psql lec03 -c "SELECT count(*) FROM covid"
-psql lec03 -At -c "SELECT county FROM covid WHERE state='Utah'" | sort -u
-psql lec03 -c "\copy (SELECT * FROM covid WHERE state='Utah') \
-  TO 'utah.csv' CSV HEADER"
-```
-
-`-A` turns off the table formatting and `-t` removes headers and footers, which leaves plain lines for `sort`, `wc` and friends. The last line goes the other way and writes the result of a query out as a CSV.
-
-## What did you install?
-
-Postgres is a lot of software. Add it up, with `du` ("disk usage") for the program files and the database itself for your data:
-
-```bash
-du -ch /usr/lib/postgresql /usr/share/postgresql | tail -n 1   # the program
-psql -At -c "SELECT pg_size_pretty(sum(pg_database_size(datname)))
-             FROM pg_database"                          # all your data
-```
-
-`du -c` adds a grand total at the end and `tail -n 1` keeps only that line. On Ubuntu the program is about 50 MB. (On a Mac with Homebrew, use `du -shL "$(brew --prefix postgresql@18)"`.) The `covid` table alone took about 63 MB with its index, almost twice the 35 MB CSV.
-
-That is a lot of space for a program whose job is to store rows. But look at what it bought you in this unit:
-
-- **Speed:** the same question went from scanning every row (about 70 ms here, and growing with the table) to under 1 ms with an index, and that stays true as the table grows.
-- **Correctness:** typed columns refused `'N/A'` as a number, and rules such as `NOT NULL` and `UNIQUE` can refuse other nonsense when it arrives.
-- **Safe changes:** single-row updates and transactions that happen completely or not at all, even if the machine crashes.
-- **Many users at once:** many programs reading and writing the same tables at once without corrupting them.
-- **A query language** instead of one-off shell pipelines: SQL, with joins, grouping and sorting, and a planner that picks how to run each query.
-
-PostgreSQL grew out of research at Berkeley in the 1980s and has had decades of engineering since. Nobody would write all of that again for one analysis. That is why it is worth the space: you get it for free, and it is already installed.
-
-## Clean up
-
-```bash
-dropdb lec03                     # delete the whole database
-```
-
-::: {.callout-tip}
-## Try it
-1. Find the five counties with the highest `deaths` on 2020-12-31, as a single SQL statement (`ORDER BY` and `LIMIT`). Your first attempt will probably list counties with *no* number at all. Some rows in the CSV have an empty `deaths`, which the database stores as `NULL`, and `ORDER BY ... DESC` puts `NULL` first. Fix it with `NULLS LAST`.
-2. Time the query "maximum `cases` in Harris, Texas" with and without the index (`DROP INDEX` to remove it). Then do the same with `awk` on the CSV. How many times faster is the indexed query?
-3. Load the CSV again into a second table, but declare `cases` as `text`. What changes, and which of the queries above breaks or gives wrong answers? (Try `max(cases)`: as text, `'9999'` sorts after `'237727'`.)
-:::
