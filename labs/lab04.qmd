@@ -1,0 +1,524 @@
+---
+title: "Lab 4: Remote machines and background jobs"
+subtitle: "Big Data Algorithms"
+author: "YOUR NAME HERE"
+format:
+  html:
+    toc: true
+    toc-depth: 2
+    number-sections: false
+    code-copy: true
+    embed-resources: true
+execute:
+  eval: false
+---
+
+This lab has exercises that reinforce the section "Working on remote machines" of Lecture 4 (`lectures/lec04_remote_machines_postgres.qmd`) and the sections "Finding and stopping a process" and "Background job administration" of Lecture 2 (`lectures/lec02_linux_advanced.qmd`). Parts 1 and 2 get you onto Moriah, the HUJI cluster, and move files back and forth. In Parts 3 to 7 you run **everything on Moriah**. You will need a second terminal logged into Moriah in a few places.
+
+::: {.callout-warning}
+## Ground rules
+* Run every command yourself. Many answers depend on what you see (and your PID numbers will not be the same as anyone else's).
+* Leave the "#TODO text [question text] text" line and start a new line underneath and write your answers on that new line
+* This file stays on your laptop, and you commit and push it from there. Keep it open on your laptop while your terminal is on Moriah.
+* Moriah is **shared** and its login machine is used by everyone. Other people's programs will show up in your output, including your classmates' `sleep` commands from this very lab. Only ever touch your own processes. Run nothing heavy on the login machine: everything here just sleeps or prints a line per second.
+* Clean up after yourself. Every part ends by stopping the processes it started. Check with `pgrep -u $USER -a sleep` that none are left over.
+* **Never** put your private key (`~/.ssh/id_ed25519`) in this file or anywhere else.
+:::
+
+# Part 0: Setup
+
+I'm assuming your private github repository for this class (as set up in `setup/01_linux_git_github_setup.qmd`) is in the following location. If not, please edit the location below:
+
+```bash
+export my_52002_repo="$HOME/workspace/HUJI_52002_Fall_2026"
+```
+
+Create a directory for this assignment, download this file and move it into `$my_52002_repo/labs/04/`. As in the previous labs, commit / push after chunks of work; the timestamp of your final push is your submission date.
+
+Create a scratch folder for this lab and move into it (the `scratch` line you added to `.gitignore` in Lab 1 keeps it out of git). Then copy the covid data into it:
+
+```bash
+mkdir -p $my_52002_repo/labs/04/scratch
+cd $my_52002_repo/labs/04/scratch
+#TODO [command to copy covid.csv from last lab's scratch folder or the download command <1pts>]
+```
+
+# Part 1: Logging in with `ssh`
+
+Log in to Moriah from your laptop, with your own login in place of `user` (you will be asked for a one-time code and then for your password):
+
+```bash
+ssh -J user@bava.cs.huji.ac.il user@moriah-gw.cs.huji.ac.il
+hostname
+whoami
+pwd
+nproc
+free -h
+exit
+```
+
+Now run the same `hostname`, `pwd`, `nproc` and `free -h` on your laptop (a Mac has no `free`: use `sysctl -n hw.memsize`, which is in bytes).
+
+#TODO [the output of the commands on the two machines. How many cores and how much memory does Moriah's login machine have compared to your laptop? <1pts>]
+#TODO [why can't you just `ssh` straight to `moriah-gw` from home? What is the name for a machine like `bava`? <1pts>]
+#TODO [can `bava` read what you type on `moriah-gw`? Why or why not? <1pts>]
+
+**A short name.** Put the details in the file `~/.ssh/config` on your laptop, as in the lecture, so that `ssh moriah` is all you need to type:
+
+```
+#TODO [the contents of your ~/.ssh/config <1pts>]
+```
+
+**Keys.** You made a key pair when you set up GitHub, so don't make a new one (`ls ~/.ssh` will show `id_ed25519` and `id_ed25519.pub`). Install the public key:
+
+```bash
+#TODO [the two commands which install your public key on both of the machines <1pts>]
+ssh moriah hostname
+```
+
+#TODO [why do you have to install the key on both machines? <1pts>]
+#TODO [which of the two key files went to the server? Why is it OK to hand that one out, but not the other? <1pts>]
+
+**One command at a time.** You can run a command on the server without staying there. Run these two from your laptop, and first predict how the outputs differ:
+
+```bash
+ssh moriah "echo $HOME"
+ssh moriah 'echo $HOME'
+```
+
+#TODO [what did each print? Who replaced `$HOME` by its value in each of the two lines, and why are they different? <2pts>]
+
+# Part 2: Moving files with `scp` and `rsync`
+
+All of these commands are run **on your laptop**, in `labs/04/scratch`. First make a folder on the server, without logging in:
+
+```bash
+cd $my_52002_repo/labs/04/scratch
+#TODO [one line command, run on your laptop, which makes the folder lab04 in your home directory on Moriah <1pts>]
+```
+
+**`scp`.** Send the data over and check that it arrived whole. `md5sum` prints a *checksum*, a short code computed from all of the bytes of a file, so two equal codes mean two equal files (on a Mac, use `md5 covid.csv` for the first line):
+
+```bash
+md5sum covid.csv
+time #TODO [the scp command which copies covid.csv to the lab04 folder on Moriah <1pts>]
+ssh moriah "md5sum ~/lab04/covid.csv"
+```
+
+#TODO [how long did it take, and do the two checksums agree? <1pts>]
+
+Do the work on the server and bring back only the result:
+
+```bash
+ssh moriah "cd ~/lab04 && grep Texas covid.csv > texas.csv"
+#TODO [the scp command which copies texas.csv from Moriah to this folder <1pts>]
+ls -alh texas.csv
+```
+
+What happens if you forget the colon? Predict first, and then run:
+
+```bash
+scp texas.csv moriah
+ls -l moriah
+```
+
+#TODO [what did this do, and why? What should you run to clean it up? <1pts>]
+
+**`rsync`.** Make a folder of many small files, one per day, the same way you did in Lab 2:
+
+```bash
+mkdir days
+awk -F, 'NR>1 {print > ("days/" $1 ".csv")}' covid.csv
+ls days | wc -l
+```
+
+Copy it with `scp`, twice:
+
+```bash
+time scp -r -q days moriah:~/lab04/days_scp
+time scp -r -q days moriah:~/lab04/days_scp
+```
+
+Now copy it with `rsync`, twice:
+
+```bash
+time rsync -a --stats days/ moriah:~/lab04/days_rsync/
+time rsync -a --stats days/ moriah:~/lab04/days_rsync/
+```
+
+#TODO [the four times. Which of the second runs was much faster, and why? <2pts>]
+#TODO [the `--stats` output has a line "Total bytes sent". What was it in each of the two rsync runs? <1pts>]
+
+Change one file, and predict what `rsync` will send before you run it:
+
+```bash
+echo "2020-06-15,Fake,Texas,99999,1,0" >> days/2020-06-15.csv
+rsync -av days/ moriah:~/lab04/days_rsync/
+```
+
+#TODO [which files were sent? How did `rsync` find out, without you telling it? <1pts>]
+
+The trailing slash matters. Look at the plans of these two commands; neither one copies anything:
+
+```bash
+rsync -avn days/ moriah:~/lab04/slash_test/ | head -n 5
+rsync -avn days moriah:~/lab04/slash_test/ | head -n 5
+```
+
+#TODO [what does `-n` do? In which folder would the file `2020-06-15.csv` end up on Moriah in each of the two commands? <2pts>]
+
+`-z` compresses while sending. Try it on a text file and on a file that is already compressed:
+
+```bash
+rsync -av --stats covid.csv moriah:~/lab04/plain.csv | grep "bytes sent"
+rsync -avz --stats covid.csv moriah:~/lab04/zipped.csv | grep "bytes sent"
+xz -k covid.csv
+rsync -av --stats covid.csv.xz moriah:~/lab04/plain.xz | grep "bytes sent"
+rsync -avz --stats covid.csv.xz moriah:~/lab04/zipped.xz | grep "bytes sent"
+```
+
+#TODO [the four numbers. For which file did `-z` help, for which did it not, and why? <2pts>]
+#TODO [your Wi-Fi drops 90% of the way through copying a 200 GB file. Which of `scp` and `rsync` would you have wanted to use, with which option, and why? <1pts>]
+
+Clean up on both sides:
+
+```bash
+rm -r days moriah texas.csv covid.csv.xz
+ssh moriah "cd ~/lab04 && rm -r days_scp days_rsync plain.csv zipped.csv plain.xz zipped.xz texas.csv; ls -alh"
+```
+
+# Part 3: Looking at processes with `ps` and `pgrep`
+
+From here to the end of the lab, everything is done on Moriah (unless it says otherwise):
+
+```bash
+ssh moriah
+cd ~/lab04
+```
+
+`sleep 600` does nothing for 10 minutes, which makes it a perfect process to look at. The `&` at the end runs it in the **background**, so you get your prompt back. The shell stores the PID of the last background process in the variable `$!`:
+
+```bash
+sleep 600 &
+echo $!
+```
+
+#TODO [what did the line `[1] 12345` that appeared after the first command show, and how is `echo $!` related to it? <1pts>]
+
+`ps` can show just the columns you ask for, for just the processes you ask for. Read the `-o` and `-p` options in `man ps` and run:
+
+```bash
+ps -o pid,ppid,stat,command -p $!
+```
+
+#TODO [what are the four columns that came out, in your own words? <1pts>]
+#TODO [the parent PID of your `sleep` is the PID of another process. Write the command that shows that process, and say what it is <1pts>]
+#TODO [keep following the parents upward, one `ps` at a time, until you find the program which let you in. What is it called, and how does this chain explain why your programs are at risk when the connection drops? <2pts>]
+
+Now find the same process by its name, three ways:
+
+```bash
+ps aux | grep sleep
+pgrep -a sleep
+pgrep -u $USER -a sleep
+```
+
+#TODO [why does `ps aux | grep sleep` print an extra line that `pgrep -a sleep` does not? <1pts>]
+#TODO [rewrite `ps aux | grep sleep` so that the extra line is gone, without using `pgrep` (the lecture calls this the "bracket trick") <2pts>]
+#TODO [why is `-u $USER` needed on Moriah when you wouldn't need it on your own laptop? How many users have a `sleep` running right now? <1pts>]
+
+Leave this `sleep 600` running for the next part.
+
+# Part 4: Background jobs: `&`, `jobs`, `fg`, `bg` and `wait`
+
+You should still have one `sleep 600` running from Part 3. Start two more and list the jobs of this terminal:
+
+```bash
+sleep 601 &
+sleep 602 &
+jobs
+jobs -p
+```
+
+`jobs -p` prints only the PIDs. Read `man bash` (search for `jobs [`; or run `help jobs`) and find the option that prints the job number *and* the PID together:
+
+```bash
+#TODO [command that lists job numbers together with their PIDs <1pts>]
+```
+
+Bring job number 2 to the foreground, and then press Ctrl+Z:
+
+```bash
+#TODO [command that brings job number 2 to the foreground <1pts>]
+```
+
+Ctrl+Z does not stop the job for good; it **suspends** (pauses) it. Look at the job list and at the `STAT` column of its process, then resume it, this time in the background:
+
+```bash
+jobs
+ps -o pid,stat,command -p $(jobs -p | sed -n 2p)
+#TODO [command that resumes the suspended job in the background <1pts>]
+jobs
+```
+
+#TODO [what did `jobs` print while the job was suspended, and what does the first letter of `STAT` mean for a suspended process versus a running one? <1pts>]
+
+Sometimes you start several jobs and need to wait until they are all done before continuing. That is what `wait` is for. Compare these two:
+
+```bash
+time (sleep 2; sleep 2; sleep 2)
+time (sleep 2 & sleep 2 & sleep 2 & wait)
+```
+
+#TODO [the two times, and what each one tells you about `;` and `&`? <1pts>]
+
+Open a second terminal on your laptop, log in with `ssh moriah` and type `jobs` there. It prints nothing, but `pgrep -u $USER -a sleep` does show your three sleeps.
+
+#TODO [why is `jobs` empty in the second terminal, although the processes are clearly running? <1pts>]
+
+Run `exit` in the second terminal and return to the first. Stop **all** the background jobs of this terminal in one line, using `jobs -p` and `xargs` (see Lecture 2):
+
+```bash
+#TODO [one line command that kills every background job of this terminal <2pts>]
+jobs
+pgrep -u $USER -a sleep
+```
+
+# Part 5: Signals and `kill`
+
+`kill` sends a **signal** to a process. A process killed by signal number *n* has exit status 128 + *n*. List all of the signals and find the numbers of `HUP`, `INT`, `KILL`, `TERM`, `STOP` and `CONT`:
+
+```bash
+kill -l
+```
+
+Create a program that refuses to die when it is politely asked to stop. The `trap '' TERM` line tells bash to ignore the TERM signal:
+
+```bash
+cat > stubborn.sh << 'EOF'
+#!/usr/bin/env bash
+trap '' TERM
+while true; do sleep 1; done
+EOF
+chmod +x stubborn.sh
+./stubborn.sh &
+echo $!
+```
+
+Ask it to stop (the default signal of `kill` is TERM) and look at it:
+
+```bash
+kill $!
+sleep 2
+ps -o pid,stat,command -p $!
+```
+
+#TODO [is the process still there, and why? <1pts>]
+#TODO [write the command that stops it for sure, and the command that proves that it is gone <1pts>]
+
+Use `wait` to get the exit status of processes that were killed by different signals. `wait PID` waits for that process and then sets `$?` to its exit status:
+
+```bash
+sleep 600 &
+kill $!
+wait $!
+echo $?
+
+sleep 600 &
+kill -9 $!
+wait $!
+echo $?
+```
+
+#TODO [the two exit statuses that you got, and which signal numbers do they correspond to? <2pts>]
+
+A process can be paused without dying. `STOP` suspends it and `CONT` resumes it. This is the signal that Ctrl+Z sends (almost; Ctrl+Z sends a variant called `TSTP`):
+
+```bash
+sleep 600 &
+kill -STOP $!
+ps -o pid,stat,command -p $!
+kill -CONT $!
+ps -o pid,stat,command -p $!
+kill $!
+```
+
+#TODO [what was the `STAT` in each of the two `ps` lines? <1pts>]
+#TODO [`stubborn.sh` ignored TERM. Try to make it ignore `KILL` by editing the `trap` line: what happens, and why does that explain what `kill -9` is for? <2pts>]
+
+There is also `pkill`, which kills by *name* instead of by PID. Moriah is exactly the kind of machine where you must think before you use it. **Do not run this one**, just think about it:
+
+```bash
+pkill -x sleep       # -x : the process name must match exactly
+```
+
+#TODO [Moriah has other people's `sleep` commands running. What would this command do to theirs, to yours and why? If you had administrator rights, how would the answer change? <1pts>]
+#TODO [rewrite the command so that it only tries to touch your own processes <1pts>]
+
+Clean up:
+
+```bash
+rm stubborn.sh
+pgrep -u $USER -a sleep
+```
+
+# Part 6: Surviving a logout with `nohup`
+
+When you close a terminal, the system sends the **HUP** ("hang-up") signal to the programs that were started from it, and by default they die. `nohup` makes a program ignore HUP. You can test that without closing anything, by sending HUP yourself:
+
+```bash
+sleep 600 &
+echo $!
+nohup sleep 601 > /dev/null 2>&1 &
+echo $!
+```
+
+#TODO [what does `> /dev/null 2>&1` do, and why does `nohup` need it in this line? <1pts>]
+
+Send the HUP signal to both processes and see which ones survive. Use `wait` on the first one to see its exit status:
+
+```bash
+#TODO [command that sends HUP to the two sleeps you just started <1pts>]
+pgrep -u $USER -a sleep
+```
+
+#TODO [which process died and which survived? What was the exit status of the one that died (use `wait`) and why? <2pts>]
+
+Clean up what is left:
+
+```bash
+pkill -u $USER -x sleep
+```
+
+Now a realistic job. This script is a stand-in for a long computation: it writes the date to the standard output every second.
+
+```bash
+cat > infinite_loop.sh << 'EOF'
+#!/usr/bin/env bash
+while true; do date; sleep 1; done
+EOF
+chmod +x infinite_loop.sh
+```
+
+Start it so that it survives logging out, and so that its output is saved:
+
+```bash
+#TODO [command that runs infinite_loop.sh with nohup in the background, saving all its output (including errors) to out.log <2pts>]
+tail -n 3 out.log
+```
+
+#TODO [explain each of the four pieces `nohup`, `> out.log`, `2>&1` and `&` in one sentence each <2pts>]
+
+Now a real lost connection: **close the terminal window on your laptop**, without typing `exit`. Open a new one and log in again:
+
+```bash
+ssh moriah
+cd ~/lab04
+jobs
+pgrep -u $USER -af infinite_loop
+tail -n 3 out.log
+date
+```
+
+#TODO [what did `jobs` print in the new terminal and what did `pgrep` print (paste the line)? Is `out.log` still growing? How do you know? <1pts>]
+
+Stop the job and prove that it is gone:
+
+```bash
+#TODO [command that kills your infinite_loop process (you may use `pgrep` or `pkill`, but touch only your own) <1pts>]
+pgrep -u $USER -af infinite_loop
+```
+
+#TODO [why did you have to use a PID or a name this time, instead of `kill %1`? <1pts>]
+
+Clean up:
+
+```bash
+rm out.log nohup.out 2>/dev/null
+```
+
+# Part 7: A terminal that survives: `tmux`
+
+`nohup` keeps one command alive. `tmux` keeps a whole **terminal** alive, so that you can go away and come back to see it as you left it. Start a session called `lab4` on Moriah (if you get `command not found`, look for it with `module spider tmux`, as in the lecture):
+
+```bash
+tmux new -s lab4
+```
+
+You are now inside tmux (note the green bar at the bottom). Inside it, start the loop in the background and look at it:
+
+```bash
+cd ~/lab04
+./infinite_loop.sh > out.log 2>&1 &
+tail -n 2 out.log
+```
+
+Detach: press Ctrl+B, release both keys, then press d. You are back in your normal terminal on Moriah. Look at the session and at the job, and then come back:
+
+```bash
+tmux ls
+pgrep -u $USER -af infinite_loop
+jobs
+tmux attach -t lab4
+jobs
+```
+
+#TODO [paste the line that `tmux ls` printed. Why did `jobs` print nothing in the normal terminal but print the job after you attached? <1pts>]
+
+Detach again. Now really leave: run `exit` to log out of Moriah, so that you are back on your laptop. Run `tmux ls` on your laptop, then log in again and reattach:
+
+```bash
+tmux ls                     # on your laptop
+ssh moriah
+tmux ls                     # on Moriah
+tmux attach -t lab4
+tail -n 2 out.log
+```
+
+#TODO [what did `tmux ls` print on the laptop versus on Moriah, and why? Where does the session live? <1pts>]
+
+Inside the session, press Ctrl+B and then c to create a second tabbed window, and Ctrl+B and then n / p to move between the two. Then detach again and kill the whole session from outside:
+
+```bash
+tmux kill-session -t lab4
+tmux ls
+pgrep -u $USER -af infinite_loop
+```
+
+#TODO [is the loop still running after the session was killed? Explain what you saw in one sentence using what you learned about HUP in Part 6. <2pts>]
+
+You do not have to attach to a session to start something in it. The `-d` option starts a session **detached** and runs a command in it:
+
+```bash
+#TODO [one line command that creates a detached tmux session called lab4b which runs infinite_loop.sh and writes its output to out.log <2pts>]
+tmux ls
+tail -n 2 out.log
+pgrep -u $USER -af infinite_loop
+```
+
+#TODO [what happens to the session when the program inside it finishes or is killed? Check by killing the loop with `pkill -u $USER -f infinite_loop` and running `tmux ls` again <1pts>]
+
+#TODO [give one situation where you would choose `nohup ... &` and one where you would choose `tmux` <1pts>]
+#TODO [neither of them comes with a guarantee on a machine like this one. Why not, and where do really long jobs belong on a cluster? <1pts>]
+
+Clean up, and then leave Moriah:
+
+```bash
+tmux kill-session -t lab4b 2>/dev/null
+rm infinite_loop.sh out.log
+pgrep -u $USER -a sleep
+pgrep -u $USER -af infinite_loop
+cd ~
+rm -r ~/lab04
+exit
+```
+
+# Final checklist
+
+Before you push, check that:
+
+* every `#TODO` has a line afterwards that is filled in with your command, the real output, or a written English answer to the question in your own words;
+* nothing of yours is left running on Moriah: `ssh moriah 'pgrep -u $USER -a sleep; pgrep -u $USER -af infinite_loop; tmux ls'` prints no processes and no `lab4` session;
+* the `lab04` folder is gone from your home directory on Moriah;
+* no scratch files (`covid.csv`, the `days` folder) are in your repository (`git status` should not mention them), and your private key is nowhere in this file;
+* the file renders: `quarto render lab04.qmd` produces an HTML page with no errors (nothing in this lab is executed during rendering).

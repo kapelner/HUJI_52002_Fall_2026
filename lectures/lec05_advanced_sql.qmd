@@ -1,0 +1,98 @@
+---
+title: "Lecture 5"
+subtitle: "Big Data Algorithms"
+format:
+  html:
+    toc: true
+    toc-depth: 2
+    number-sections: true
+    code-copy: true
+    embed-resources: true
+---
+
+
+Make a scratch folder for this lecture and bring the data along (we use it again in the database unit):
+
+```bash
+mkdir -p ~/workspace/HUJI_52002_Fall_2026/scratch/lec05
+cd ~/workspace/HUJI_52002_Fall_2026/scratch/lec05
+cp ../lec01/covid.csv .
+ls -alh
+```
+
+# Logging in with keys and `~/.ssh/config`
+
+## Making your life logging in easier
+
+Typing a password each time gets tedious. A **key pair** replaces it: you create a private key that stays on your computer and a public key that you give to the server:
+
+```bash
+#ssh-keygen -t ed25519    # make the key pair, once (you've done this already for github)
+ssh-copy-id user@server  # install your public key on the server
+ssh user@server          # now logs in without a password
+```
+
+## `~/.ssh/` configuration files
+
+The folder `~/.ssh/` in your home folder holds the configuration files for `ssh`: your keys, your settings, and the servers you know. Take a look:
+
+```bash
+ls ~/.ssh/
+```
+
+Yours will show some of these:
+
++--------------------+----------------------------------------------------------------------+-------------------------+
+| File               | What it is                                                           | Share it?               |
++====================+======================================================================+=========================+
+| `id_ed25519`       | your default **private key**, made by `ssh-keygen -t ed25519`        | **never**               |
++--------------------+----------------------------------------------------------------------+-------------------------+
+| `id_ed25519.pub`   | its **public key**, the line `ssh-copy-id` installs on servers       | yes - grants access     |
++--------------------+----------------------------------------------------------------------+-------------------------+
+| `myserver_key`     | an extra **private key**, made for one particular server             | **never**               |
++--------------------+----------------------------------------------------------------------+-------------------------+
+| `myserver_key.pub` | its public key                                                       | yes - grants access     |
++--------------------+----------------------------------------------------------------------+-------------------------+
+| `myserver_key.ppk` | the same private key in the format of PuTTY, a Windows `ssh` program | **never**               |
++--------------------+----------------------------------------------------------------------+-------------------------+
+| `config`           | your `ssh` settings, such as short names for servers (below)         | not secret, but private |
++--------------------+----------------------------------------------------------------------+-------------------------+
+| `known_hosts`      | the fingerprint of every server you have connected to                | not secret              |
++--------------------+----------------------------------------------------------------------+-------------------------+
+| `known_hosts.old`  | a backup made when an entry is removed from `known_hosts`            | not secret              |
++--------------------+----------------------------------------------------------------------+-------------------------+
+
+`ssh` uses `id_ed25519` automatically. Any other key you name with `-i` or with an `IdentityFile` line in `config`. Some people make a separate key pair for each server, so that they can withdraw one without touching the others.
+
+`known_hosts` protects you from impostors. The first time you connect to a server, `ssh` asks `Are you sure you want to continue connecting?`. If you answer `yes`, it saves the server's fingerprint here. On every later login it checks that the server shows the same fingerprint. If not, it stops with a loud `REMOTE HOST IDENTIFICATION HAS CHANGED` warning, because someone may be pretending to be the server. (The usual innocent cause is a server that was reinstalled. Then `ssh-keygen -R server` removes the old entry and saves the backup `known_hosts.old`.)
+
+Public keys are like deadbolt locks (and the private key is the key). You can share the public key. Anyone is allowed to install your deadbolt on any door allowing you access.
+
+## `~/.ssh/config`: give the server a short name
+
+The Moriah command is long to type every time. Put the details in the file `~/.ssh/config` on your own computer (create it if it is not there), using your own login in place of `kapelner`:
+
+```bash
+cat >> ~/.ssh/config <<'EOF'
+Host moriah
+    HostName moriah-gw.cs.huji.ac.il
+    User kapelner
+    ProxyJump kapelner@bava.cs.huji.ac.il
+EOF
+cat ~/.ssh/config                # check it
+```
+
+`cat >> file <<'EOF'` appends every line up to `EOF` to the end of the file, and creates the file if it is not there yet. Use `>>` and not `>`, which would wipe any settings already in the file.
+
+`Host` is the short name you choose. `HostName` is the real address, `User` is your login, and `ProxyJump` is the same jump as `-J`. Now this is all you type:
+
+```bash
+ssh moriah
+```
+
+The short name works everywhere `ssh` is used underneath, including `ssh-copy-id`, and `scp` and `rsync` from Lecture 4. To log in to Moriah without passwords, install your key on both machines, because each hop checks it:
+
+```bash
+ssh-copy-id kapelner@bava.cs.huji.ac.il   # the gateway
+ssh-copy-id moriah                        # the cluster
+```

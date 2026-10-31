@@ -10,75 +10,118 @@ format:
     embed-resources: true
 ---
 
+
+Make a scratch folder for this lecture and bring the data along (we use it again in the database unit):
+
+```bash
+mkdir -p ~/workspace/HUJI_52002_Fall_2026/scratch/lec04
+cd ~/workspace/HUJI_52002_Fall_2026/scratch/lec04
+cp ../lec01/covid.csv .
+ls -alh
+```
+
 # Working on remote machines: `ssh`, `scp`, `rsync` and `tmux`
 
-Big data rarely lives on your laptop. You work on a server or a cluster: a computer in a machine room that you reach over the network, with far more cores, memory and disk than yours. Everything you have learned so far works there too, because you give it commands through a shell. The tools below get you there, move the files, and keep your jobs alive.
+Big data rarely lives on your laptop. You work on a server or a cluster: a computer in a machine room that you reach over the network, with far more cores, memory and disk than yours puny laptop/desktop. Everything you have learned so far works there too, because they will 99% of the time run linux. And you give it commands through a bash shell just like the bash shell on your laptop. The tools below get you there, move the files, and keep your jobs alive.
 
 (These examples need an account on a remote machine. Replace `user@server` with your own login.)
 
 ## `ssh`: log in to another machine
 
+`ssh` ("secure shell") gives you a shell on another machine over the network. Everything sent between the two machines, including your password, is encrypted.
+
 ```bash
 ssh user@server          # log in; the prompt is now on the server
 ssh user@server "df -h"  # run one command there and come back
-exit                                 # leave the server (or Ctrl+D)
+exit                     # leave the server (or Ctrl+D)
 ```
 
 After `ssh` connects, you are typing into a shell on the server, and `pwd`, `ls`, `htop` and the rest refer to *that* machine. Check which one you are on by the prompt or with `hostname`.
 
-Let's try it on Moriah, the HUJI cluster. Its login machine, `moriah-gw`, is not reached directly: you first hop through `bava`, and `-J` ("jump") does both hops in one command. Replace `kapelner` with your own login:
+Let's try it on Moriah, the HUJI cluster. Its login machine is called `moriah-gw.cs.huji.ac.il`. That name is registered with DNS and refers to an ip address.
+
+Computers on a network find each other by number, the **IP address** ("internet protocol"), four numbers from 0 to 255 such as `132.65.10.20`. Numbers (just like phone numbers) are hard for people to remember, so the internet keeps a giant phone book, the **DNS** ("domain name system"), that turns names into numbers (just like the phone book on your iPhone/android). Read the name from right to left, from the biggest part to the smallest: `il` is Israel, `ac` its academic institutions, `huji` the Hebrew University, `cs` its computer science department, and `moriah-gw` one machine there (`gw` for "gateway", the way into the cluster). When you type `ssh kapelner@moriah-gw.cs.huji.ac.il`, your computer first asks a DNS server for the number and then connects to that number. You can do the lookup yourself:
+
+```bash
+host moriah-gw.cs.huji.ac.il     # prints its IP address (nslookup does the same)
+```
+
+So the phone number is "132.65.180.50" but luckily you don't have to remember it. Okay let's try connecting. Replace `kapelner` with your own login:
+
+```bash
+ssh kapelner@moriah-gw.cs.huji.ac.il #if you're at home, this hangs...
+```
+
+Why does it hang? Because the computer moriah is not reached directly: you first hop through a server named "bava" and then reach the main server "moriah", and `-J` ("jump") does the hop in one command. 
 
 ```bash
 ssh -J kapelner@bava.cs.huji.ac.il kapelner@moriah-gw.cs.huji.ac.il
+```
+
+You will be asked for a one-time code (from the authy/authenticator app or SMS you registered with the university) and then your password.
+
+Why two hops? Security. A machine that anyone on the internet can reach is attacked all day long: automated programs try common passwords on every address they can find. So the university's firewall lets the outside world reach only a few **gateway** machines, such as `bava`, which are kept small, up to date and closely watched. The cluster, with its valuable hardware and everyone's data, accepts `ssh` only from inside the network. An attacker must break into the gateway first, and that is the one machine the administrators watch most closely. This arrangement is common, and the gateway is often called a **jump host** or **bastion**. The second login is then encrypted all the way from your computer to `moriah-gw`, so even `bava` never sees what you type there.
+
+From inside campus, this should work:
+
+```bash
+ssh kapelner@moriah-gw.cs.huji.ac.il
+```
+
+A few things to do once you're inside of a new computer:
+
+```bash
 hostname                         # the cluster's name, not your laptop's
-nproc                            # how many cores this machine has
-free -h                          # and how much memory
+cat /etc/os-release              # which Linux, and which version
+whoami                           # your username on the remote machine
+id                               # your user number and your groups
+```
+
+
+`id` prints a line such as
+
+```
+uid=12345(kapelner) gid=100(users) groups=100(users),2051(statlab)
+```
+
+Linux does not really know you by name but by a number, your **user ID** (`uid`). The name in parentheses is only a label for it. You also belong to one or more **groups**, each with its own number (`gid` is your main group, `groups` lists all of them). Groups are how a shared machine hands out permissions (see lec02 for permissions discussion). We are "statlab"! Cool...
+
+```bash
+free -h                          # how much memory
+nproc  --all                     # how many cores this machine has
+systemctl show user-$(id -u).slice -p CPUQuotaPerSecUSec -p MemoryMax # am I being metered here?
+```
+
+This means we're not being metered on memory but we are tightly metered on CPU. All your processes on this login node together may use 300 ms of CPU time per second of real time. That's 30% of one core. All your programs running at once share the same 30%. Even when the machine is idle, you can't go above it. Let's see what this means:
+
+```bash
+time python3 -c "sum(range(10**7))"
+```
+
+The total time is ~3.33x the user (CPU) time.
+
+Let's continue poking around in our new computer at this machine:
+
+```bash
+uptime                           # how busy it is: compare the load average to nproc
+```
+
+Over the last 1, 5, 15 min what # of cores were being used on average?
+
+```bash
+who                              # who are those n users? Are my friends here with me???
+who | awk '{print $1}' | sort -u | wc -l #how many unique users are there really?
+df -h ~                          # how much space do I have in my personal directory
+                                 # We will eventually have shared space for the class - 
+                                 # I'll explain that when the cluster people set it up
+sudo -l                          # security check first then ... fails - I'm just a peon... just like you guys
 exit                             # back to your own computer
 ```
 
-You will be asked for a one-time code (from the app, browser extension or SMS you registered with the university) and then your password.
-
-Why two hops? Security. A machine that anyone on the internet can reach is attacked all day long: automated programs try common passwords on every address they can find. So the university's firewall lets the outside world reach only a few **gateway** machines, such as `bava`, which are kept small, up to date and closely watched. The cluster, with its valuable hardware and everyone's data, accepts `ssh` only from inside the network. An attacker must break into the gateway first, and that is the one machine the administrators watch most closely. This arrangement is common, and the gateway is often called a **jump host** or **bastion**.
-
-`-J` logs in to `bava` and asks it to pass a connection through to `moriah-gw`. The second login is then encrypted all the way from your computer to `moriah-gw`, so even `bava` never sees what you type there.
-
-Typing a password each time gets tedious. A **key pair** replaces it: you create a private key that stays on your computer and a public key that you give to the server:
-
-```bash
-ssh-keygen -t ed25519                # make the key pair, once
-ssh-copy-id user@server  # install your public key on the server
-ssh user@server          # now logs in without a password
-```
-
-Never share the private key (`~/.ssh/id_ed25519`). The public one, `id_ed25519.pub`, is meant to be shared.
-
-## `~/.ssh/config`: give the server a short name
-
-The Moriah command is long to type every time. Put the details in the file `~/.ssh/config` on your own computer (create it if it is not there), using your own login in place of `kapelner`:
-
-```
-Host moriah
-    HostName moriah-gw.cs.huji.ac.il
-    User kapelner
-    ProxyJump kapelner@bava.cs.huji.ac.il
-```
-
-`Host` is the short name you choose. `HostName` is the real address, `User` is your login, and `ProxyJump` is the same jump as `-J`. Now this is all you type:
-
-```bash
-ssh moriah
-```
-
-The short name works everywhere `ssh` is used underneath, including `ssh-copy-id`, `scp` and `rsync` below. To log in to Moriah without passwords, install your key on both machines, because each hop checks it:
-
-```bash
-ssh-copy-id kapelner@bava.cs.huji.ac.il   # the gateway
-ssh-copy-id moriah                        # the cluster
-```
 
 ## `scp` and `rsync`: copy files between machines
 
-`scp` ("secure copy") is `cp` across the network. The remote side is written `user@server:path`, and the colon is what says "this is on the server":
+`scp` ("secure copy") is `cp` across the network, sent through an encrypted `ssh` connection. The remote side is written `user@server:path`, and the colon is what says "this is on the server":
 
 ```bash
 scp results.csv user@server:~/data/     # your computer to the server
@@ -86,7 +129,7 @@ scp user@server:~/out/model.pkl .       # server to here (. : this folder)
 scp -r results/ user@server:~/          # -r : a whole folder
 ```
 
-`rsync` does the same job better for anything big or repeated. It compares both sides and sends only what is missing or changed, so a second run of a large copy takes seconds, and an interrupted one can be resumed:
+`rsync` ("remote sync") does the same job better for anything big or repeated. It compares both sides and sends only what is missing or changed, so a second run of a large copy takes seconds, and an interrupted one can be resumed:
 
 ```bash
 rsync -av data/ user@server:~/data/     # -a : keep folders, dates; -v : talk
@@ -144,11 +187,17 @@ Now we get a different prompt. We're inside the database program. Commands in ba
 ```bash
 awk -F, 'NR>1 {n[$3]++} END {for (s in n) print s "," n[s]}' covid.csv #### don't run, we're not in bash anymore
 #        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-#        awk's own proprietary language which people
-#        call "awk", "awk program", "awk script"
+#        awk's own proprietary language which people call
+#        "awk", "awk program", "awk script"
 ```
 
-So too PostgreSQL has its own language. In fact it's an internationally standardized language called "Structured Query Language" (SQL, pronounced "sequel" or "S-Q-L"), which was standardized in 1986 by ANSI, the American standards body, and in 1987 by ISO, the international one. It grew out of SEQUEL, a language IBM researchers designed in the early 1970s; the name was shortened to SQL because "SEQUEL" was already a trademark, but the old pronunciation stuck. The standard has been revised many times since, most recently in 2023. Every major database speaks SQL, so what you learn here carries over to MySQL, SQLite, Oracle, SQL Server and the rest. Each one adds its own extensions, called a "dialect". So the postgres backslash commands such as \timing and \copy are not SQL at all.
+So too PostgreSQL has its own language. In fact it's an internationally standardized language called "Structured Query Language" (SQL, pronounced "sequel" or "S-Q-L").
+
+Review of history from last lecture: SQL was standardized in 1986 by ANSI, the American standards body, and in 1987 by ISO, the international one. It grew out of SEQUEL, a language IBM researchers designed in the early 1970s; the name was shortened to SQL because "SEQUEL" was already a trademark, but the old pronunciation stuck. The standard has been revised many times since, most recently in 2023. Every major database speaks SQL, so what you learn here in the dialect we're using (postgres) carries over to other dialects MySQL, SQLite, Oracle, SQL Server and the rest. 
+
+Thus, SQL is like the "English" of data (the default communication protocol) of which there are a few dialects with very little differences e.g. British "clever" = American "smart", British "trousers" = American "pants".
+
+Note: each dialect adds its own extensions. So the postgres backslash commands such as \timing and \copy are not SQL at all.
 
 Notice that you gave neither a username nor a password. The username is easy: when you do not give one (with `-U`), `psql` uses your Linux username. If you do not name a database, it also connects to the one with your username. Why no password? Your setup created a database user (Postgres calls it a **role**) with the same name as your Linux user. When `psql` connects to a server on the *same* machine, it does not go over the network. It uses a special file called a **socket**, and through a socket the server can ask the operating system which Linux user is on the other end. You already proved who you are when you logged in to the computer, so the server takes the operating system's word for it and lets you in as the role with your name. This is called **peer authentication**, and it is set by a rule in the server's configuration file `pg_hba.conf` ("host-based authentication").
 
@@ -216,6 +265,7 @@ You can read it from the default prompt "<username>=#". You can verify it and se
 
 ```sql
 \conninfo
+--comments go after two hypens unlike bash
 ```
 
 To list the databases on the server, type `\l`:
@@ -233,10 +283,10 @@ You can live in one database per `psql` session. You can switch databases via `\
 \c kapelner
 ```
 
-Just like `ssh` you use `exit` to return to bash:
+You use `\q` to quit and return to bash:
 
 ```sql
-exit
+\q
 ```
 
 We can create a database using the bash program `createdb`. We'll create one for this lecture and open postgres directly into it:
@@ -254,7 +304,9 @@ Again, this database is a named, walled-off collection of tables, a bit like a f
 A database table, like parquet, has **typed columns**. We state them up front and then load the file with `\copy`, which reads a file on *your* machine:
 
 ```sql
+-- print how long each statement took
 \timing on
+-- this is a "slashed command" or a metacommand. It is not part of SQL; it is a direct psql command 
 CREATE TABLE covid (
   date   date,
   county text,
@@ -262,42 +314,319 @@ CREATE TABLE covid (
   fips   text,
   cases  integer,
   deaths integer
-);
+); --creates a table with each column as a certain type. 
+--This is a SQL command. It ends with a semicolon and can span multiple lines
+-- describe a table: its columns and their types (type q to exit)
+\d covid
+-- list the tables
+\dt
+-- copies from CSV into the postgres table
 \copy covid FROM 'covid.csv' CSV HEADER
-SELECT count(*) FROM covid;      -- 884737, the same as wc -l minus the header
 ```
 
-`CSV HEADER` tells Postgres that the first line holds column names and not data. The load takes about a second. (Use `\copy` and not plain `COPY`. `COPY` makes the *server* read the file, and the server is a different user who is not allowed into your home folder.)
+In the `\copy` command, the `CSV HEADER` tells postgres that the first line holds column names and not data. The load takes about a second. 
+NOTE: Use `\copy` and not the canonical SQL version `COPY`. `COPY` makes the *server* read the file, and the server is a different user who is not allowed into your home folder.)
 
-## Postgres non-SQL commands
+NOTE: comments on the same line as metacommands break the metacommands and should not be used.
 
-A few commands that start with a backslash belong to `psql` itself (and are not SQL):
+## Queries
 
-+--------------+-----------------------------------------------+
-| Command      | What it does                                  |
-+==============+===============================================+
-| `\timing on` | print how long each statement took            |
-+--------------+-----------------------------------------------+
-| `\d covid`   | describe a table: its columns and their types |
-+--------------+-----------------------------------------------+
-| `\dt`        | list the tables                               |
-+--------------+-----------------------------------------------+
-| `\q`         | quit                                          |
-+--------------+-----------------------------------------------+
+A **query** is a question you ask the database. In SQL it is a `SELECT` statement (command), and the answer always comes back as a new little table of rows and columns. It is a read-only operation. It will not change the underlying data. 
 
-## Asking questions
+(Other SQL statements *change* things, such as `CREATE TABLE`, `INSERT` and `UPDATE`. A query only reads.)
 
-SQL describes *what* you want, not how to loop over lines. The questions from earlier lectures become:
+A query is built from **clauses**, which always appear in this order and are all optional except `SELECT`:
+
++------------------------+-------------------------------------------------+
+| Clause                 | What it does                                    |
++========================+=================================================+
+| `SELECT ...`           | which columns ... (or calculations) to return   |
++------------------------+-------------------------------------------------+
+| `SELECT *`             | return all the columns                          |
++------------------------+-------------------------------------------------+
+| `SELECT DISTINCT ...`  | return each unique row only once                |
++------------------------+-------------------------------------------------+
+| `SELECT ... AS name`   | give a returned column a name of your choice    |
++------------------------+-------------------------------------------------+
+| `FROM ...`             | data from table ... to read                     |
++------------------------+-------------------------------------------------+
+| `WHERE ...`            | keep only the rows that match condition ...     |
++------------------------+-------------------------------------------------+
+| `ORDER BY ...`         | sort the answer by column ... smallest first    |
++------------------------+-------------------------------------------------+
+| `ORDER BY ... DESC`    | sort the answer by column ... largest first     |
++------------------------+-------------------------------------------------+
+| `ORDER BY a, b DESC`   | sort by `a`; break ties by `b`, largest first   |
++------------------------+-------------------------------------------------+
+| `LIMIT ...`            | keep only the first few ... of the answer       |
++------------------------+-------------------------------------------------+
+| `OFFSET ...`           | skip that many rows first (used with `LIMIT`)   |
++------------------------+-------------------------------------------------+
+
+The condition after `WHERE` can be built from **operators**:
+
++----------------------------+--------------------------------------------+----------------------------------------------+
+| Operator                   | Meaning                                    | Example                                      |
++============================+============================================+==============================================+
+| `=` `<>` `<` `>` `<=` `>=` | compare                                    | `cases > 1000`                               |
++----------------------------+--------------------------------------------+----------------------------------------------+
+| `AND` `OR` `NOT`           | combine conditions                         | `state = 'Texas' AND county = 'Harris'`      |
++----------------------------+--------------------------------------------+----------------------------------------------+
+| `LIKE` with `%`            | text pattern: `%` is any text, even none   | `county LIKE 'San %'`                        |
++----------------------------+--------------------------------------------+----------------------------------------------+
+| `LIKE` with `_`            | text pattern: `_` is exactly one character | `fips LIKE '48___'` (the Texas codes)        |
++----------------------------+--------------------------------------------+----------------------------------------------+
+| `IN (...)`                 | one of a list                              | `state IN ('Texas', 'Utah')`                 |
++----------------------------+--------------------------------------------+----------------------------------------------+
+| `BETWEEN ... AND ...`      | in a range, ends included                  | `date BETWEEN '2020-12-01' AND '2020-12-31'` |
++----------------------------+--------------------------------------------+----------------------------------------------+
+| `IS NULL`                  | the value is missing                       | `deaths IS NULL`                             |
++----------------------------+--------------------------------------------+----------------------------------------------+
+
+SQL is **declarative**. You describe *what* answer you want, not *how* to get it: no loops over lines, no choice of which file to read first. Postgres has a **query planner** that works out the fastest way to run each query without you changing a word of it.
+
+### Row-level queries ("detail queries" or "non-aggregate queries")
+
+These types of queries match one output row per matching input.
+
+Some examples with only these clauses:
 
 ```sql
+-- the first 5 rows, all columns: like head
+SELECT * FROM covid LIMIT 5;
+-- only three of the columns
+SELECT date, county, cases FROM covid LIMIT 5;
+-- each state only once, in alphabetical order
+SELECT DISTINCT state FROM covid ORDER BY state LIMIT 5;
+-- only the rows for Harris County, Texas
+SELECT date, cases FROM covid
+  WHERE state = 'Texas' AND county = 'Harris'
+  LIMIT 5;
+-- the same rows, oldest date first
+SELECT date, cases FROM covid
+  WHERE state = 'Texas' AND county = 'Harris'
+  ORDER BY date
+  LIMIT 5;
+-- the 5 rows with the most cases on New Year's Eve 2020 (Los Angeles first, 770915)
+SELECT county, state, cases FROM covid
+  WHERE date = '2020-12-31'
+  ORDER BY cases DESC
+  LIMIT 5;
+-- OFFSET: the next 5, ranks 6 to 10 (Harris, Texas first, 237727)
+SELECT county, state, cases FROM covid
+  WHERE date = '2020-12-31'
+  ORDER BY cases DESC
+  LIMIT 5 OFFSET 5;
+-- ORDER BY two columns: by state, then within each state by cases, largest first
+-- (DESC applies only to cases; the states stay A to Z, so Alabama's Jefferson comes first, 52339)
+SELECT state, county, cases FROM covid
+  WHERE date = '2020-12-31'
+  ORDER BY state, cases DESC
+  LIMIT 5;
+-- AS: name the columns of the answer, and use the name in ORDER BY (Harris, Dallas, Tarrant)
+SELECT county, cases AS total_cases, deaths AS total_deaths FROM covid
+  WHERE date = '2020-12-31' AND state = 'Texas'
+  ORDER BY total_cases DESC
+  LIMIT 3;
+-- LIKE with %, and >: counties starting with "San " with over 100000 cases (San Bernardino, San Diego)
+SELECT county, state, cases FROM covid
+  WHERE date = '2020-12-31' AND county LIKE 'San %' AND cases > 100000
+  ORDER BY cases DESC;
+-- LIKE with _, and <: Texas fips codes (48 then 3 characters) with under 10 cases (King 6, Loving 1)
+SELECT county, fips, cases FROM covid
+  WHERE date = '2020-12-31' AND fips LIKE '48___' AND cases < 10;
+-- OR: the parentheses matter, because AND is applied before OR (Dallas and Harris)
+SELECT county, cases FROM covid
+  WHERE date = '2020-12-31' AND state = 'Texas'
+    AND (county = 'Harris' OR county = 'Dallas');
+-- IN: a shorter way to write several ORs (Clark, Nevada first, 170032)
+SELECT county, state, cases FROM covid
+  WHERE date = '2020-12-31' AND state IN ('Utah', 'Nevada')
+  ORDER BY cases DESC
+  LIMIT 5;
+-- BETWEEN: Harris County in the first week of December 2020, both ends included (7 rows)
+SELECT date, cases FROM covid
+  WHERE state = 'Texas' AND county = 'Harris'
+    AND date BETWEEN '2020-12-01' AND '2020-12-07'
+  ORDER BY date;
+-- IS NULL: rows where deaths is missing (all of them are in Puerto Rico)
+SELECT date, county, state, cases FROM covid
+  WHERE deaths IS NULL
+  LIMIT 5;
+-- NOT: missing deaths outside Puerto Rico (no rows at all)
+SELECT date, county, state FROM covid
+  WHERE deaths IS NULL AND NOT state = 'Puerto Rico';
+\q
+```
+
+Without `ORDER BY`, the rows come back in whatever order Postgres finds them, so `LIMIT 5` alone gives you *some* 5 rows, not the first 5 of anything. Add `ORDER BY` whenever the order matters.
+
+For comparison, here are the same questions using bash with `awk` as the star of the show:
+
+```bash
+head covid.csv -n 1 
+#date,county,state,fips,cases,deaths
+# the first 5 rows, all columns (NR>1 skips the header line)
+awk 'NR>1' covid.csv | head -n 5 | column -s, -t
+# only three of the columns
+awk -F, -v OFS=, 'NR>1 {print $1, $2, $5}' covid.csv | head -n 5 | column -s, -t
+# each state only once: sort -u sorts and drops repeated lines
+awk -F, 'NR>1 {print $3}' covid.csv | sort -u | head -n 5
+# only the rows for Harris County, Texas
+awk -F, -v OFS=, '$3=="Texas" && $2=="Harris" {print $1, $5}' covid.csv | head -n 5 | column -s, -t
+# the same rows, oldest date first
+awk -F, -v OFS=, '$3=="Texas" && $2=="Harris" {print $1, $5}' covid.csv | sort | head -n 5 | column -s, -t
+# the 5 rows with the most cases on New Year's Eve 2020
+awk -F, -v OFS=, '$1=="2020-12-31" {print $2, $3, $5}' covid.csv | sort -t, -k3,3nr | head -n 5 | column -s, -t
+# OFFSET: tail -n +6 starts at line 6, skipping 5
+awk -F, -v OFS=, '$1=="2020-12-31" {print $2, $3, $5}' covid.csv | sort -t, -k3,3nr | tail -n +6 | head -n 5 | column -s, -t
+# ORDER BY two columns: sort with two keys, the first as text, the second as numbers in reverse
+awk -F, -v OFS=, '$1=="2020-12-31" {print $3, $2, $5}' covid.csv | sort -t, -k1,1 -k3,3nr | head -n 5 | column -s, -t
+# AS: no real equivalent, because awk output has no column names; you can only echo a header line yourself
+{ echo "county,total_cases,total_deaths"
+  awk -F, -v OFS=, '$1=="2020-12-31" && $3=="Texas" {print $2, $5, $6}' covid.csv | sort -t, -k2,2nr | head -n 3
+} | column -s, -t
+# LIKE with %, and >: a regular expression, ^ means "starts with"
+awk -F, -v OFS=, '$1=="2020-12-31" && $2 ~ /^San / && $5 > 100000 {print $2, $3, $5}' covid.csv | sort -t, -k3,3nr | column -s, -t
+# LIKE with _, and <: in a regular expression . is one character, $ means "ends here"
+awk -F, -v OFS=, '$1=="2020-12-31" && $4 ~ /^48...$/ && $5 < 10 {print $2, $4, $5}' covid.csv | column -s, -t
+# OR is ||
+awk -F, -v OFS=, '$1=="2020-12-31" && $3=="Texas" && ($2=="Harris" || $2=="Dallas") {print $2, $5}' covid.csv | column -s, -t
+# IN: awk has no IN, so we write out the ORs
+awk -F, -v OFS=, '$1=="2020-12-31" && ($3=="Utah" || $3=="Nevada") {print $2, $3, $5}' covid.csv | sort -t, -k3,3nr | head -n 5 | column -s, -t
+# BETWEEN: two comparisons (dates written YYYY-MM-DD sort correctly as text)
+awk -F, -v OFS=, '$3=="Texas" && $2=="Harris" && $1 >= "2020-12-01" && $1 <= "2020-12-07" {print $1, $5}' covid.csv | sort | column -s, -t
+# IS NULL: the field is empty
+awk -F, -v OFS=, '$6=="" {print $1, $2, $3, $5}' covid.csv | head -n 5 | column -s, -t
+# NOT is !
+awk -F, -v OFS=, '$6=="" && !($3=="Puerto Rico") {print $1, $2, $3}' covid.csv | column -s, -t
+```
+
+
+Each SQL clause has an awk counterpart:
+
++----------------------+---------------------------------+
+| SQL                  | `awk` (and friends)             |
++======================+=================================+
+| `SELECT ...`         | `{print ...}`                   |
++----------------------+---------------------------------+
+| `SELECT DISTINCT`    | `| sort -u`                     |
++----------------------+---------------------------------+
+| `AS name`            | no equivalent (no column names) |
++----------------------+---------------------------------+
+| `FROM covid`         | the file name, `covid.csv`      |
++----------------------+---------------------------------+
+| `WHERE ...`          | the pattern before the `{`      |
++----------------------+---------------------------------+
+| `ORDER BY ...`       | `| sort`                        |
++----------------------+---------------------------------+
+| `ORDER BY ... DESC`  | `| sort -r`                     |
++----------------------+---------------------------------+
+| `ORDER BY a, b DESC` | `| sort -k1,1 -k2,2r`           |
++----------------------+---------------------------------+
+| `LIMIT ...`          | `| head -n ...`                 |
++----------------------+---------------------------------+
+| `OFFSET 5`           | `| tail -n +6`                  |
++----------------------+---------------------------------+
+| `=`                  | `==`                            |
++----------------------+---------------------------------+
+| `<>`                 | `!=`                            |
++----------------------+---------------------------------+
+| `<` `>` `<=` `>=`    | `<` `>` `<=` `>=`               |
++----------------------+---------------------------------+
+| `AND`                | `&&`                            |
++----------------------+---------------------------------+
+| `OR`                 | `||`                            |
++----------------------+---------------------------------+
+| `NOT`                | `!`                             |
++----------------------+---------------------------------+
+| `LIKE 'San %'`       | `~ /^San /`                     |
++----------------------+---------------------------------+
+| `LIKE '48___'`       | `~ /^48...$/`                   |
++----------------------+---------------------------------+
+| `IN ('a', 'b')`      | `($3=="a" || $3=="b")`          |
++----------------------+---------------------------------+
+| `BETWEEN a AND b`    | `$1 >= a && $1 <= b`            |
++----------------------+---------------------------------+
+| `IS NULL`            | `$6==""`                        |
++----------------------+---------------------------------+
+
+Remember in `awk` you refer to columns by number (which is super annoying because you have to remember that `$3` is the state), and you have to tell `sort` that column 3 holds numbers (`-k3,3n`). SQL uses the names and already knows the types. 
+
+Which is more readable? awk or SQL?
+
+
+### Aggregate queries ("summary queries")
+
+Functions such as `count(*)`, `max()`, `sum()` and `avg()` are **aggregates**: they boil many rows down to one number.
+
++-----------------------+---------------------------------------------------+
+| Aggregate             | What it returns                                   |
++=======================+===================================================+
+| `count(*)`            | the number of rows                                |
++-----------------------+---------------------------------------------------+
+| `count(...)`          | the number of rows where the column is not `NULL` |
++-----------------------+---------------------------------------------------+
+| `count(DISTINCT ...)` | the number of different, unique values            |
++-----------------------+---------------------------------------------------+
+| `sum(...)`            | the total                                         |
++-----------------------+---------------------------------------------------+
+| `avg(...)`            | the mean                                          |
++-----------------------+---------------------------------------------------+
+| `min(...)`            | the smallest value                                |
++-----------------------+---------------------------------------------------+
+| `max(...)`            | the largest value                                 |
++-----------------------+---------------------------------------------------+
+| `stddev(...)`         | the sample standard deviation                     |
++-----------------------+---------------------------------------------------+
+
+All of them except `count(*)` skip `NULL` values, so `avg(deaths)` is the mean of the rows where `deaths` is known.
+
+```sql
+SELECT count(*) FROM covid;                                 -- 884737, the same as wc -l (minus the header)
 SELECT count(*) FROM covid WHERE state = 'Texas';           -- 67002
 SELECT max(cases) FROM covid
   WHERE state = 'Texas' AND county = 'Harris';              -- 237727
+-- count(column) skips NULLs: 18761 fewer than count(*), the Puerto Rico rows with no deaths
+SELECT count(deaths) FROM covid;                            -- 865976
+-- count(DISTINCT ...): states (including DC and the territories) and Texas counties
+SELECT count(DISTINCT state) FROM covid;                    -- 55
+SELECT count(DISTINCT county) FROM covid
+  WHERE state = 'Texas';                                    -- 255: 254 counties plus "Unknown"
+-- sum: deaths in the whole country by the end of 2020
+SELECT sum(deaths) FROM covid WHERE date = '2020-12-31';    -- 346050
+-- avg prints many decimals; round() tidies it
+SELECT avg(cases) FROM covid WHERE date = '2020-12-31';     -- 6170.9710323574730354
+SELECT round(avg(cases)) FROM covid
+  WHERE date = '2020-12-31';                                -- 6171
+-- min works on dates too: the first day in the data, and Texas's first case
+SELECT min(date) FROM covid;                                -- 2020-01-21
+SELECT min(date) FROM covid WHERE state = 'Texas';          -- 2020-02-12
+-- stddev: counties differ a lot in size
+SELECT round(stddev(cases)) FROM covid
+  WHERE date = '2020-12-31';                                -- 23169
+-- several aggregates in one query give one row with several columns
+SELECT min(date), max(date), count(DISTINCT date) FROM covid;       -- 2020-01-21 | 2020-12-31 | 346
+SELECT count(*), count(deaths) FROM covid
+  WHERE state = 'Puerto Rico';                              -- 19055 | 294
+SELECT sum(cases), round(avg(cases)), max(cases) FROM covid
+  WHERE date = '2020-12-31' AND state = 'Texas';            -- 1770527 | 6971 | 237727
+```
+
+The Texas count is exactly 67,002 with no regular expression and no counting of the wrong column. Because each column has a name and a type, `state = 'Texas'` cannot match a county. These queries take about 60 to 90 ms: faster than `awk`, but still reading the entire table.
+
+## Grouped aggregate queries
+
+`GROUP BY` splits the rows into groups, here one group per state, and the aggregate is computed separately for each group, so the answer has one row per group. The `GROUP BY` clause goes after `WHERE` and before `ORDER BY`:
+
+```sql
 SELECT state, count(*) FROM covid
   GROUP BY state ORDER BY count(*) DESC LIMIT 5;            -- top 5 states
 ```
 
-The first answer is exactly 67,002 with no regular expression and no counting of the wrong column. Because each column has a name and a type, `state = 'Texas'` cannot match a county. These queries take about 60 to 90 ms: faster than `awk`, but still reading the entire table. The real speed-up comes next.
+This is the `awk` program `{n[$3]++} END {for (s in n) print s "," n[s]}` from before, plus the sort and the `head`, in one line. There is one rule to remember. Every column after `SELECT` must either be in the `GROUP BY` or be inside an aggregate. `SELECT state, county, count(*) ... GROUP BY state` fails, because a state has many counties and Postgres cannot know which one to show. (A `GROUP BY` with no aggregate at all, such as `SELECT state FROM covid GROUP BY state`, is legal but only removes duplicates, so write it the clearer way, `SELECT DISTINCT state FROM covid`.)
+
+The real speed-up comes next.
 
 ## Indexes
 

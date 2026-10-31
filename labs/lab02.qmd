@@ -193,7 +193,7 @@ ls -alh
 
 Masters students only (52019). Find the best possible compression for these csv files. This won't be the best possible compression in general as it's specific to the format of the files
 
-#TODO [Masters students only (52019): locate the best possible compression and prove it's best using `du -h .` <10pts>]
+#TODO [MASTERS ONLY: locate the best possible compression and prove it's best using `du -h .` <10pts>]
 
 Let's cleanup
 

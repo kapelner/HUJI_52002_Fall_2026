@@ -1,5 +1,5 @@
 ---
-title: "Lab 3: Background jobs, parquet, SQL"
+title: "Lab 3: Version control, tabular data, Parquet and databases"
 subtitle: "Big Data Algorithms"
 author: "YOUR NAME HERE"
 format:
@@ -13,13 +13,14 @@ execute:
   eval: false
 ---
 
-This lab has exercises that reinforce the sections "Finding and stopping a process" and "Background job administration" of Lecture 2 (`lectures/lec02_linux_advanced.qmd`). Everything is done at the **terminal** (not by clicking in a file browser). You will need to open a second terminal in a few places. In Part 5 you also need `tmux`: `sudo apt install tmux` on Ubuntu or `brew install tmux` on a Mac.
+This lab has exercises that reinforce what we learned in Lecture 3 (`lectures/lec03_git_parquet_databases.qmd`), as well as the open source section of Lecture 2 (`lectures/lec02_linux_advanced.qmd`). You will work at the **terminal** and in Python and R.
 
 ::: {.callout-warning}
 ## Ground rules
-* Run every command yourself. Many answers depend on what you see on your own machine (and your PID numbers will not be the same as anyone else's).
+* Run every command yourself. Many answers depend on what you see on your own machine (your timings will not be the same as anyone else's, but the ranking should be).
 * Leave the "#TODO text [question text] text" line and start a new line underneath and write your answers on that new line
-* Clean up after yourself. Every part ends by stopping the processes it started. Check with `pgrep -a sleep` that none are left over.
+* Part 4 makes a data file of about 2 GB. Check that you have 5 GB of free disk space (`df -h .`) and don't commit anything from your scratch folder.
+* **Mac users:** if an option fails on your Mac, say so in your answer and use the closest alternative. The places where we already know that it differs are marked.
 :::
 
 # Part 0: Setup
@@ -39,310 +40,447 @@ mkdir -p $my_52002_repo/labs/03/scratch
 cd $my_52002_repo/labs/03/scratch
 ```
 
-# Part 1: Looking at processes with `ps` and `pgrep`
-
-`sleep 600` does nothing for 10 minutes, which makes it a perfect process to look at. The `&` at the end runs it in the **background**, so you get your prompt back. The shell stores the PID of the last background process in the variable `$!`:
+Copy the covid 2020 report data from your lab 2 directory to the working directory or redownload it (see lec01).
 
 ```bash
-sleep 600 &
-echo $!
+#TODO [command to copy covid.csv from last lab's scratch folder or the download command <1pts>]
 ```
 
-#TODO [what did the line `[1] 12345` that appeared after the first command show, and how is `echo $!` related to it? <1pts>]
+# Part 1: Open source licenses **This section will not be tested.**
 
-`ps` can show just the columns you ask for, for just the processes you ask for. Read the `-o` and `-p` options in `man ps` and run:
+Answer in your own words, using the open source section of Lecture 2.
+
+#TODO [you find a useful script in a public GitHub repository which has no `LICENSE` file. Are you allowed to use it in your own project? Why or why not? <1pts>]
+#TODO [what is the difference between a permissive license and a copyleft license? <1pts>]
+
+You work at a company which sells a closed source desktop application. A new feature would use a library. Consider three cases:
+
+#TODO [Consider the library `pandas` (BSD 3-clause). May you ship the application with your source code kept closed? What must you do? <1pts>]
+#TODO [Consider a library that is under the GPL. May you ship the application with your source code kept closed? <1pts>]
+#TODO [you modify a GPL library, but only use it on your company's own computers and never give the program to anyone outside. Must you release your changes? Yes/no Why? <1pts>]
+#TODO [why would a company with many lawyers prefer Apache 2.0 over MIT for code it uses? <1pts>]
+#TODO [under the GPL you may sell the software, but your customers may then give it away for free. So how does a company like Red Hat earn money? <1pts>]
+#TODO [you wrote an R package in your thesis. Which license would you pick if you want everyone, including companies, to be able to use it without worry, and which would you pick if you want all improvements to it to stay open? <1pts>]
+
+Let's practice reading the license type from github.
+
+#TODO [What is the license of `tensorflow/tensorflow` (branch `master`, file `LICENSE`) <1pts>]
+#TODO [What is the license of `quarto-dev/quarto-cli` (branch `main`, file `COPYING.md`) <1pts>]
+#TODO [What is the license of `git/git` (branch `master`, file `COPYING`) <1pts>]
+
+
+# Part 2: Version control with `git` **This section will not be tested.**
+
+**This entire part is optional for undergraduates but required for MASTERS students**
+
+We play in a throw-away repository so your class repository is never touched. Make it *next to* your class repository, not inside of it:
 
 ```bash
-ps -o pid,ppid,stat,command -p $!
+cd $my_52002_repo/..
+git init -b main lab03_playground
+cd lab03_playground
 ```
 
-#TODO [what are the four columns that came out, in your own words? <1pts>]
-#TODO [the parent PID of your `sleep` is the PID of another process. Write the command that shows that process, and say what it is <1pts>]
+#TODO [why did we not make this repository inside of `labs/03/scratch`? <1pts>]
 
-Now find the same process by its name, two ways:
+**The staging area.** Run:
 
 ```bash
-ps aux | grep sleep
-pgrep -a sleep          # on a Mac use pgrep -l sleep
+echo "first line" > notes.txt
+git add notes.txt
+echo "second line" >> notes.txt
+git status
+git diff
+git diff --staged
 ```
 
-#TODO [why does `ps aux | grep sleep` print an extra line that `pgrep -a sleep` does not? <1pts>]
-#TODO [rewrite `ps aux | grep sleep` so that the extra line is gone, without using `pgrep` (the lecture calls this the "bracket trick") <2pts>]
+#TODO [`git status` lists `notes.txt` twice. What is in the staging area, what is in the working folder and which of the two `git diff` commands showed which? <1pts>]
 
-Leave this `sleep 600` running for the next part.
-
-# Part 2: Background jobs: `&`, `jobs`, `fg`, `bg` and `wait`
-
-You should still have one `sleep 600` running from Part 1. Start two more and list the jobs of this terminal:
+Commit the rest of the work with one shortcut, then try the shortcut on a new file:
 
 ```bash
-sleep 601 &
-sleep 602 &
-jobs
-jobs -p
+git commit -m "add notes"
+git commit -am "add second line"
+echo "an idea" > ideas.txt
+echo "third line" >> notes.txt
+git commit -am "add third line"
+git status
 ```
 
-`jobs -p` prints only the PIDs. Read `man bash` (search for `jobs [`; or run `help jobs`) and find the option that prints the job number *and* the PID together:
+#TODO [the last commit used `-a`, but `ideas.txt` was not committed. Why? <1pts>]
+
+**Three ways to undo.** Make a bad commit:
 
 ```bash
-#TODO [command that lists job numbers together with their PIDs <1pts>]
+echo "BAD line" >> notes.txt
+git commit -am "oops: a bad line"
+git log --oneline -n 3
 ```
 
-Bring job number 2 to the foreground, and then press Ctrl+Z:
+Undo it the way that is safe for commits you have already pushed (when `git` opens an editor for the message, save and close it):
 
 ```bash
-#TODO [command that brings job number 2 to the foreground <1pts>]
+#TODO [command that undoes the bad commit by making a new commit <1pts>]
+cat notes.txt
+git log --oneline -n 5
 ```
 
-Ctrl+Z does not stop the job for good; it **suspends** (pauses) it. Look at the job list and at the `STAT` column of its process, then resume it, this time in the background:
+#TODO [is the bad commit still in the history? Why is that the safe choice for a commit that you have pushed? <1pts>]
+
+Make another bad commit. This one we never pushed, so we can rewrite the history:
 
 ```bash
-jobs
-ps -o pid,stat,command -p $(jobs -p | sed -n 2p)
-#TODO [command that resumes the suspended job in the background <1pts>]
-jobs
+echo "scribble" >> notes.txt
+git commit -am "made a bad scribble"
+#TODO [command that moves the branch back one commit and keeps the change staged <1pts>]
+git status
+#TODO [command that un-stages the change but keeps it in the file <1pts>]
+git status
+#TODO [command that throws away the uncommitted change in the file <1pts>]
+git status
+cat notes.txt
 ```
 
-#TODO [what did `jobs` print while the job was suspended, and what does the first letter of `STAT` mean for a suspended process versus a running one? <1pts>]
-
-Sometimes you start several jobs and need to wait until they are all done before continuing. That is what `wait` is for. Compare these two:
+Visit an old snapshot and come back:
 
 ```bash
-time (sleep 2; sleep 2; sleep 2)
-time (sleep 2 & sleep 2 & sleep 2 & wait)
+git switch --detach HEAD~2
+cat notes.txt
+git status
+git switch main
 ```
 
-#TODO [the two times, and what each one tells you about `;` and `&`? <1pts>]
-
-Open a second terminal and type `jobs` there. It prints nothing, but `pgrep -a sleep` does show your three sleeps.
-
-#TODO [why is `jobs` empty in the second terminal, although the processes are clearly running? <1pts>]
-
-Return to the first terminal. Stop **all** the background jobs of this terminal in one line, using `jobs -p` and `xargs` (see Lecture 2):
+**Branches and conflicts.**
 
 ```bash
-#TODO [one line command that kills every background job of this terminal <2pts>]
-jobs
-pgrep -a sleep
+git switch -c experiment
+echo "from experiment" >> notes.txt
+git commit -am "try an idea"
+git switch main
+cat notes.txt
+cat .git/refs/heads/experiment
+wc -c .git/refs/heads/experiment
+git log --oneline -n 1 experiment
 ```
 
-# Part 3: Signals and `kill`
-
-`kill` sends a **signal** to a process. In Lab 2 you saw that a process killed by signal number *n* has exit status 128 + *n*. List all of the signals and find the numbers of `HUP`, `INT`, `KILL`, `TERM`, `STOP` and `CONT`:
+Now change the same line on `main` and merge:
 
 ```bash
-kill -l
+echo "from main" >> notes.txt
+git commit -am "main goes its own way"
+git merge experiment
+git status
+cat notes.txt
 ```
 
-Create a program that refuses to die when it is politely asked to stop. The `trap '' TERM` line tells bash to ignore the TERM signal:
+#TODO [why could `git` not merge this by itself? In the output of `cat`, which part is from which branch? <1pts>]
+
+Resolve the conflict so that the file has both lines (and no markers), and finish the merge:
 
 ```bash
-cat > stubborn.sh << 'EOF'
-#!/usr/bin/env bash
-trap '' TERM
-while true; do sleep 1; done
+#TODO [how you edited the file, and the commands that finish the merge <1pts>]
+git log --oneline --graph -n 6
+git branch -d experiment
+```
+
+**`.gitignore`.**
+
+```bash
+echo "1,2" > data.csv
+echo "3,4" > keep.csv
+```
+
+We want to ignore all CSVs except `keep.csv`.
+
+```bash
+#TODO [echo the correct line appended into .gitignore <1pts>]
+git status --ignored
+git check-ignore -v data.csv
+git add .gitignore keep.csv
+git commit -m "ignore CSVs, except keep.csv"
+```
+
+**`stash` and `worktree`.**
+
+```bash
+echo "half-finished thought" >> notes.txt
+echo "a new file" > new.txt
+git stash
+git status
+ls
+```
+
+#TODO [`git stash` took one of the two changes and left the other. Which and why? Which option would have taken both? <1pts>]
+
+```bash
+git stash pop
+git restore notes.txt
+rm new.txt
+#TODO [command that makes a worktree in the folder ../lab03_wt on a new branch called hotfix <1pts>]
+git worktree list
+cd ../lab03_wt
+echo "urgent fix" > fix.txt
+git add fix.txt
+git commit -m "urgent fix"
+cd -
+ls
+#TODO [command that removes the worktree <1pts>]
+git branch -D hotfix
+```
+
+Say whether you would use a stash, a worktree or a branch and explain why: 
+#TODO [a colleague needs one number from you in five minutes <1pts>]
+#TODO [a long run keeps using the files in your folder and you need to fix a bug at the same time <1pts>]
+#TODO [you start a new analysis which will be reviewed and merged <1pts>]
+
+Clean up (look at the path first as `rm -rf` has no undo!):
+
+```bash
+cd $my_52002_repo/labs/03/scratch
+ls $my_52002_repo/../lab03_playground
+git -C $my_52002_repo/../lab03_playground branch   # should show just main
+rm -rf $my_52002_repo/../lab03_playground
+```
+
+# Part 3: Tabular data and types
+
+## Statistical types
+
+A hospital gives you a table with one row per visit. For each column, give the statistical type (with its subtype), and the Parquet type you would store it as (look it up in the table in lec03):
+
+* `zip_code`, e.g., `02134`
+  * #TODO [type, subtype and storage <1pts>]
+* `pain_score`, from 1 (no pain) to 10 (worst pain)
+  * #TODO [type, subtype and storage <1pts>]
+* `temp_c`, the temperature of the patient in Celsius
+  * #TODO [type, subtype and storage <1pts>]
+* `n_prior_visits`, the number of earlier visits
+  * #TODO [type, subtype and storage <1pts>]
+* `doctor_note`, what the doctor wrote
+  * #TODO [type, subtype and storage <1pts>]
+* `smoker`, yes or no
+  * #TODO [type, subtype and storage <1pts>]
+
+
+#TODO [a colleague reports that the mean `pain_score` was 4.2 before treatment and 2.1 after, so "the pain halved". What is wrong with that? <1pts>]
+#TODO [why can you say that 20 kg is twice 10 kg, but not that 20°C is twice as hot as 10°C? <1pts>]
+
+## Objects and attributes
+
+#TODO [in one sentence, what is one object (one row) of `covid.csv`? <1pts>]
+
+Run the following:
+
+```bash
+wc -l covid.csv
+head -n 1 covid.csv | awk -F, '{print NF}'
+```
+
+#TODO [what are $n$ and $p$ of this table? <1pts>]
+
+Use `awk` to count the missing values:
+
+```bash
+#TODO [command: the number of rows with no fips <1pts>]
+#TODO [command: the number of rows with no deaths <1pts>]
+```
+
+Now let's see what programs guess. First edit the location below if your repo is elsewhere:
+
+```{python}
+import os
+import pandas as pd
+
+os.chdir(os.path.expanduser("~/workspace/HUJI_52002_Fall_2026/labs/03/scratch"))
+
+guess = pd.read_csv("covid.csv")
+print(guess.dtypes)
+print(guess[(guess.state == "California") & (guess.county == "Orange")].head(1))
+```
+
+#TODO [what happened to the fips code `06059` of Orange County? Why is it a decimal number in `pandas` and not an integer? <2pts>]
+#TODO [`cases` is an `int64` but `deaths` is a `float64`, although both are counts. Why? <1pts>]
+#TODO [why is it better for `fips` to be stored as text, even though it is all digits? <1pts>]
+
+# Part 4: Parquet
+
+**Converting.** Write `df` out as a Parquet file. Then do the same in R, reading the CSV with the `arrow` package. Hint: both commands are in Lecture 3, section "Converting `covid.csv`" (`lectures/lec03_git_parquet_databases.qmd`, lines 736–756):
+
+```{python}
+import os
+import pandas as pd
+import pyarrow   # to_parquet needs it installed
+
+os.chdir(os.path.expanduser("~/workspace/HUJI_52002_Fall_2026/labs/03/scratch"))   # edit if your repo is elsewhere
+
+df = pd.read_csv("covid.csv", dtype={"fips": str}, parse_dates=["date"])
+#TODO [the command which writes df to covid_python.parquet with zstd compression <1pts>]
+```
+
+```{r}
+library(arrow)
+setwd("~/workspace/HUJI_52002_Fall_2026/labs/03/scratch")   # edit if your repo is elsewhere
+
+df <- read_csv_arrow("covid.csv", col_types = schema(fips = string()))
+#TODO [the command which writes df to covid_R.parquet with zstd compression <1pts>]
+```
+
+
+Let's compare what the two languages wrote:
+
+```{python}
+import pyarrow.parquet as pq
+
+print(pq.read_schema("covid_python.parquet"))
+print(pq.read_schema("covid_R.parquet"))
+```
+
+#TODO [give two columns with different storage types in the two files. Why is `deaths` a decimal type in one and an integer in the other? <2pts>]
+
+**Reading only some columns.** Time reading the whole table versus only the `state` and `cases` columns, in both formats:
+
+```{python}
+import time
+
+def seconds(f):
+    t0 = time.perf_counter()
+    f()
+    return round(time.perf_counter() - t0, 3)
+
+print(seconds(lambda: pd.read_csv("covid.csv")))
+print(seconds(lambda: pd.read_csv("covid.csv", usecols=["state", "cases"])))
+#TODO [two lines just like the two above, but for reading covid_python.parquet <1pts>]
+```
+
+#TODO [the four times. Which format speeds up the most when you ask for two columns only, and why is the speedup so much smaller for the other format? <2pts>]
+
+**The annotations.** Parquet stores notes about each column in the footer. Let's read them:
+
+```{python}
+meta = pq.ParquetFile("covid_python.parquet").metadata
+print(meta.num_rows, meta.num_columns, meta.num_row_groups)
+
+group = meta.row_group(0)
+for i in range(group.num_columns):
+    col = group.column(i)
+    print(col.path_in_schema, col.total_compressed_size, col.statistics.min, col.statistics.max, col.statistics.null_count)
+```
+
+#TODO [MASTERS ONLY: how many row groups are in this file? Which column takes the most space and which the least? <1pts>]
+#TODO [MASTERS ONLY: `county` and `fips` have about the same number of distinct values, but `state` is about 60 times smaller than `county`. What are the two reasons that `state` compresses so well? (Hint: look at the `state` column of the rows of one date.) <2pts>]
+
+Now write the same table with smaller row groups, so that a program has something to skip, and print the notes for each row group:
+
+```{python}
+df.to_parquet("covid_rg.parquet", compression="zstd", row_group_size=100_000, index=False)
+
+meta = pq.ParquetFile("covid_rg.parquet").metadata
+for r in range(meta.num_row_groups):
+    dates = meta.row_group(r).column(0).statistics
+    print(r, dates.min, dates.max)
+```
+
+#TODO [MASTERS ONLY: for the query "rows with date on or after 2020-12-01", how many of the row groups can a program skip? How does it know, without reading them? <1pts>]
+
+```{python}
+#TODO [MASTERS ONLY: the same loop, but printing the min and max of state for each row group <1pts>]
+```
+
+#TODO [MASTERS ONLY: for the query "rows with state Texas", how many of the row groups can a program skip? Why? <1pts>]
+
+
+**Which format when?** For each job, choose among CSV, CSV + `xz`, JSON and Parquet, and say why in a few words:
+
+#TODO [(a) emailing a table of 200 rows to a colleague who opens everything in Excel <1pts>]
+#TODO [(b) keeping last year's raw logs in cold storage, in case an auditor asks for them, at the smallest cost <1pts>]
+#TODO [(c) a sensor which adds one reading every second to a file all day <1pts>]
+#TODO [(e) a 300 GB table where analysts add up two or three of the columns all day <1pts>]
+
+#TODO [MASTERS ONLY: The file covid_python.parquet is about 3.3 MB, but `covid.csv.xz` is about 1.8 MB. Make a Parquet file which is smaller than `covid.csv.xz`, and which holds all of the rows and all of the columns. You may change anything: row order, compression, level, row groups, column types and so on. <10pts>]
+
+
+# Part 5: Databases: when Parquet is not enough
+
+Here we feel the pain of Parquet's limitations. The next lecture is where we fix them.
+
+**The data.** New York City publishes every yellow taxi trip, already as Parquet. Download January 2023 (48 MB, about 3 million trips, one row per trip):
+
+```bash
+cd $my_52002_repo/labs/03/scratch
+curl -O https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2023-01.parquet
+ls -alh yellow_tripdata_2023-01.parquet
+```
+
+**Adding a row.** Insert one trip (a copy of the first one) in the middle of the file, and save it:
+
+```bash
+cat > add_row.py << 'EOF'
+import time
+import pyarrow as pa
+import pyarrow.parquet as pq
+
+t0 = time.perf_counter()
+taxi = pq.read_table("yellow_tripdata_2023-01.parquet")
+one = taxi.slice(0, 1)                                     # a copy of the first trip
+middle = taxi.num_rows // 2
+taxi = pa.concat_tables([taxi.slice(0, middle), one, taxi.slice(middle)])
+pq.write_table(taxi, "taxi_plus_one.parquet", compression="zstd")
+print(taxi.num_rows, "rows", round(time.perf_counter() - t0, 2), "seconds to add one row")
 EOF
-chmod +x stubborn.sh
-./stubborn.sh &
-echo $!
+/usr/bin/time -f "%M KB peak memory" python3 add_row.py   # Mac: /usr/bin/time -l python3 add_row.py, and look for "maximum resident set size"
+ls -alh yellow_tripdata_2023-01.parquet taxi_plus_one.parquet
 ```
 
-Ask it to stop (the default signal of `kill` is TERM) and look at it:
+#TODO [how long did it take to add one row, and how much memory did it need? Compare the memory to the size of the file. Why does it need so much? <2pts>]
+
+Now add the row at the very *end* of the file instead:
 
 ```bash
-kill $!
-sleep 2
-ps -o pid,stat,command -p $!
+sed -i 's|middle = taxi.num_rows // 2|middle = taxi.num_rows|' add_row.py   # Mac: sed -i '' 's|...|...|' add_row.py
+/usr/bin/time -f "%M KB peak memory" python3 add_row.py
+rm taxi_plus_one.parquet
 ```
 
-#TODO [is the process still there, and why? <1pts>]
-#TODO [write the command that stops it for sure, and the command that proves that it is gone <1pts>]
+#TODO [did adding at the end save any time? <1pts>]
+#TODO [A CSV can grow at the end with `echo ... >> file.csv` without touching the rest of the file. Why can't a Parquet file do the same append at the end? <1pts>]
 
-Use `wait` to get the exit status of processes that were killed by different signals. `wait PID` waits for that process and then sets `$?` to its exit status:
-
-```bash
-sleep 600 &
-kill $!
-wait $!
-echo $?
-
-sleep 600 &
-kill -9 $!
-wait $!
-echo $?
-```
-
-#TODO [the two exit statuses that you got, and which signal numbers do they correspond to? <2pts>]
-
-A process can be paused without dying. `STOP` suspends it and `CONT` resumes it. This is the signal that Ctrl+Z sends (almost; Ctrl+Z sends a variant called `TSTP`):
+**Deleting rows.** Only two trips started in Jamaica Bay (zone 2). Delete them:
 
 ```bash
-sleep 600 &
-kill -STOP $!
-ps -o pid,stat,command -p $!
-kill -CONT $!
-ps -o pid,stat,command -p $!
-kill $!
-```
+cat > delete_rows.py << 'EOF'
+import time
+import pyarrow.compute as pc
+import pyarrow.parquet as pq
 
-#TODO [what was the `STAT` in each of the two `ps` lines? <1pts>]
-#TODO [`stubborn.sh` ignored TERM. Try to make it ignore `KILL` by editing the `trap` line: what happens, and why does that explain what `kill -9` is for? <2pts>]
-
-There is also `pkill`, which kills by *name* instead of by PID. Without running it, think about this one:
-
-```bash
-pkill -x sleep       # -x : the process name must match exactly
-```
-
-#TODO [what would this command do on a shared server where other people are also running programs, and why is it risky to use `pkill` by name on a machine that you do not own alone? <1pts>]
-
-Clean up:
-
-```bash
-rm stubborn.sh
-pgrep -a sleep
-```
-
-# Part 4: Surviving a logout with `nohup`
-
-When you close a terminal, the system sends the **HUP** ("hang-up") signal to the programs that were started from it, and by default they die. `nohup` makes a program ignore HUP. You can test that without closing anything, by sending HUP yourself:
-
-```bash
-sleep 600 &
-echo $!
-nohup sleep 601 > /dev/null 2>&1 &
-echo $!
-```
-
-#TODO [what does `> /dev/null 2>&1` do, and why does `nohup` need it in this line? <1pts>]
-
-Send the HUP signal to both processes and see which ones survive. Use `wait` on the first one to see its exit status:
-
-```bash
-#TODO [command that sends HUP to the two sleeps you just started <1pts>]
-pgrep -a sleep
-```
-
-#TODO [which process died and which survived? What was the exit status of the one that died (use `wait`) and why? <2pts>]
-
-Clean up what is left:
-
-```bash
-kill $(pgrep -x sleep)
-```
-
-Now a realistic job. This script is a stand-in for a long computation: it writes the date to the standard output every second.
-
-```bash
-cat > infinite_loop.sh << 'EOF'
-#!/usr/bin/env bash
-while true; do date; sleep 1; done
+t0 = time.perf_counter()
+taxi = pq.read_table("yellow_tripdata_2023-01.parquet")
+taxi = taxi.filter(pc.field("PULocationID") != 2)          # delete the trips picked up in Jamaica Bay
+pq.write_table(taxi, "taxi_minus_two.parquet", compression="zstd")
+print(taxi.num_rows, "rows", round(time.perf_counter() - t0, 2), "seconds to delete two rows")
 EOF
-chmod +x infinite_loop.sh
+/usr/bin/time -f "%M KB peak memory" python3 delete_rows.py
+rm taxi_minus_two.parquet
 ```
 
-Start it so that it survives logging out, and so that its output is saved:
+#TODO [how long did it take to delete two rows out of three million, and how much memory did it need? <1pts>]
 
-```bash
-#TODO [command that runs infinite_loop.sh with nohup in the background, saving all its output (including errors) to out.log <2pts>]
-tail -n 3 out.log
-```
-
-#TODO [explain each of the four pieces `nohup`, `> out.log`, `2>&1` and `&` in one sentence each <2pts>]
-
-Now simulate a lost connection: **close this terminal** and open a new one, then move back to the scratch folder:
-
-```bash
-cd $HOME/workspace/HUJI_52002_Fall_2026/labs/03/scratch   # edit if your repo is elsewhere
-jobs
-ps aux | grep "[i]nfinite_loop"
-tail -n 3 out.log
-```
-
-#TODO [what did `jobs` print in the new terminal and what did `ps` print (paste the `ps` line)? Is `out.log` still growing? <1pts>]
-
-Stop the job by PID and prove that it is gone:
-
-```bash
-#TODO [command that kills the infinite_loop process (you may use `pgrep` or `pkill`) <1pts>]
-ps aux | grep "[i]nfinite_loop"
-```
-
-#TODO [why did you have to use a PID or a name this time, instead of `kill %1`? <1pts>]
+#TODO [Imagine the file was 30 million rows and the time taken for delete and insertion scales linearly? If you are doing hundreds of deletes and and insertions per hour, can parquet scale? <1pts>]
+#TODO [If you are doing hundreds of deletes and and insertions per hour, what else can go wrong with parquet? <1pts>]
 
 Clean up:
 
 ```bash
-rm out.log nohup.out 2>/dev/null
+cd $my_52002_repo/labs/03/scratch
+rm -f covid_python.parquet covid_R.parquet covid_rg.parquet covid.csv.xz yellow_tripdata_2023-01.parquet add_row.py delete_rows.py
+ls -alh
 ```
-
-# Part 5: A terminal that survives: `tmux`
-
-`nohup` keeps one command alive. `tmux` keeps a whole **terminal** alive, so that you can go away and come back to see it as you left it. Start a session called `lab3`:
-
-```bash
-tmux new -s lab3
-```
-
-You are now inside tmux (note the green bar at the bottom). Inside it, start the loop in the background and look at it:
-
-```bash
-cd $HOME/workspace/HUJI_52002_Fall_2026/labs/03/scratch   # edit if your repo is elsewhere
-./infinite_loop.sh > out.log 2>&1 &
-tail -n 2 out.log
-```
-
-Detach: press Ctrl+B, release both keys, then press d. You are back in your normal terminal. Look at the session and at the job, and then come back:
-
-```bash
-tmux ls
-ps aux | grep "[i]nfinite_loop"
-jobs
-tmux attach -t lab3
-jobs
-```
-
-#TODO [paste the line that `tmux ls` printed. Why did `jobs` print nothing in the normal terminal but print the job after you attached? <1pts>]
-
-Inside the session, press Ctrl+B and then c to create a second tabbed window, and Ctrl+B and then n / p to move between the two. Then detach again and kill the whole session from outside:
-
-```bash
-tmux kill-session -t lab3
-tmux ls
-ps aux | grep "[i]nfinite_loop"
-```
-
-#TODO [is the loop still running after the session was killed? Explain what you saw in one sentence using what you learned about HUP in Part 4. <2pts>]
-
-You do not have to attach to a session to start something in it. The `-d` option starts a session **detached** and runs a command in it:
-
-```bash
-#TODO [one line command that creates a detached tmux session called lab3b which runs infinite_loop.sh and writes its output to out.log <2pts>]
-tmux ls
-tail -n 2 out.log
-ps aux | grep "[i]nfinite_loop"
-```
-
-#TODO [what happens to the session when the program inside it finishes or is killed? Check by killing the loop with `pkill -f infinite_loop` and running `tmux ls` again <1pts>]
-
-#TODO [give one situation where you would choose `nohup ... &` and one where you would choose `tmux` <1pts>]
-
-Clean up:
-
-```bash
-tmux kill-server 2>/dev/null     # closes every tmux session you own
-rm infinite_loop.sh out.log
-pgrep -a sleep
-ps aux | grep "[i]nfinite_loop"
-```
-
-Note: we have not used a remote machine yet. As soon as you have `ssh` access to the HUJI supercomputer, you will repeat Parts 4 and 5 there, which is where `nohup` and `tmux` really matter: a job on a remote server must survive your wifi going out.
 
 # Final checklist
 
 Before you push, check that:
 
 * every `#TODO` has a line afterwards that is filled in with your command, the real output, or a written English answer to the question in your own words;
-* no stray processes are left: `pgrep -a sleep` and `ps aux | grep "[i]nfinite_loop"` print nothing, and `tmux ls` says "no server running";
-* no scratch files (`out.log`, `nohup.out`, the `.sh` scripts) are in your repository (`git status` should not mention them);
+* no data files are in your repository (`git status` should not mention `covid.csv` or any `.parquet` file);
+* the play branches (`experiment`, and `hotfix` for masters students) were deleted, so `git branch` in `lab03_playground` showed just `main` before you removed the folder;
+* the `lab03_playground` folder is gone, and `git status` in your class repository shows no sign of it;
 * the file renders: `quarto render lab03.qmd` produces an HTML page with no errors (nothing in this lab is executed during rendering).
