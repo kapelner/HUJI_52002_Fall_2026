@@ -20,7 +20,7 @@ cp ../lec01/covid.csv .
 ls -alh
 ```
 
-# Working on remote machines: `ssh`, `scp`, `rsync` and `tmux`
+# Working on remote machines: `ssh`, `scp` and `rsync`
 
 Big data rarely lives on your laptop. You work on a server or a cluster: a computer in a machine room that you reach over the network, with far more cores, memory and disk than yours puny laptop/desktop. Everything you have learned so far works there too, because they will 99% of the time run linux. And you give it commands through a bash shell just like the bash shell on your laptop. The tools below get you there, move the files, and keep your jobs alive.
 
@@ -32,7 +32,7 @@ Big data rarely lives on your laptop. You work on a server or a cluster: a compu
 
 ```bash
 ssh user@server          # log in; the prompt is now on the server
-ssh user@server "df -h"  # run one command there and come back
+ssh user@server "df -h"  # run one command there, print it and come back to this machine's bash prompt
 exit                     # leave the server (or Ctrl+D)
 ```
 
@@ -77,7 +77,6 @@ whoami                           # your username on the remote machine
 id                               # your user number and your groups
 ```
 
-
 `id` prints a line such as
 
 ```
@@ -87,8 +86,8 @@ uid=12345(kapelner) gid=100(users) groups=100(users),2051(statlab)
 Linux does not really know you by name but by a number, your **user ID** (`uid`). The name in parentheses is only a label for it. You also belong to one or more **groups**, each with its own number (`gid` is your main group, `groups` lists all of them). Groups are how a shared machine hands out permissions (see lec02 for permissions discussion). We are "statlab"! Cool...
 
 ```bash
-free -h                          # how much memory
-nproc  --all                     # how many cores this machine has
+free -h       # how much memory
+nproc --all   # how many cores this machine has
 systemctl show user-$(id -u).slice -p CPUQuotaPerSecUSec -p MemoryMax # am I being metered here?
 ```
 
@@ -100,6 +99,16 @@ time python3 -c "sum(range(10**7))"
 
 The total time is ~3.33x the user (CPU) time.
 
+Okay so we have 2 cores metered to 30% of one core and only 11GB of RAM. Is this a supercomputer???
+
+
+
+
+
+No. This is not the supercomputer, it is its front door. `moriah-gw` is the **login node** (the "gw" stands for gateway): a small machine shared by everyone who logs in, often hundreds of people at once. It is there for light work only: editing files, copying data in and out, compiling and *submitting* jobs. That is why your share is capped so tightly. One person running a big analysis here would slow down the bash shell of everyone else.
+
+The real power is in the **compute nodes**: many large machines behind the login node, which you never log in to directly. A supercomputer (a "cluster") is exactly that: lots of ordinary but big computers in a room, connected by a fast network. You ask for some of their cores and memory for a while, and a program called the **scheduler** (Slurm on Moriah) runs your job there when the resources are free. We will learn the scheduler later. For now, the rule is: **never run anything heavy on the login node.**
+
 Let's continue poking around in our new computer at this machine:
 
 ```bash
@@ -109,13 +118,14 @@ uptime                           # how busy it is: compare the load average to n
 Over the last 1, 5, 15 min what # of cores were being used on average?
 
 ```bash
-who                              # who are those n users? Are my friends here with me???
-who | awk '{print $1}' | sort -u | wc -l #how many unique users are there really?
-df -h ~                          # how much space do I have in my personal directory
-                                 # We will eventually have shared space for the class - 
-                                 # I'll explain that when the cluster people set it up
-sudo -l                          # security check first then ... fails - I'm just a peon... just like you guys
-exit                             # back to your own computer
+who                                      # who are those n users? Are my friends here with me???
+who | awk '{print $1}' | sort -u | wc -l # how many unique users are there logged on?
+df -h ~                                  # how much space do I have in my personal directory
+                                         # We will eventually have shared space for the class - 
+                                         # I'll explain that when the cluster people set it up
+sudo -l                                  # security check first then ... says unauthorized - 
+                                         # I'm just a nobody here... just like you guys
+exit                                     # back to your own computer
 ```
 
 
@@ -132,60 +142,73 @@ scp -r results/ user@server:~/          # -r : a whole folder
 `rsync` ("remote sync") does the same job better for anything big or repeated. It compares both sides and sends only what is missing or changed, so a second run of a large copy takes seconds, and an interrupted one can be resumed:
 
 ```bash
-rsync -av data/ user@server:~/data/     # -a : keep folders, dates; -v : talk
-rsync -avz data/ user@server:~/data/    # -z : compress while sending
-rsync -avP data/ user@server:~/data/    # -P : progress, keep partial files
+rsync -av data/ user@server:~/data/      # -a : keep folders, dates; -v : verbose, list each file it copies
+rsync -avP data/ user@server:~/data/     # -P : progress, keep partial files
+rsync -avzP data/ user@server:~/data/    # -z : compress while sending
+#this is the default, but on small files it's a waste and of course it is a waste on already-compressed files
 rsync -avn data/ user@server:~/data/    # -n : dry run, only show the plan
 ```
+
+`rsync` has its shortfalls, though. The major one being it must be installed on *both* machines. `scp` comes with `ssh` everywhere, including Windows 10 and 11, but plain Windows has no `rsync` (use WSL). Some servers only allow file transfers and no shell, and `rsync` cannot run there, while `scp` can. So use `scp` for a single file once, and `rsync` for anything big or repeated.
+
+Let's send `covid.csv` to our home directory on Moriah, both ways. Each one goes through the `bava` gate just like `ssh` did: `scp` takes the same `-J`, and `rsync` is told which `ssh` command to use with `-e`:
+
+```bash
+scp -J kapelner@bava.cs.huji.ac.il covid.csv kapelner@moriah-gw.cs.huji.ac.il:~/
+```
+
+This fails with `subsystem request failed on channel 0` which means Moriah doesn't offer `SFTP` (secure file transfer protcolo). Since OpenSSH 9.0 (2022), `scp` quietly transfers files over `SFTP`, so on a server without `SFTP` it logs you in and then has nothing to talk to. Adding -O makes scp use the "old" protocol, which doesn't need `SFTP`
+
+```bash
+scp -O -J kapelner@bava.cs.huji.ac.il covid.csv kapelner@moriah-gw.cs.huji.ac.il:~/
+```
+
+That was slow... Let's make sure it's there to be sure.
+
+```bash
+ssh -J kapelner@bava.cs.huji.ac.il kapelner@moriah-gw.cs.huji.ac.il
+ls -alh
+rm covid.csv
+exit
+```
+
+Now let's try it with `rsync`
+
+```bash
+rsync -avzP -e "ssh -J kapelner@bava.cs.huji.ac.il" covid.csv kapelner@moriah-gw.cs.huji.ac.il:~/
+```
+
+Super fast! What if we do it again?
+
+```bash
+rsync -avzP -e "ssh -J kapelner@bava.cs.huji.ac.il" covid.csv kapelner@moriah-gw.cs.huji.ac.il:~/
+```
+
+The second `rsync` finishes at once, because the file on Moriah already has the same size and date. `scp` would send all of it again.
+
+Conclusion: when using moriah, use `rsync`!!
 
 ::: {.callout-warning}
 ## The trailing slash matters
 `rsync -av data/ dest/` copies the *contents* of `data` into `dest`. Without the slash, `rsync -av data dest/` creates `dest/data`. The same is true on the destination side. When in doubt, add `-n` first.
 :::
 
-## `tmux` on the server: keep your work alive
-
-This is what `tmux` from Lecture 2 is for. Start it *on the server*, right after you log in, and run your long job inside it:
-
-```bash
-ssh user@server
-tmux new -s analysis             # a session on the server
-Rscript long_job.R               # start the long job
-# Ctrl+B then D : detach
-exit                             # log out; the job keeps running
-```
-
-Close your laptop, lose your Wi-Fi, go home. Later:
-
-```bash
-ssh user@server
-tmux ls                          # analysis: 1 windows ...
-tmux attach -t analysis          # back where you left off, output and all
-```
-
-The session lives on the server, not on your laptop, so it survives a dropped `ssh` connection as well as a deliberate logout.
-
-`nohup` from Lecture 2 also works for this but `tmux` is the safer choice where the job's terminal belongs to the `tmux` session, which never goes away when you log out. Neither one comes with a guarantee. A remote server is not your machine: the system administrator is in control and can kill anything they want. They may set the server to kill all of your processes when you log out, `tmux` included, or kill any job that runs too long or uses too much memory on a shared login machine. Read your server's rules, and on a cluster put long jobs in the "scheduler", which is what it is there for. We will return to the scheduler later (on moriah they use a program called SLURM).
-
-Make it a habit: whenever you `ssh` in to do something that takes more than a minute, start or attach to a `tmux` session first.
-
-
 # PostgreSQL ("postgres")
 
-
-## Logging in to the database
+## Logging in to the database locally (on your machine)
 
 Check that the postgres server is running and that you can log in. The command is to run postgres is `psql`:
 
-```bash
-psql -c "SELECT version();"      # a line starting with: PostgreSQL 18
+```bash                     
+psql -c "SELECT version();"      # a line starting with: PostgreSQL 18.6 (latest stable now, v19 is coming later this month)
+pg_isready                       # accepting connections - let's go for it
 psql
 ```
 
 Now we get a different prompt. We're inside the database program. Commands in bash don't work here. We use another language here. Recall our discussion on `awk` and recall this command
 
 ```bash
-awk -F, 'NR>1 {n[$3]++} END {for (s in n) print s "," n[s]}' covid.csv #### don't run, we're not in bash anymore
+awk -F, 'NR>1 {n[$3]++} END {for (s in n) print s "," n[s]}' covid.csv #### don't run this as we're not in bash anymore!
 #        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 #        awk's own proprietary language which people call
 #        "awk", "awk program", "awk script"
@@ -202,34 +225,6 @@ Note: each dialect adds its own extensions. So the postgres backslash commands s
 Notice that you gave neither a username nor a password. The username is easy: when you do not give one (with `-U`), `psql` uses your Linux username. If you do not name a database, it also connects to the one with your username. Why no password? Your setup created a database user (Postgres calls it a **role**) with the same name as your Linux user. When `psql` connects to a server on the *same* machine, it does not go over the network. It uses a special file called a **socket**, and through a socket the server can ask the operating system which Linux user is on the other end. You already proved who you are when you logged in to the computer, so the server takes the operating system's word for it and lets you in as the role with your name. This is called **peer authentication**, and it is set by a rule in the server's configuration file `pg_hba.conf` ("host-based authentication").
 
 Connections from other machines arrive over the network, where the server has no way to ask anyone's operating system. They need a password or a key. So a database on another computer will always ask you to prove who you are.
-
-## Using Postgres on Moriah
-
-Log into moriah and try `psql`. You will most likely get `command not found`. A cluster serves hundreds of users who need different programs, and often different versions of the same program, so most software is installed side by side and switched off until you ask for it. The `module` command does the asking. First search for what is available:
-
-```bash
-ssh moriah
-psql #fails
-module spider postgres           # every Postgres version installed here
-module spider postgres/17        # details about one version
-```
-
-`module spider` only *searches*. To actually use a version, load it:
-
-```bash
-module load postgres/17          # adds psql and friends to your PATH
-which psql                       # now found
-psql --version
-```
-
-A loaded module lasts only until you log out, and the next login starts clean again. To load it every time, put the line into `~/.bashrc` on Moriah, which bash runs at the start of every session. Then `source` the file, which runs it in the current shell, so you do not have to log out and back in:
-
-```bash
-echo 'module load postgres/17' >> ~/.bashrc   # >> appends; > would wipe the file
-source ~/.bashrc
-```
-
-From now on Postgres is there every time you log in, and you never need to think about this whole `module` thing ever again.
 
 Let's go back to our local computers:
 
@@ -289,7 +284,7 @@ You use `\q` to quit and return to bash:
 \q
 ```
 
-We can create a database using the bash program `createdb`. We'll create one for this lecture and open postgres directly into it:
+We can create a database using the bash program `createdb` which is part of the executable postgres programs. We'll create one for this lecture and open postgres directly into it:
 
 ```bash
 createdb lec04                   # a new, empty database
@@ -298,36 +293,66 @@ psql lec04                       # the interactive prompt; \q quits
 
 Again, this database is a named, walled-off collection of tables, a bit like a folder of files. You connect to **one** database at a time (`psql lec04`), and a query can only see the tables in that one. Two databases can each have a table called `covid` without any clash. That makes a database the natural unit for one project. Make one per project, and when the project is over, `dropdb` deletes it and everything in it in a single step.
 
+## Creating and deleting tables in the database
 
-## Loading the CSV
-
-A database table, like parquet, has **typed columns**. We state them up front and then load the file with `\copy`, which reads a file on *your* machine:
+A table is created with `CREATE TABLE`, which gives its name and then each column with its type. A database table, like parquet, has **typed columns**. We state them up front. The common types are `integer` (whole numbers), `double precision` (decimal numbers), `text`, `date` and `boolean` (true/false). Here is a small throwaway table to get your feet wet:
 
 ```sql
--- print how long each statement took
+-- SQL commands end with a semicolon and may span several lines
+CREATE TABLE students (
+  id       integer,
+  name     text,
+  born     date,
+  height   double precision,
+  enrolled boolean
+);
+-- list the tables in this database
+\dt
+-- describe one table: its columns and their types
+\d students
+```
+
+A name can only be used once: running the same `CREATE TABLE` again gives `ERROR:  relation "students" already exists`. `DROP TABLE` deletes the table and every row in it, at once and with no undo:
+
+```sql
+DROP TABLE students;
+-- dropping it again fails with: ERROR:  table "students" does not exist
+-- IF EXISTS only prints a NOTICE instead, handy in scripts that may run twice
+DROP TABLE IF EXISTS students;
+-- list the tables in this database (students table doesn't exist anymore)
+\dt
+-- doesn't exist anymore
+\d students
+```
+
+## Creating a new table by loading a CSV
+
+We can import a CSV file into a postgres table. We first create the empty table with the correctly-typed columns. We then use the metacommand `\copy`, which reads a file on *your* machine into the table row-by-row skipping the header row. "Slashed commands" or metacommands are not part of SQL; it is a direct psql command and part of the postgres dialect.
+
+```sql
+-- metacommand to print how long each statement took
+-- NOTE: comments on the same line as metacommands break the metacommands and should not be used (but for regular SQL, no problem)
 \timing on
--- this is a "slashed command" or a metacommand. It is not part of SQL; it is a direct psql command 
-CREATE TABLE covid (
-  date   date,
+CREATE TABLE covid ( --creates a table with each column as a certain type. 
+  date   date,      --it is important to use date although other types would've worked as we can do date arithmetic (more on this later)
   county text,
   state  text,
-  fips   text,
+  fips   text,      --why text??
   cases  integer,
   deaths integer
-); --creates a table with each column as a certain type. 
+); 
 --This is a SQL command. It ends with a semicolon and can span multiple lines
--- describe a table: its columns and their types (type q to exit)
+-- metacommand to describe a table: its columns and their types (type q to exit)
 \d covid
--- list the tables
+-- metacommand to list the tables
 \dt
--- copies from CSV into the postgres table
+-- metacommand that copies from CSV into the postgres table
 \copy covid FROM 'covid.csv' CSV HEADER
 ```
 
-In the `\copy` command, the `CSV HEADER` tells postgres that the first line holds column names and not data. The load takes about a second. 
-NOTE: Use `\copy` and not the canonical SQL version `COPY`. `COPY` makes the *server* read the file, and the server is a different user who is not allowed into your home folder.)
+In the `\copy` metacommand, the `CSV` declares the type of file and `HEADER` tells postgres that the first line holds column names and not data. The load takes about a second. (NOTE: Use `\copy` and not the canonical SQL version `COPY`. `COPY` makes the *server* read the file, and the server is a different user who is not allowed into your home folder.)
 
-NOTE: comments on the same line as metacommands break the metacommands and should not be used.
+
 
 ## Queries
 
@@ -350,6 +375,8 @@ A query is built from **clauses**, which always appear in this order and are all
 +------------------------+-------------------------------------------------+
 | `FROM ...`             | data from table ... to read                     |
 +------------------------+-------------------------------------------------+
+| `FROM ... TABLESAMPLE` | read only a random sample of the table          |
++------------------------+-------------------------------------------------+
 | `WHERE ...`            | keep only the rows that match condition ...     |
 +------------------------+-------------------------------------------------+
 | `ORDER BY ...`         | sort the answer by column ... smallest first    |
@@ -357,6 +384,8 @@ A query is built from **clauses**, which always appear in this order and are all
 | `ORDER BY ... DESC`    | sort the answer by column ... largest first     |
 +------------------------+-------------------------------------------------+
 | `ORDER BY a, b DESC`   | sort by `a`; break ties by `b`, largest first   |
++------------------------+-------------------------------------------------+
+| `ORDER BY random()`    | shuffle (with `LIMIT`: a random sample)         |
 +------------------------+-------------------------------------------------+
 | `LIMIT ...`            | keep only the first few ... of the answer       |
 +------------------------+-------------------------------------------------+
@@ -375,6 +404,10 @@ The condition after `WHERE` can be built from **operators**:
 | `LIKE` with `%`            | text pattern: `%` is any text, even none   | `county LIKE 'San %'`                        |
 +----------------------------+--------------------------------------------+----------------------------------------------+
 | `LIKE` with `_`            | text pattern: `_` is exactly one character | `fips LIKE '48___'` (the Texas codes)        |
++----------------------------+--------------------------------------------+----------------------------------------------+
+| `ILIKE`                    | `LIKE`, but ignoring upper and lower case  | `county ILIKE 'dekalb'`                      |
++----------------------------+--------------------------------------------+----------------------------------------------+
+| `~`                        | a regular expression (`~*` ignores case)   | `county ~ '^(De|La) ?(Soto|Salle)$'`         |
 +----------------------------+--------------------------------------------+----------------------------------------------+
 | `IN (...)`                 | one of a list                              | `state IN ('Texas', 'Utah')`                 |
 +----------------------------+--------------------------------------------+----------------------------------------------+
@@ -423,6 +456,14 @@ SELECT state, county, cases FROM covid
   WHERE date = '2020-12-31'
   ORDER BY state, cases DESC
   LIMIT 5;
+-- ORDER BY random(): shuffle, then keep 5, a random sample of 5 rows (different every time you run it)
+SELECT date, county, state, cases FROM covid
+  ORDER BY random()
+  LIMIT 5;
+-- TABLESAMPLE BERNOULLI (1): about 1% of the rows, each row picked on its own (about 8,800 rows, a different number each time)
+SELECT count(*) FROM covid TABLESAMPLE BERNOULLI (1);
+-- REPEATABLE (seed): the same sample every time, like set.seed in R
+SELECT count(*) FROM covid TABLESAMPLE BERNOULLI (1) REPEATABLE (52002);
 -- AS: name the columns of the answer, and use the name in ORDER BY (Harris, Dallas, Tarrant)
 SELECT county, cases AS total_cases, deaths AS total_deaths FROM covid
   WHERE date = '2020-12-31' AND state = 'Texas'
@@ -435,6 +476,14 @@ SELECT county, state, cases FROM covid
 -- LIKE with _, and <: Texas fips codes (48 then 3 characters) with under 10 cases (King 6, Loving 1)
 SELECT county, fips, cases FROM covid
   WHERE date = '2020-12-31' AND fips LIKE '48___' AND cases < 10;
+-- ILIKE: LIKE 'dekalb' finds no rows, but ILIKE ignores case and finds the 6 DeKalb counties (Georgia first, 38320)
+SELECT county, state, cases FROM covid
+  WHERE date = '2020-12-31' AND county ILIKE 'dekalb'
+  ORDER BY cases DESC;
+-- ~: a regular expression, here De or La, an optional space, then Soto or Salle (6 rows: DeSoto, De Soto, LaSalle, La Salle)
+SELECT county, state, cases FROM covid
+  WHERE date = '2020-12-31' AND county ~ '^(De|La) ?(Soto|Salle)$'
+  ORDER BY cases DESC;
 -- OR: the parentheses matter, because AND is applied before OR (Dallas and Harris)
 SELECT county, cases FROM covid
   WHERE date = '2020-12-31' AND state = 'Texas'
@@ -459,9 +508,61 @@ SELECT date, county, state FROM covid
 \q
 ```
 
-Without `ORDER BY`, the rows come back in whatever order Postgres finds them, so `LIMIT 5` alone gives you *some* 5 rows, not the first 5 of anything. Add `ORDER BY` whenever the order matters.
+Without `ORDER BY`, the rows come back in whatever order Postgres finds them, so `LIMIT 5` alone gives you *any* 5 rows arbitrarily, not the first 5 of anything. Add `ORDER BY` whenever the order matters. In particular, `LIMIT 5` without `ORDER BY` is **not** a random sample: it is usually the first 5 rows on disk, in the order they were loaded.
 
-For comparison, here are the same questions using bash with `awk` as the star of the show:
+For a statistician, "give me a random sample of the rows" is one of the most useful queries there is: you many times explore and fit models on a sample that fits in R or Python's memory, not on the full table. There are two ways to get one, and on big tables they differ a lot in speed (timed on our 885,000 rows):
+
++------------------------------------+-------------------------------------------+------------------------+--------+
+| Query                              | How it picks                              | Rows                   | Time   |
++====================================+===========================================+========================+========+
+| `ORDER BY random() LIMIT 1000`     | gives every row a random number, sorts    | exactly 1000           | 170 ms |
+|                                    | them all, keeps the first 1000            |                        |        |
++------------------------------------+-------------------------------------------+------------------------+--------+
+| `TABLESAMPLE BERNOULLI (1)`        | reads every row, keeps each with          | about 1%, varies       | 30 ms  |
+|                                    | probability 1%                            |                        |        |
++------------------------------------+-------------------------------------------+------------------------+--------+
+
+```sql
+\timing on
+-- ORDER BY random(): exactly 1000 rows, a simple random sample (about 250 ms)
+SELECT date, county, state, cases FROM covid
+  ORDER BY random()
+  LIMIT 1000;
+-- BERNOULLI (1): each row kept with probability 1%, so about 8,800 rows (about 40 ms)
+SELECT date, county, state, cases FROM covid TABLESAMPLE BERNOULLI (1);
+\timing off
+-- a sample is queried like any table: the mean of cases in a 1% sample (about 1957) vs. in all the rows (1952)
+SELECT count(*), round(avg(cases)) FROM covid TABLESAMPLE BERNOULLI (1);
+SELECT count(*), round(avg(cases)) FROM covid;
+-- save a sample as a table, the same one every time thanks to REPEATABLE (SELECT 8841)...
+CREATE TABLE covid_1pct AS SELECT * FROM covid TABLESAMPLE BERNOULLI (1) REPEATABLE (52002);
+-- ...and as a CSV for R or Python (COPY 8841)
+\copy covid_1pct TO 'covid_1pct.csv' WITH (FORMAT csv, HEADER true)
+DROP TABLE covid_1pct;
+```
+
+The same in `awk`:
+
+```bash
+# ORDER BY random() LIMIT 1000: shuf shuffles every line, then -n 1000 keeps 1000
+time (awk -F, -v OFS=, 'NR>1 {print $1, $2, $3, $5}' covid.csv | shuf -n 1000 | wc -l)
+# BERNOULLI (1): keep each line with probability 1%
+# (srand() seeds rand() from the clock, in whole seconds: two runs in the same second give the same sample)
+time (awk -F, -v OFS=, 'BEGIN {srand()} NR>1 && rand() < 0.01 {print $1, $2, $3, $5}' covid.csv | wc -l)
+# the mean of cases in a 1% sample vs. in all the rows
+awk -F, 'BEGIN {srand()} NR>1 && rand() < 0.01 {s += $5; n++} END {printf "%d %.0f\n", n, s/n}' covid.csv
+awk -F, 'NR>1 {s += $5; n++} END {printf "%d %.0f\n", n, s/n}' covid.csv
+# REPEATABLE (52002) is a fixed seed, srand(52002); NR==1 keeps the header line, so this is the CSV directly
+# CREATE TABLE ... AS: no equivalent, there are no tables, so the sample is saved straight to a file
+awk 'BEGIN {srand(52002)} NR==1 || rand() < 0.01' covid.csv > covid_1pct.csv
+wc -l covid_1pct.csv
+# DROP TABLE: no equivalent either, the closest is deleting the file
+rm covid_1pct.csv
+```
+
+`ORDER BY random()` reads and sorts the whole table, so its cost is O(n log n) whatever the sample size. `BERNOULLI` still reads every row, but only once and with no sort, O(n). Both give every row the same chance of being picked. Use `ORDER BY random()` when you need an exact number of rows from a small or medium table, and `BERNOULLI` on a big one.
+
+For comparison, here are the same questions using bash with `awk` below (for reference only - I don't expect you to become `awk` masters):
 
 ```bash
 head covid.csv -n 1 
@@ -482,6 +583,10 @@ awk -F, -v OFS=, '$1=="2020-12-31" {print $2, $3, $5}' covid.csv | sort -t, -k3,
 awk -F, -v OFS=, '$1=="2020-12-31" {print $2, $3, $5}' covid.csv | sort -t, -k3,3nr | tail -n +6 | head -n 5 | column -s, -t
 # ORDER BY two columns: sort with two keys, the first as text, the second as numbers in reverse
 awk -F, -v OFS=, '$1=="2020-12-31" {print $3, $2, $5}' covid.csv | sort -t, -k1,1 -k3,3nr | head -n 5 | column -s, -t
+# ORDER BY random() LIMIT 5: shuf shuffles the lines, -n 5 keeps 5
+awk -F, -v OFS=, 'NR>1 {print $1, $2, $3, $5}' covid.csv | shuf -n 5 | column -s, -t
+# TABLESAMPLE BERNOULLI (1): keep each line with probability 1% (srand() seeds from the clock; srand(52002) is REPEATABLE)
+awk 'BEGIN {srand()} NR>1 && rand() < 0.01' covid.csv | wc -l
 # AS: no real equivalent, because awk output has no column names; you can only echo a header line yourself
 { echo "county,total_cases,total_deaths"
   awk -F, -v OFS=, '$1=="2020-12-31" && $3=="Texas" {print $2, $5, $6}' covid.csv | sort -t, -k2,2nr | head -n 3
@@ -490,6 +595,10 @@ awk -F, -v OFS=, '$1=="2020-12-31" {print $3, $2, $5}' covid.csv | sort -t, -k1,
 awk -F, -v OFS=, '$1=="2020-12-31" && $2 ~ /^San / && $5 > 100000 {print $2, $3, $5}' covid.csv | sort -t, -k3,3nr | column -s, -t
 # LIKE with _, and <: in a regular expression . is one character, $ means "ends here"
 awk -F, -v OFS=, '$1=="2020-12-31" && $4 ~ /^48...$/ && $5 < 10 {print $2, $4, $5}' covid.csv | column -s, -t
+# ILIKE: lower-case the field with tolower, then compare
+awk -F, -v OFS=, '$1=="2020-12-31" && tolower($2)=="dekalb" {print $2, $3, $5}' covid.csv | sort -t, -k3,3nr | column -s, -t
+# ~: awk's ~ is the very same regular expression match
+awk -F, -v OFS=, '$1=="2020-12-31" && $2 ~ /^(De|La) ?(Soto|Salle)$/ {print $2, $3, $5}' covid.csv | sort -t, -k3,3nr | column -s, -t
 # OR is ||
 awk -F, -v OFS=, '$1=="2020-12-31" && $3=="Texas" && ($2=="Harris" || $2=="Dallas") {print $2, $5}' covid.csv | column -s, -t
 # IN: awk has no IN, so we write out the ORs
@@ -502,83 +611,48 @@ awk -F, -v OFS=, '$6=="" {print $1, $2, $3, $5}' covid.csv | head -n 5 | column 
 awk -F, -v OFS=, '$6=="" && !($3=="Puerto Rico") {print $1, $2, $3}' covid.csv | column -s, -t
 ```
 
+Note: you do not need the interactive prompt. `psql -c` runs one statement, and the output can feed straight back into the pipes you already know:
 
-Each SQL clause has an awk counterpart:
+```bash
+psql lec04 -c "SELECT count(*) FROM covid"
+psql lec04 -At -c "SELECT county FROM covid WHERE state='Utah'" | sort -u
+psql lec04 -c "\copy (SELECT * FROM covid WHERE state='Utah') \
+  TO 'utah.csv' CSV HEADER"
+ls -alh
+head utah.csv
+rm utah.csv
+```
 
-+----------------------+---------------------------------+
-| SQL                  | `awk` (and friends)             |
-+======================+=================================+
-| `SELECT ...`         | `{print ...}`                   |
-+----------------------+---------------------------------+
-| `SELECT DISTINCT`    | `| sort -u`                     |
-+----------------------+---------------------------------+
-| `AS name`            | no equivalent (no column names) |
-+----------------------+---------------------------------+
-| `FROM covid`         | the file name, `covid.csv`      |
-+----------------------+---------------------------------+
-| `WHERE ...`          | the pattern before the `{`      |
-+----------------------+---------------------------------+
-| `ORDER BY ...`       | `| sort`                        |
-+----------------------+---------------------------------+
-| `ORDER BY ... DESC`  | `| sort -r`                     |
-+----------------------+---------------------------------+
-| `ORDER BY a, b DESC` | `| sort -k1,1 -k2,2r`           |
-+----------------------+---------------------------------+
-| `LIMIT ...`          | `| head -n ...`                 |
-+----------------------+---------------------------------+
-| `OFFSET 5`           | `| tail -n +6`                  |
-+----------------------+---------------------------------+
-| `=`                  | `==`                            |
-+----------------------+---------------------------------+
-| `<>`                 | `!=`                            |
-+----------------------+---------------------------------+
-| `<` `>` `<=` `>=`    | `<` `>` `<=` `>=`               |
-+----------------------+---------------------------------+
-| `AND`                | `&&`                            |
-+----------------------+---------------------------------+
-| `OR`                 | `||`                            |
-+----------------------+---------------------------------+
-| `NOT`                | `!`                             |
-+----------------------+---------------------------------+
-| `LIKE 'San %'`       | `~ /^San /`                     |
-+----------------------+---------------------------------+
-| `LIKE '48___'`       | `~ /^48...$/`                   |
-+----------------------+---------------------------------+
-| `IN ('a', 'b')`      | `($3=="a" || $3=="b")`          |
-+----------------------+---------------------------------+
-| `BETWEEN a AND b`    | `$1 >= a && $1 <= b`            |
-+----------------------+---------------------------------+
-| `IS NULL`            | `$6==""`                        |
-+----------------------+---------------------------------+
-
-Remember in `awk` you refer to columns by number (which is super annoying because you have to remember that `$3` is the state), and you have to tell `sort` that column 3 holds numbers (`-k3,3n`). SQL uses the names and already knows the types. 
-
-Which is more readable? awk or SQL?
+`-A` turns off the table formatting and `-t` removes headers and footers, which leaves plain lines for `sort`, `wc` and friends. The last line goes the other way and writes the result of a query out as a CSV.
 
 
 ### Aggregate queries ("summary queries")
 
 Functions such as `count(*)`, `max()`, `sum()` and `avg()` are **aggregates**: they boil many rows down to one number.
 
-+-----------------------+---------------------------------------------------+
-| Aggregate             | What it returns                                   |
-+=======================+===================================================+
-| `count(*)`            | the number of rows                                |
-+-----------------------+---------------------------------------------------+
-| `count(...)`          | the number of rows where the column is not `NULL` |
-+-----------------------+---------------------------------------------------+
-| `count(DISTINCT ...)` | the number of different, unique values            |
-+-----------------------+---------------------------------------------------+
-| `sum(...)`            | the total                                         |
-+-----------------------+---------------------------------------------------+
-| `avg(...)`            | the mean                                          |
-+-----------------------+---------------------------------------------------+
-| `min(...)`            | the smallest value                                |
-+-----------------------+---------------------------------------------------+
-| `max(...)`            | the largest value                                 |
-+-----------------------+---------------------------------------------------+
-| `stddev(...)`         | the sample standard deviation                     |
-+-----------------------+---------------------------------------------------+
++----------------------------------------------------+---------------------------------------------------+
+| Aggregate                                          | What it returns                                   |
++====================================================+===================================================+
+| `count(*)`                                         | the number of rows                                |
++----------------------------------------------------+---------------------------------------------------+
+| `count(...)`                                       | the number of rows where the column is not `NULL` |
++----------------------------------------------------+---------------------------------------------------+
+| `count(DISTINCT ...)`                              | the number of unique non-`NULL` values            |
++----------------------------------------------------+---------------------------------------------------+
+| `sum(...)`                                         | the total                                         |
++----------------------------------------------------+---------------------------------------------------+
+| `avg(...)`                                         | the mean                                          |
++----------------------------------------------------+---------------------------------------------------+
+| `min(...)`                                         | the smallest value                                |
++----------------------------------------------------+---------------------------------------------------+
+| `max(...)`                                         | the largest value                                 |
++----------------------------------------------------+---------------------------------------------------+
+| `stddev(...)`                                      | the sample standard deviation (`stddev_samp`)     |
++----------------------------------------------------+---------------------------------------------------+
+| `percentile_cont(0.5) WITHIN GROUP (ORDER BY ...)` | the median: half of the values are below it       |
++----------------------------------------------------+---------------------------------------------------+
+| `mode() WITHIN GROUP (ORDER BY ...)`               | the most common value                             |
++----------------------------------------------------+---------------------------------------------------+
 
 All of them except `count(*)` skip `NULL` values, so `avg(deaths)` is the mean of the rows where `deaths` is known.
 
@@ -605,6 +679,18 @@ SELECT min(date) FROM covid WHERE state = 'Texas';          -- 2020-02-12
 -- stddev: counties differ a lot in size
 SELECT round(stddev(cases)) FROM covid
   WHERE date = '2020-12-31';                                -- 23169
+-- median: Postgres has no median(), it is the 0.5 percentile
+-- far below the mean (6171), because a few huge counties pull the mean up
+SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY cases) FROM covid
+  WHERE date = '2020-12-31';                                -- 1570
+-- with an even number of rows, the median is the mean of the two middle values
+-- the "WITHIN GROUP (ORDER BY" is (I think) is a bad standard. Read it as "OF THE SORTED"
+SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY cases) FROM covid
+  WHERE date = '2020-12-31' AND state = 'Texas';            -- 1180.5
+-- mode: the most common value, which works on text too
+SELECT mode() WITHIN GROUP (ORDER BY county) FROM covid
+  WHERE date = '2020-12-31';                                -- Washington: 31 counties have that name
+SELECT mode() WITHIN GROUP (ORDER BY state) FROM covid;     -- Texas, the state with the most rows
 -- several aggregates in one query give one row with several columns
 SELECT min(date), max(date), count(DISTINCT date) FROM covid;       -- 2020-01-21 | 2020-12-31 | 346
 SELECT count(*), count(deaths) FROM covid
@@ -615,18 +701,214 @@ SELECT sum(cases), round(avg(cases)), max(cases) FROM covid
 
 The Texas count is exactly 67,002 with no regular expression and no counting of the wrong column. Because each column has a name and a type, `state = 'Texas'` cannot match a county. These queries take about 60 to 90 ms: faster than `awk`, but still reading the entire table.
 
-## Grouped aggregate queries
+The same in `awk` below (for reference only - I don't expect you to become `awk` masters). It has no aggregate functions at all, so each one is written out by hand: a running total or count updated on every line, and printed in the `END` block after the last line:
 
-`GROUP BY` splits the rows into groups, here one group per state, and the aggregate is computed separately for each group, so the answer has one row per group. The `GROUP BY` clause goes after `WHERE` and before `ORDER BY`:
-
-```sql
-SELECT state, count(*) FROM covid
-  GROUP BY state ORDER BY count(*) DESC LIMIT 5;            -- top 5 states
+```bash
+#date,county,state,fips,cases,deaths
+# count(*): count the lines in END (NR>1 skips the header)
+awk 'NR>1 {n++} END {print n}' covid.csv   # 884737
+awk -F, '$3=="Texas" {n++} END {print n}' covid.csv   # 67002
+# max: awk has no max(), so remember the largest value seen so far
+awk -F, '$3=="Texas" && $2=="Harris" && $5 > m {m = $5} END {print m}' covid.csv   # 237727
+# count(column) skips NULLs: count only the lines where the field is not empty
+awk -F, 'NR>1 && $6!="" {n++} END {print n}' covid.csv   # 865976
+# count(DISTINCT ...): sort -u, then count the lines
+awk -F, 'NR>1 {print $3}' covid.csv | sort -u | wc -l   # 55
+awk -F, '$3=="Texas" {print $2}' covid.csv | sort -u | wc -l   # 255
+# sum: awk has no sum(), so add up as you go
+awk -F, '$1=="2020-12-31" {s += $6} END {print s}' covid.csv   # 346050
+# avg: no avg() either: the sum divided by the count; printf "%.0f" rounds
+awk -F, '$1=="2020-12-31" {s += $5; n++} END {print s/n}' covid.csv   # 6170.97
+awk -F, '$1=="2020-12-31" {s += $5; n++} END {printf "%.0f\n", s/n}' covid.csv   # 6171
+# min: dates written YYYY-MM-DD compare correctly as text
+awk -F, 'NR>1 && (m == "" || $1 < m) {m = $1} END {print m}' covid.csv   # 2020-01-21
+awk -F, '$3=="Texas" && (m == "" || $1 < m) {m = $1} END {print m}' covid.csv   # 2020-02-12
+# stddev: no stddev(); compute it from the sum and the sum of squares, dividing by n - 1 for the sample version
+awk -F, '$1=="2020-12-31" {s += $5; ss += $5^2; n++} END {printf "%.0f\n", sqrt((ss - s^2/n) / (n-1))}' covid.csv   # 23169
+# median: no median(); sort the values, keep them all, and pick the middle one (or the mean of the two middle ones)
+awk -F, '$1=="2020-12-31" {print $5}' covid.csv | sort -n | awk '{a[NR] = $1} END {print (NR%2 ? a[(NR+1)/2] : (a[NR/2] + a[NR/2+1])/2)}'   # 1570
+awk -F, '$1=="2020-12-31" && $3=="Texas" {print $5}' covid.csv | sort -n | awk '{a[NR] = $1} END {print (NR%2 ? a[(NR+1)/2] : (a[NR/2] + a[NR/2+1])/2)}'   # 1180.5
+# mode: no mode(); count each value with uniq -c, then take the biggest count
+awk -F, '$1=="2020-12-31" {print $2}' covid.csv | sort | uniq -c | sort -nr | head -n 1   # 31 Washington
+awk -F, 'NR>1 {print $3}' covid.csv | sort | uniq -c | sort -nr | head -n 1   # 67002 Texas
+# several aggregates at once: keep several running results and print them together
+awk -F, 'NR>1 {if (min == "" || $1 < min) min = $1; if ($1 > max) max = $1; d[$1] = 1} END {print min, max, length(d)}' covid.csv   # 2020-01-21 2020-12-31 346
+awk -F, '$3=="Puerto Rico" {n++; if ($6 != "") nd++} END {print n, nd}' covid.csv   # 19055 294
+awk -F, '$1=="2020-12-31" && $3=="Texas" {s += $5; n++; if ($5 > m) m = $5} END {printf "%d %.0f %d\n", s, s/n, m}' covid.csv   # 1770527 6971 237727
 ```
 
-This is the `awk` program `{n[$3]++} END {for (s in n) print s "," n[s]}` from before, plus the sort and the `head`, in one line. There is one rule to remember. Every column after `SELECT` must either be in the `GROUP BY` or be inside an aggregate. `SELECT state, county, count(*) ... GROUP BY state` fails, because a state has many counties and Postgres cannot know which one to show. (A `GROUP BY` with no aggregate at all, such as `SELECT state FROM covid GROUP BY state`, is legal but only removes duplicates, so write it the clearer way, `SELECT DISTINCT state FROM covid`.)
 
-The real speed-up comes next.
+## Grouped aggregate queries
+
+`GROUP BY` splits the rows into groups, here one group per state, and the aggregate is computed separately for each group, so the answer has one row per group. 
+
+```sql
+-- the number of rows for each state: 55 rows of answer, one per state, in no particular order
+SELECT state, count(*) FROM covid 
+  GROUP BY state;
+-- the same, but only the 5 states with the most rows
+SELECT state, count(*) FROM covid
+  GROUP BY state ORDER BY count(*) DESC LIMIT 5;            -- Texas 67002, Georgia 45209, Virginia 36886, Kentucky 32812, Missouri 31333
+-- WHERE first, then GROUP BY: total cases per state at the end of 2020
+SELECT state, sum(cases) FROM covid WHERE date = '2020-12-31'
+  GROUP BY state ORDER BY sum(cases) DESC LIMIT 5;          -- California 2307860, Texas 1770527, Florida 1323307, New York 979040, Illinois 965840
+-- AS names the aggregate, and the name can be used in ORDER BY
+SELECT state, sum(cases) AS total_cases FROM covid WHERE date = '2020-12-31'
+  GROUP BY state ORDER BY total_cases DESC LIMIT 3;         -- the same top 3, with a nicer column name
+-- count(DISTINCT ...) per group: the states with the most counties
+SELECT state, count(DISTINCT county) FROM covid
+  GROUP BY state ORDER BY count(DISTINCT county) DESC LIMIT 3;   -- Texas 255, Georgia 160, Virginia 134
+-- min per group: the day each state had its first case
+SELECT state, min(date) FROM covid
+  GROUP BY state ORDER BY min(date) LIMIT 3;                -- Washington 2020-01-21, Illinois 2020-01-24, California 2020-01-25
+-- group by a different column: one group per day, the national death toll
+SELECT date, sum(deaths) FROM covid
+  GROUP BY date ORDER BY date DESC LIMIT 3;                 -- 2020-12-31 346050, 2020-12-30 342588, 2020-12-29 338780
+-- several aggregates per group: rows (counties), total and largest county's deaths
+SELECT state, count(*), sum(deaths), max(deaths) FROM covid WHERE date = '2020-12-31'
+  GROUP BY state ORDER BY sum(deaths) DESC LIMIT 3;         -- New York 58 | 37557 | 25144, Texas 254 | 28155 | 3402, California 58 | 25965 | 10345
+-- the median per state: WITHIN GROUP sorts the rows of each state separately
+SELECT state, percentile_cont(0.5) WITHIN GROUP (ORDER BY cases) AS median_cases FROM covid WHERE date = '2020-12-31'
+  GROUP BY state ORDER BY median_cases DESC LIMIT 3;        -- District of Columbia 28983 (its only county), Massachusetts 24296, New Jersey 19537
+```
+
+`HAVING` then filters the groups, the way `WHERE` filters the rows: `WHERE` runs before the grouping and `HAVING` after it, so only `HAVING` can test an aggregate such as `count(*) < 5`. The order of the clauses is `WHERE`, `GROUP BY`, `HAVING`, then `ORDER BY`:
+
+
+```sql
+-- group by two columns: one group per county (county names repeat across states, so state is needed too)
+SELECT state, county, max(cases) FROM covid
+  GROUP BY state, county ORDER BY max(cases) DESC LIMIT 3;  -- Los Angeles 770915, New York City 430863, Cook 393652
+-- HAVING filters the groups, after they are computed (WHERE filters the rows, before)
+SELECT state, count(*) FROM covid WHERE date = '2020-12-31'
+  GROUP BY state HAVING count(*) < 5 ORDER BY count(*);     -- District of Columbia 1, Guam 1, Northern Mariana Islands 2, Virgin Islands 3, Delaware 4
+```
+
+There is one rule to remember. Every column after `SELECT` must either be in the `GROUP BY` or be inside an aggregate. `SELECT state, county, count(*) ... GROUP BY state` fails, because a state has many counties and Postgres cannot know which one to show. (A `GROUP BY` with no aggregate at all, such as `SELECT state FROM covid GROUP BY state`, is legal but only removes duplicates, so write it the clearer way, `SELECT DISTINCT state FROM covid`.)
+
+The same in `awk` (for reference only - I don't expect you to become `awk` masters). A group is the lec 2 awk **array** (a hash map from a string to a value: the key is the group, the value is a count, a sum or even a date), such as `n[$3]` for one counter per state, and the `END` block loops over the array to print one line per group:
+
+```bash
+#date,county,state,fips,cases,deaths
+# GROUP BY is an array indexed by the group: n[$3]++ keeps one counter per state, and END prints one line per state
+awk -F, 'NR>1 {n[$3]++} END {for (s in n) print s "," n[s]}' covid.csv
+# ORDER BY and LIMIT are sort and head, as before
+awk -F, 'NR>1 {n[$3]++} END {for (s in n) print s "," n[s]}' covid.csv | sort -t, -k2,2nr | head -n 5
+# WHERE is the pattern, so it runs before the grouping
+awk -F, '$1=="2020-12-31" {s[$3] += $5} END {for (k in s) print k "," s[k]}' covid.csv | sort -t, -k2,2nr | head -n 5
+# AS: no equivalent, awk output has no column names (echo a header line yourself)
+{ echo "state,total_cases"
+  awk -F, '$1=="2020-12-31" {s[$3] += $5} END {for (k in s) print k "," s[k]}' covid.csv | sort -t, -k2,2nr | head -n 3
+} | column -s, -t
+# count(DISTINCT ...) per group: drop the repeated (state, county) pairs with sort -u first, then count
+awk -F, -v OFS=, 'NR>1 {print $3, $2}' covid.csv | sort -u | awk -F, '{n[$1]++} END {for (s in n) print s "," n[s]}' | sort -t, -k2,2nr | head -n 3
+# min per group: keep the smallest date seen so far for each state
+awk -F, 'NR>1 && (!($3 in m) || $1 < m[$3]) {m[$3] = $1} END {for (s in m) print s "," m[s]}' covid.csv | sort -t, -k2,2 | head -n 3
+# one group per day: index the array by the date instead
+awk -F, 'NR>1 {d[$1] += $6} END {for (k in d) print k "," d[k]}' covid.csv | sort -r | head -n 3
+# several aggregates per group: one array per aggregate, all indexed by the state
+awk -F, '$1=="2020-12-31" {n[$3]++; s[$3] += $6; if ($6 > m[$3]) m[$3] = $6} END {for (k in n) print k "," n[k] "," s[k] "," m[k]}' covid.csv | sort -t, -k3,3nr | head -n 3
+# median per group: no easy equivalent, since every value of every state must be kept and sorted
+# sort by state, then by cases, and pick the middle value of each state as its last line goes by
+awk -F, -v OFS=, '$1=="2020-12-31" {print $3, $5}' covid.csv | sort -t, -k1,1 -k2,2n |
+  awk -F, 'function out() {print prev "," (n%2 ? a[(n+1)/2] : (a[n/2] + a[n/2+1])/2)}
+           $1 != prev {if (n) out(); n = 0; prev = $1} {a[++n] = $2} END {out()}' | sort -t, -k2,2nr | head -n 3
+# two grouping columns: glue them together into one array index
+awk -F, 'NR>1 {k = $3 "," $2; if ($5 > m[k]) m[k] = $5} END {for (k in m) print k "," m[k]}' covid.csv | sort -t, -k3,3nr | head -n 3
+# HAVING: a test inside the END loop, after the groups are computed
+awk -F, '$1=="2020-12-31" {n[$3]++} END {for (s in n) if (n[s] < 5) print s "," n[s]}' covid.csv | sort -t, -k2,2n
+```
+
+Each SQL clause has an awk counterpart:
+
++----------------------------+--------------------------------------------------------------------------------+
+| SQL                        | `awk` (and friends)                                                            |
++============================+================================================================================+
+| `SELECT ...`               | `{print ...}`                                                                  |
++----------------------------+--------------------------------------------------------------------------------+
+| `SELECT DISTINCT`          | `| sort -u`                                                                    |
++----------------------------+--------------------------------------------------------------------------------+
+| `AS name`                  | no equivalent (no column names)                                                |
++----------------------------+--------------------------------------------------------------------------------+
+| `FROM covid`               | the file name, `covid.csv`                                                     |
++----------------------------+--------------------------------------------------------------------------------+
+| `WHERE ...`                | the pattern before the `{`                                                     |
++----------------------------+--------------------------------------------------------------------------------+
+| `ORDER BY ...`             | `| sort`                                                                       |
++----------------------------+--------------------------------------------------------------------------------+
+| `ORDER BY ... DESC`        | `| sort -r`                                                                    |
++----------------------------+--------------------------------------------------------------------------------+
+| `ORDER BY a, b DESC`       | `| sort -k1,1 -k2,2r`                                                          |
++----------------------------+--------------------------------------------------------------------------------+
+| `ORDER BY random()`        | `| shuf` (with `LIMIT 5`: `| shuf -n 5`)                                       |
++----------------------------+--------------------------------------------------------------------------------+
+| `TABLESAMPLE BERNOULLI`    | the pattern `rand() < 0.01` (for 1%)                                           |
++----------------------------+--------------------------------------------------------------------------------+
+| `LIMIT ...`                | `| head -n ...`                                                                |
++----------------------------+--------------------------------------------------------------------------------+
+| `OFFSET 5`                 | `| tail -n +6`                                                                 |
++----------------------------+--------------------------------------------------------------------------------+
+| `=`                        | `==`                                                                           |
++----------------------------+--------------------------------------------------------------------------------+
+| `<>`                       | `!=`                                                                           |
++----------------------------+--------------------------------------------------------------------------------+
+| `<` `>` `<=` `>=`          | `<` `>` `<=` `>=`                                                              |
++----------------------------+--------------------------------------------------------------------------------+
+| `AND`                      | `&&`                                                                           |
++----------------------------+--------------------------------------------------------------------------------+
+| `OR`                       | `||`                                                                           |
++----------------------------+--------------------------------------------------------------------------------+
+| `NOT`                      | `!`                                                                            |
++----------------------------+--------------------------------------------------------------------------------+
+| `LIKE 'San %'`             | `~ /^San /`                                                                    |
++----------------------------+--------------------------------------------------------------------------------+
+| `LIKE '48___'`             | `~ /^48...$/`                                                                  |
++----------------------------+--------------------------------------------------------------------------------+
+| `ILIKE 'dekalb'`           | `tolower($2)=="dekalb"`                                                        |
++----------------------------+--------------------------------------------------------------------------------+
+| `~ '^(De|La) ?Soto$'`      | `~ /^(De|La) ?Soto$/`                                                          |
++----------------------------+--------------------------------------------------------------------------------+
+| `IN ('a', 'b')`            | `($3=="a" || $3=="b")`                                                         |
++----------------------------+--------------------------------------------------------------------------------+
+| `BETWEEN a AND b`          | `$1 >= a && $1 <= b`                                                           |
++----------------------------+--------------------------------------------------------------------------------+
+| `IS NULL`                  | `$6==""`                                                                       |
++----------------------------+--------------------------------------------------------------------------------+
+| `count(*)`                 | `{n++} END {print n}`                                                          |
++----------------------------+--------------------------------------------------------------------------------+
+| `count(deaths)`            | `$6!="" {n++} END {print n}`                                                   |
++----------------------------+--------------------------------------------------------------------------------+
+| `count(DISTINCT ...)`      | `| sort -u | wc -l`                                                            |
++----------------------------+--------------------------------------------------------------------------------+
+| `sum(cases)`               | `{s += $5} END {print s}`                                                      |
++----------------------------+--------------------------------------------------------------------------------+
+| `avg(cases)`               | `{s += $5; n++} END {print s/n}`                                               |
++----------------------------+--------------------------------------------------------------------------------+
+| `round(...)`               | `printf "%.0f\n", ...`                                                         |
++----------------------------+--------------------------------------------------------------------------------+
+| `max(cases)`               | `$5 > m {m = $5} END {print m}`                                                |
++----------------------------+--------------------------------------------------------------------------------+
+| `min(cases)`               | `m == "" || $5 < m {m = $5} END {print m}`                                     |
++----------------------------+--------------------------------------------------------------------------------+
+| `stddev(cases)`            | `sqrt((ss - s^2/n) / (n-1))`, from `s += $5; ss += $5^2; n++`                  |
++----------------------------+--------------------------------------------------------------------------------+
+| `percentile_cont(0.5) ...` | `| sort -n`, then the middle line                                              |
++----------------------------+--------------------------------------------------------------------------------+
+| `mode() ...`               | `| sort | uniq -c | sort -nr | head -n 1`                                      |
++----------------------------+--------------------------------------------------------------------------------+
+| `GROUP BY state`           | an array indexed by the group, `n[$3]++`, printed in `END` with `for (s in n)` |
++----------------------------+--------------------------------------------------------------------------------+
+| `GROUP BY state, county`   | glue the columns into one index, `n[$3 "," $2]++`                              |
++----------------------------+--------------------------------------------------------------------------------+
+| `HAVING ...`               | an `if` inside the `END` loop, `if (n[s] < 5) print ...`                       |
++----------------------------+--------------------------------------------------------------------------------+
+
+Remember in `awk` you refer to columns by number (which is super annoying because you have to remember that `$3` is the state), and you have to tell `sort` that column 3 holds numbers (`-k3,3n`). SQL uses the names and already knows the types. 
+
+Which is more readable? awk or SQL? Which is faster?
+
+
+A real speed-up comes next.
 
 ## Indexes
 
@@ -637,127 +919,518 @@ EXPLAIN ANALYZE SELECT max(cases) FROM covid
   WHERE state = 'Texas' AND county = 'Harris';
 ```
 
-`EXPLAIN ANALYZE` shows how Postgres ran the query. Without an index you will see `Seq Scan` (a *sequential scan*: reading every row) and an execution time of about 70 ms. Now create the index and run the same `EXPLAIN ANALYZE` again:
+`EXPLAIN ANALYZE` shows how Postgres ran the query. Without an index you will see `Parallel Seq Scan`. This is a *sequential scan*: reading every row. There is some savings when using multiple cores. The execution time of about 53 ms. Hit "q" to return to postgres. 
+
+Now create the index and run the same `EXPLAIN ANALYZE` again:
 
 ```sql
 CREATE INDEX ON covid (state, county);     -- takes about a second, once
 ```
 
-The plan changes to an `Index Scan` (or `Bitmap Index Scan`) and the time drops to **under 1 ms**. The table has 884,737 rows, and the database looked at about 300 of them.
+In the postgres version I have installed (v18.6), the plan changes to a `Bitmap Index Scan` which uses a data structure called a "B-tree".
 
-The time to answer is now almost independent of the table's size. That is the reason databases exist. The cost is paid once, when you build the index (about 1.2 seconds here), plus a little extra on every insert to keep the index up to date and some extra disk space.
-
-## Indexes at scale
-
-Now the same 20 lookups as in the Parquet unit, but against the 44-million-row `covid_big.csv`. Load it into a table of its own and build an index on the three columns we filter by (the load takes about a minute, the index about another minute and a quarter, and the table takes about 3 GB on disk, of which the index is 0.3 GB):
 
 ```sql
-CREATE TABLE covid_big (date date, county text, state text, fips text, cases integer, deaths integer);
-\copy covid_big FROM 'covid_big.csv' CSV HEADER
-CREATE INDEX ON covid_big (state, county, date);
+EXPLAIN ANALYZE SELECT max(cases) FROM covid
+  WHERE state = 'Texas' AND county = 'Harris';
 ```
 
-Then ask the same 20 questions from R, through the `DBI` package, which talks to Postgres:
+and the time drops to **under 3 ms**. The table has 884,737 rows, and the database looked at about 300 of them.
 
-```{r}
-library(arrow)
-library(dplyr)
-library(DBI)
+The time to answer is now almost independent of the table's size. That is a huge advantage of databases. The index cost is paid once, when you build the index (about 1.2 seconds here), plus a little extra on every insert to keep the index up to date and some extra disk space.
 
-setwd("~/workspace/HUJI_52002_Fall_2026/scratch/lec04")
 
-ds <- open_dataset("covid_big.parquet")
-set.seed(1)
-counties <- ds |> distinct(state, county) |> collect()
-counties <- counties[sample(nrow(counties), 20), ]   # the same 20 random counties
+Let $n$ be the number of rows in the table and $k$ the number of rows that match. The sequential scan reads all $n$ rows, so it takes $O(n)$ however small $k$ is (strictly $O(n + k)$, but $k \leq n$ so you write it as $O(n)$ since multiplicative constants drop out). The B-tree is about 3 levels deep for our 884,737 rows, and only 4 or 5 even for a billion. Finding the first match takes $O(\log n)$ steps down the tree, and the other matches sit right next to it, so a lookup takes $O(\log n + k)$:
 
-con <- dbConnect(RPostgres::Postgres(), dbname = "lec04")
-system.time(
-  for (i in 1:20) {
-    dbGetQuery(con,
-      "SELECT max(cases) FROM covid_big WHERE state = $1 AND county = $2 AND date = $3",
-      params = list(counties$state[i], counties$county[i], as.Date("2020-12-31")))
-  }
++------------+-----------------+--------------------------------------------------------+
+| Plan       | Cost            | Harris County ($n \approx 885{,}000$, $k \approx 300$) |
++============+=================+========================================================+
+| Seq Scan   | $O(n)$          | about 885,000 rows read                                |
++------------+-----------------+--------------------------------------------------------+
+| Index Scan | $O(\log n + k)$ | 3 tree nodes read (one per level), then 300 rows       |
++------------+-----------------+--------------------------------------------------------+
+
+So is there a downside? So far, no: we have only *read* the table. The costs come when the data changes (every insert, update and delete must also update the index, as we will see next lecture). However, there is a small price in disk space, since the index is a second copy of the `(state, county)` columns, sorted, plus the tree above them:
+
+```sql
+-- \di+ lists the indexes with their sizes
+\di+
+-- the table alone, its indexes alone, and both together
+SELECT pg_size_pretty(pg_table_size('covid'))          AS table_size,
+       pg_size_pretty(pg_indexes_size('covid'))        AS index_size,
+       pg_size_pretty(pg_total_relation_size('covid')) AS total;
+-- 57 MB | 6344 kB | 63 MB
+```
+
+The index takes about 6 MB next to the table's 57 MB, about 11% more space. It is this small because the key repeats a lot: Harris County, Texas appears in 300 rows, and Postgres stores each repeated key only once, followed by the list of rows that have it. An index whose keys are almost all different gets no such saving: one on `(state, county, date)` takes 35 MB, more than half the size of the table. Every index you add costs its own space, so index the columns you actually search by, not every column.
+
+ Databases in general pay for features using disk space. Note that 57MB is larger than the original 35MB covid.csv. We will see why next lecture.
+
+
+### B-trees
+
+The index Postgres builds is a **B-tree**. It is the sorted list of all the `(state, county)` keys, cut into disk pages of 8 KB, each holding a few hundred keys, plus a few levels of pages above them that say which page to open next:
+
+```
+                     [ Georgia | Ohio | Texas ]                       <- root: 1 page
+                    /        |        |        \
+ [Alabama ... Florida] [Georgia ... Nevada] [Ohio ... South Dakota] [Texas ... Wyoming]
+          |                     |                     |                      |
+   leaves: every key in sorted order, each pointing to its row in the table,
+   and each leaf linked to the next one  -> -> -> ->
+```
+
+(The picture has 4 children per page; a real page has hundreds.) To find "Texas, Harris", Postgres reads the root, follows the pointer whose range contains it, and repeats one level down until it reaches a leaf: **one page read per level**. Each page narrows the search a few hundred times, not 2 times as in a binary search, so the tree is very shallow. With 300 children per page, 3 levels reach $300^3 = 27$ million keys. Then the leaves are walked left to right for as long as the key is still "Texas, Harris". That walk is also why the same index answers `<`, `BETWEEN`, `ORDER BY` and `LIKE 'San%'`: find the start, then walk. When a leaf fills up on an insert, it splits in two and the parent gets one more key, so all the leaves always stay at the same depth and no lookup is ever unlucky.
+
+
+## Subqueries (nested queries)
+
+`SELECT max(cases) FROM covid` gives the number 770915 but not the county it belongs to. You cannot just add `county` to the `SELECT`: that breaks the `GROUP BY` rule, because `max` boils all the rows down to one and Postgres would not know which county to show. The usual answer is a query inside a query, a **subquery**, in parentheses. Postgres runs the inner query first and puts its answer in its place:
+
+```sql
+-- the inner query finds 770915, and the outer one finds the row(s) with that value
+SELECT date, county, state, cases FROM covid
+  WHERE cases = (SELECT max(cases) FROM covid);             -- 2020-12-31 | Los Angeles | California | 770915
+-- the inner query needs its own WHERE too, otherwise it finds the max of the whole country
+SELECT date, county, cases FROM covid
+  WHERE state = 'Texas'
+    AND cases = (SELECT max(cases) FROM covid WHERE state = 'Texas');   -- 2020-12-31 | Harris | 237727
+-- any aggregate works: the counties above the national mean (6171) at the end of 2020
+SELECT count(*) FROM covid
+  WHERE date = '2020-12-31'
+    AND cases > (SELECT avg(cases) FROM covid WHERE date = '2020-12-31');   -- 587 of the 3245
+-- the latest day in the data, without knowing what it is
+SELECT county, state, cases FROM covid
+  WHERE date = (SELECT max(date) FROM covid)
+  ORDER BY cases DESC LIMIT 3;                              -- Los Angeles 770915, New York City 430863, Cook 393652
+```
+
+The subquery must return what its place in the outer query expects. After `=`, `<` or `>` it stands for a **single value**, so it must return exactly one row and one column, of a type that can be compared with the other side. Aggregates without `GROUP BY` always return one row, which is why they are the usual inner query. Get the shape or the type wrong and Postgres refuses:
+
+```sql
+-- many rows where one value is expected
+SELECT county FROM covid
+  WHERE cases = (SELECT cases FROM covid WHERE state = 'Texas');
+-- ERROR:  more than one row returned by a subquery used as an expression
+-- two columns where one is expected
+SELECT county FROM covid
+  WHERE cases = (SELECT max(cases), min(cases) FROM covid);
+-- ERROR:  subquery must return only one column
+-- a date where a number is expected
+SELECT county FROM covid
+  WHERE cases = (SELECT max(date) FROM covid);
+-- ERROR:  operator does not exist: integer = date
+-- no rows at all is allowed: the subquery becomes NULL, and nothing equals NULL
+SELECT county FROM covid
+  WHERE cases = (SELECT max(cases) FROM covid WHERE state = 'Atlantis');   -- (0 rows)
+```
+
+After `IN`, the subquery stands for a **list of values** instead, so it may return many rows, but still only one column:
+
+```sql
+-- all counties in the states that have at least one county above 200,000 cases
+SELECT count(*) FROM covid
+  WHERE date = '2020-12-31'
+    AND state IN (SELECT state FROM covid WHERE date = '2020-12-31' AND cases > 200000);   -- 555
+```
+
+`ORDER BY cases DESC LIMIT 1` is the easy workaround, but it gives only one row, even when several are tied. On 2020-12-31 the fewest cases is 0, and two rows have it:
+
+```sql
+SELECT county, state, cases FROM covid
+  WHERE date = '2020-12-31' ORDER BY cases LIMIT 1;         -- only one of the two
+SELECT county, state, cases FROM covid
+  WHERE date = '2020-12-31'
+    AND cases = (SELECT min(cases) FROM covid WHERE date = '2020-12-31');   -- Unknown | Kansas | 0 and Unknown | Maryland | 0
+```
+
+In `awk` a subquery is a **second pass** over the file. Giving `awk` the same file twice, `covid.csv covid.csv`, reads it twice. `NR==FNR` is true only during the first file (`NR` counts all lines read so far, `FNR` only those of the current file), so the first block computes the inner answer and `next` skips the rest; the pattern after it runs on the second pass:
+
+```bash
+# the max, then the row(s) with the max
+awk -F, -v OFS=, 'NR==FNR {if (FNR>1 && $5 > m) m = $5; next} FNR>1 && $5 == m {print $1, $2, $3, $5}' covid.csv covid.csv   # 2020-12-31,Los Angeles,California,770915
+# the same within Texas: both passes have the Texas test
+awk -F, -v OFS=, 'NR==FNR {if ($3=="Texas" && $5 > m) m = $5; next} $3=="Texas" && $5 == m {print $1, $2, $5}' covid.csv covid.csv   # 2020-12-31,Harris,237727
+# above the mean: the first pass computes the mean, the second counts
+awk -F, 'NR==FNR {if ($1=="2020-12-31") {s += $5; n++}; next} $1=="2020-12-31" && $5 > s/n {c++} END {print c}' covid.csv covid.csv   # 587
+# the latest day: dates written YYYY-MM-DD compare correctly as text
+awk -F, -v OFS=, 'NR==FNR {if (FNR>1 && $1 > d) d = $1; next} $1 == d {print $2, $3, $5}' covid.csv covid.csv | sort -t, -k3,3nr | head -n 3
+# the ties: sort | head -n 1 also keeps only one, the two-pass version keeps both
+awk -F, -v OFS=, '$1=="2020-12-31" {print $2, $3, $5}' covid.csv | sort -t, -k3,3n | head -n 1
+awk -F, -v OFS=, 'NR==FNR {if ($1=="2020-12-31" && (m == "" || $5 < m)) m = $5; next} $1=="2020-12-31" && $5 == m {print $2, $3, $5}' covid.csv covid.csv   # Unknown,Kansas,0 and Unknown,Maryland,0
+```
+
+The `awk` version reads the 35 MB file twice. Without an index Postgres also scans the table twice, but with the index on `(state, county)` both passes of the Texas query read only the 67,002 Texas rows instead of all 884,737.
+
+## Computed columns and `CASE` logic
+
+After `SELECT` you are not limited to column names. Any expression works: arithmetic on columns, functions, and if/else. Each one becomes a column of the answer, best named with `AS`:
+
+```sql
+-- arithmetic: careful, an integer divided by an integer is an integer in SQL, rounded down
+SELECT deaths / cases FROM covid
+  WHERE state = 'Texas' AND county = 'Harris' AND date = '2020-12-31';   -- 0
+-- make one side a decimal number first, with ::float (a "cast") or by multiplying by 100.0
+SELECT deaths::float / cases FROM covid
+  WHERE state = 'Texas' AND county = 'Harris' AND date = '2020-12-31';   -- 0.014310532669827155
+SELECT round(100.0 * deaths / cases, 2) AS death_rate FROM covid
+  WHERE state = 'Texas' AND county = 'Harris' AND date = '2020-12-31';   -- 1.43 (percent)
+-- a computed column can be sorted by its name; the IS NOT NULL keeps the empty deaths from sorting first
+SELECT county, state, round(100.0 * deaths / cases, 2) AS death_rate FROM covid
+  WHERE date = '2020-12-31' AND cases >= 1000 AND deaths IS NOT NULL
+  ORDER BY death_rate DESC LIMIT 3;                         -- Unknown, Puerto Rico 38.79 (most of its cases are listed by municipality, its deaths are not), Franklin, Massachusetts 7.20, New York City 5.84
+-- || glues text together
+SELECT county || ', ' || state AS place, cases FROM covid
+  WHERE date = '2020-12-31' ORDER BY cases DESC LIMIT 1;    -- Los Angeles, California | 770915
+-- CASE is if/else: it turns each row into a label, which you can then group by
+SELECT CASE 
+  WHEN cases > 100000 THEN 'big' ELSE 'small' END 
+  AS size, count(*) FROM covid
+  WHERE date = '2020-12-31' GROUP BY size;                  -- big 16, small 3229
+-- functions on dates: extract pulls out one part, here the month, which you can also group by
+SELECT extract(month FROM date) AS month, count(*) FROM covid
+  GROUP BY month ORDER BY month LIMIT 3;                    -- 1 39, 2 359, 3 23482: the rows grow as the virus spreads
+```
+
+`awk` does the same with arithmetic on fields, the `? :` operator for if/else, and string functions. There are no integer surprises: `awk` always divides as decimals.
+
+```bash
+# arithmetic on fields, rounded by printf
+awk -F, '$3=="Texas" && $2=="Harris" && $1=="2020-12-31" {printf "%.2f\n", 100 * $6 / $5}' covid.csv   # 1.43
+# the computed column, then sort by it
+awk -F, '$1=="2020-12-31" && $5 >= 1000 && $6 != "" {printf "%s,%s,%.2f\n", $2, $3, 100 * $6 / $5}' covid.csv | sort -t, -k3,3nr | head -n 3
+# gluing text: put the pieces next to each other
+awk -F, '$1=="2020-12-31" {print $2 ", " $3 "," $5}' covid.csv | sort -t, -k3,3nr | head -n 1   # Los Angeles, California,770915
+# CASE is the ? : operator (condition ? if true : if false), then group by the label
+awk -F, '$1=="2020-12-31" {size = ($5 > 100000 ? "big" : "small"); n[size]++} END {for (s in n) print s "," n[s]}' covid.csv   # big,16 and small,3229
+# extract(month ...): substr cuts characters 6 and 7 out of YYYY-MM-DD, and + 0 turns "03" into 3
+awk -F, 'NR>1 {n[substr($1, 6, 2) + 0]++} END {for (m in n) print m "," n[m]}' covid.csv | sort -t, -k1,1n | head -n 3   # 1,39 2,359 3,23482
+```
+
+## Set operations: `UNION`, `INTERSECT` and `EXCEPT`
+
+These combine the answers of two whole queries, treating each answer as a set of rows. Both queries must return the same number of columns, with matching types, and the result has no repeated rows:
+
+* `A UNION B`: the rows in either answer
+* `A INTERSECT B`: the rows in both
+* `A EXCEPT B`: the rows in `A` but not in `B`
+* `A UNION ALL B`: both answers one after the other, repeats kept (and faster, since there is nothing to check)
+
+```sql
+-- the counties with a row in March but none in December: all 18 are "Unknown", cases that were later assigned to a real county
+SELECT state, county FROM covid WHERE date BETWEEN '2020-03-01' AND '2020-03-31'
+EXCEPT
+SELECT state, county FROM covid WHERE date BETWEEN '2020-12-01' AND '2020-12-31'
+ORDER BY state, county;                                     -- Arizona Unknown, California Unknown, ... (18 rows)
+-- the other way round: counties with no row yet in March, mostly the virus reaching them later
+SELECT count(*) FROM (
+  SELECT state, county FROM covid WHERE date BETWEEN '2020-12-01' AND '2020-12-31'
+  EXCEPT
+  SELECT state, county FROM covid WHERE date BETWEEN '2020-03-01' AND '2020-03-31'
+) t;                                                        -- 1104
+-- counties among the first to report (data on 2020-01-31) and among the biggest at the end of the year
+SELECT state, county FROM covid WHERE date = '2020-01-31'
+INTERSECT
+SELECT state, county FROM covid WHERE date = '2020-12-31' AND cases > 200000;   -- Arizona Maricopa, California Los Angeles, Illinois Cook
+-- either one: 6 + 6 counties, but the 3 above are in both, so 9 rows
+SELECT state, county FROM covid WHERE date = '2020-01-31'
+UNION
+SELECT state, county FROM covid WHERE date = '2020-12-31' AND cases > 200000;   -- 9 rows
+-- UNION ALL keeps the repeats: 12 rows
+SELECT state, county FROM covid WHERE date = '2020-01-31'
+UNION ALL
+SELECT state, county FROM covid WHERE date = '2020-12-31' AND cases > 200000;   -- 12 rows
+```
+
+The `ORDER BY` at the end sorts the combined answer, not just the second query.
+
+In the shell, these are `comm` (which compares two *sorted* files line by line) and `sort -u`. `comm -12` prints the lines in both files, `-23` those only in the first and `-13` those only in the second. `<( ... )` hands the output of a command to `comm` as if it were a file:
+
+```bash
+# EXCEPT: lines only in the first list
+comm -23 <(awk -F, -v OFS=, '$1 >= "2020-03-01" && $1 <= "2020-03-31" {print $3, $2}' covid.csv | sort -u) \
+         <(awk -F, -v OFS=, '$1 >= "2020-12-01" && $1 <= "2020-12-31" {print $3, $2}' covid.csv | sort -u)
+# INTERSECT: lines in both lists
+comm -12 <(awk -F, -v OFS=, '$1=="2020-01-31" {print $3, $2}' covid.csv | sort -u) \
+         <(awk -F, -v OFS=, '$1=="2020-12-31" && $5 > 200000 {print $3, $2}' covid.csv | sort -u)
+# UNION: both lists together, with the repeats removed
+{ awk -F, -v OFS=, '$1=="2020-01-31" {print $3, $2}' covid.csv
+  awk -F, -v OFS=, '$1=="2020-12-31" && $5 > 200000 {print $3, $2}' covid.csv; } | sort -u
+# UNION ALL: both lists together, as they are
+{ awk -F, -v OFS=, '$1=="2020-01-31" {print $3, $2}' covid.csv
+  awk -F, -v OFS=, '$1=="2020-12-31" && $5 > 200000 {print $3, $2}' covid.csv; }
+```
+
+## Window functions
+
+An aggregate with `GROUP BY` boils each group down to one row. A **window function** computes the same kind of per-group answer but *keeps every row*, and writes the answer next to it. The group is called the **window** and is given after `OVER`: `PARTITION BY` says which rows belong together (like `GROUP BY`), and `ORDER BY` says in which order to go through them. Window functions are standard SQL and work in almost every database (Postgres, MySQL, SQLite, DuckDB, BigQuery, Spark).
+
+The classic use is the **top row per group**, such as each state's biggest county. `GROUP BY state` cannot do it, for the same reason as `max(cases)` in the subquery section: it finds the biggest number but not the county it belongs to. `row_number()` numbers the rows of each state from 1, biggest first, and then we keep the 1s:
+
+```sql
+-- the window function can't go in WHERE (WHERE runs before it is computed), so it goes in a subquery in FROM
+SELECT state, county, cases FROM (
+  SELECT state, county, cases,
+         row_number() OVER (PARTITION BY state ORDER BY cases DESC) AS r
+  FROM covid WHERE date = '2020-12-31'
+) t
+WHERE r = 1 ORDER BY state LIMIT 3;                         -- Alabama Jefferson 52339, Alaska Anchorage 22820, Arizona Maricopa 322449
+-- the top 3 per state is just r <= 3, which GROUP BY can't do at all
+SELECT county, cases, r FROM (
+  SELECT state, county, cases,
+         row_number() OVER (PARTITION BY state ORDER BY cases DESC) AS r
+  FROM covid WHERE date = '2020-12-31'
+) t
+WHERE state = 'Texas' AND r <= 3 ORDER BY r;                -- Harris 237727 1, Dallas 193318 2, Tarrant 150004 3
+-- rank() gives tied rows the same number, then skips: here 1, 1, 3, 3 (row_number would give 1, 2, 3, 4)
+-- with no PARTITION BY the window is the whole answer
+SELECT state, county, cases, rank() OVER (ORDER BY cases) AS r FROM covid
+  WHERE date = '2020-12-31' ORDER BY cases LIMIT 4;         -- Kansas/Maryland Unknown 0 1, Hawaii Kalawao 1 3, Maine Unknown 1 3
+-- an aggregate with OVER: each county next to the total of its state, and its share of it
+SELECT county, cases,
+       round(100.0 * cases / sum(cases) OVER (PARTITION BY state), 1) AS pct_of_state
+  FROM covid WHERE date = '2020-12-31' AND state = 'Texas'
+  ORDER BY cases DESC LIMIT 3;                              -- Harris 13.4%, Dallas 10.9%, Tarrant 8.5%
+-- lag() looks at the previous row of the window. cases is a running total, so today minus yesterday = the new cases
+SELECT date, cases, cases - lag(cases) OVER (ORDER BY date) AS new_cases FROM covid
+  WHERE state = 'Texas' AND county = 'Harris'
+  ORDER BY date DESC LIMIT 3;                               -- 2020-12-31 237727 1054, 2020-12-30 236673 1937, 2020-12-29 234736 1406
+-- the same for every county at once: PARTITION BY restarts lag() at each county
+SELECT county, state, new_cases FROM (
+  SELECT county, state, date,
+         cases - lag(cases) OVER (PARTITION BY state, county ORDER BY date) AS new_cases
+  FROM covid
+) t
+WHERE date = '2020-12-31' ORDER BY new_cases DESC NULLS LAST LIMIT 3;   -- Los Angeles 14503, Maricopa 5181, New York City 4584
+```
+
+Postgres also has a shortcut for the top row per group, `SELECT DISTINCT ON (state) state, county, cases FROM covid WHERE date = '2020-12-31' ORDER BY state, cases DESC`, but it works only in Postgres and keeps just one of several tied rows. Window functions work everywhere and let you choose how to treat ties.
+
+They have a cost. A window function must **sort** the rows of each window, which is $O(n \log n)$. For one day (3,245 rows) that is cheap, about 26 ms here. For the latest row of every county over the whole table (884,737 rows) it took about 1.5 s, while a `GROUP BY` version (`max(date)` per county, then an `IN` subquery to find those rows) took about 0.3 s, because a `GROUP BY` can use a hash table, which needs no sort.
+
+In `awk` a window is "sort by the group, then walk down the lines remembering the previous one". The `sort` does what `PARTITION BY ... ORDER BY` does:
+
+```bash
+# row_number() = 1: sort by state, then cases from biggest, and keep the first line of each state
+awk -F, -v OFS=, '$1=="2020-12-31" {print $3, $2, $5}' covid.csv | sort -t, -k1,1 -k3,3nr | awk -F, '!seen[$1]++' | head -n 3
+# row_number(): NR after the sort is the row number
+awk -F, -v OFS=, '$1=="2020-12-31" && $3=="Texas" {print $2, $5}' covid.csv | sort -t, -k2,2nr | awk -v OFS=, '{print $0, NR}' | head -n 3
+# rank(): the line number of the first line with this value
+awk -F, -v OFS=, '$1=="2020-12-31" {print $3, $2, $5}' covid.csv | sort -t, -k3,3n | awk -F, -v OFS=, '{if (NR == 1 || $3 != prev) r = NR; prev = $3; print $0, r}' | head -n 4
+# sum() OVER (PARTITION BY state): a first pass for the total, as for subqueries
+awk -F, 'NR==FNR {if ($1=="2020-12-31" && $3=="Texas") s += $5; next} $1=="2020-12-31" && $3=="Texas" {printf "%s,%d,%.1f\n", $2, $5, 100 * $5 / s}' covid.csv covid.csv | sort -t, -k2,2nr | head -n 3
+# lag(): remember the previous line's value
+awk -F, -v OFS=, '$3=="Texas" && $2=="Harris" {print $1, $5}' covid.csv | sort | awk -F, -v OFS=, '{print $1, $2, (NR > 1 ? $2 - prev : ""); prev = $2}' | tail -n 3
+# lag() with PARTITION BY: also remember the previous line's county, and only subtract within the same one
+awk -F, -v OFS=, 'NR>1 {print $3, $2, $1, $5}' covid.csv | sort -t, -k1,1 -k2,2 -k3,3 | awk -F, -v OFS=, '{k = $1 "," $2; if (k == pk && $3 == "2020-12-31") print $2, $1, $4 - prev; pk = k; prev = $4}' | sort -t, -k3,3nr | head -n 3
+```
+
+
+## `WITH`: naming a subquery
+
+Subqueries in `FROM`, like the window function queries above, get hard to read as they nest. (A subquery in `FROM`, the `( ... ) t` in those queries, is called a **derived table**.) `WITH` lets you write the inner query first and give it a name, a **common table expression** (CTE). After that, the name works like a table, for this one query only:
+
+```sql
+-- the top county per state from the window function section, written with WITH: read it top to bottom
+WITH ranked AS (
+  SELECT state, county, cases,
+         row_number() OVER (PARTITION BY state ORDER BY cases DESC) AS r
+  FROM covid WHERE date = '2020-12-31'
 )
-dbDisconnect(con)
+SELECT state, county, cases FROM ranked
+  WHERE r = 1 ORDER BY state LIMIT 3;                       -- Alabama Jefferson 52339, Alaska Anchorage 22820, Arizona Maricopa 322449
+-- a name can be used more than once: here in the outer query and in its subquery, so the date is written only once
+WITH dec31 AS (SELECT * FROM covid WHERE date = '2020-12-31')
+SELECT count(*) FROM dec31
+  WHERE cases > (SELECT avg(cases) FROM dec31);             -- 587, as in the subquery section
+-- names can build on each other, separated by commas: national totals per day, then the new cases per day
+WITH daily AS (
+  SELECT date, sum(cases) AS cases FROM covid GROUP BY date
+),
+new AS (
+  SELECT date, cases - lag(cases) OVER (ORDER BY date) AS new_cases FROM daily
+)
+SELECT date, new_cases FROM new
+  ORDER BY new_cases DESC NULLS LAST LIMIT 3;               -- 2020-12-11 280016, 2020-12-18 251190, 2020-12-16 244827
+-- a window can also be a range of rows around the current one: the 7-day moving average of the new cases
+WITH daily AS (
+  SELECT date, sum(cases) AS cases FROM covid GROUP BY date
+),
+new AS (
+  SELECT date, cases - lag(cases) OVER (ORDER BY date) AS new_cases FROM daily
+)
+SELECT date, new_cases,
+       round(avg(new_cases) OVER (ORDER BY date ROWS BETWEEN 6 PRECEDING AND CURRENT ROW)) AS week_avg
+  FROM new ORDER BY date DESC LIMIT 2;                      -- 2020-12-31 231024 188556, 2020-12-30 228949 183197
 ```
 
+The third query needs `NULLS LAST` because `lag()` has no previous row on the first day, so that day's `new_cases` is `NULL`, and `DESC` would sort it first. In the same way, `sum(new_cases) OVER (ORDER BY date)` (no `ROWS ...`) is a **running total**: the sum of all rows up to the current one.
+
+In the shell, the closest thing to a CTE is saving an intermediate result to a file, for example `awk -F, '$1=="2020-12-31"' covid.csv > dec31.csv`, and then using `dec31.csv` in the next commands. Pipes play the role of names that build on each other:
+
+```bash
+# daily: national totals per day; then new: the change from the previous day (lag)
+awk -F, 'NR>1 {d[$1] += $5} END {for (k in d) print k "," d[k]}' covid.csv | sort |
+  awk -F, -v OFS=, 'NR > 1 {print $1, $2 - prev} {prev = $2}' | sort -t, -k2,2nr | head -n 3   # 2020-12-11,280016 ...
+# the 7-day moving average: keep the last 7 new counts in an array, w[NR % 7], and average them
+awk -F, 'NR>1 {d[$1] += $5} END {for (k in d) print k "," d[k]}' covid.csv | sort |
+  awk -F, 'NR > 1 {new = $2 - prev; w[NR % 7] = new; n = (NR - 1 < 7 ? NR - 1 : 7); s = 0; for (i in w) s += w[i]; printf "%s,%d,%.0f\n", $1, new, s / n} {prev = $2}' | tail -n 2   # 2020-12-30,228949,183197 and 2020-12-31,231024,188556
 ```
-   user  system elapsed 
- ...        ...   0.03
-```
 
-0.03 seconds for all 20, about 1.5 ms each, compared with 19 seconds for Parquet: **roughly 600 times faster**. The index lets Postgres jump straight to the 50 matching rows instead of reading 44 million. Parquet is the better format for scanning entire columns (try adding up `cases` for the whole table: Parquet wins easily), and a database is the better tool for finding a few rows fast. Drop the big table when you are done: `DROP TABLE covid_big;`.
+## Changing the data: `INSERT`, `UPDATE` and `DELETE`
 
-## The database checks your data
-
-Try to add a row with a nonsense value:
+All the queries so far only *read*. Three more commands change the rows. Let's try them on a copy, so `covid` itself stays as it is. `CREATE TABLE ... AS SELECT` saves the answer of any query as a new table:
 
 ```sql
-INSERT INTO covid VALUES ('2021-01-01', 'Harris', 'Texas', '48201', 'N/A', 0);
--- ERROR:  invalid input syntax for type integer: "N/A"
+-- a new table holding the Texas rows (it is a real copy: later changes to covid do not reach it)
+CREATE TABLE texas AS SELECT * FROM covid WHERE state = 'Texas';   -- SELECT 67002
+-- INSERT adds rows; the values go in the order of the columns
+INSERT INTO texas VALUES ('2021-01-01', 'Harris', 'Texas', '48201', 239000, 3500);   -- INSERT 0 1
+-- or name the columns you give; the ones you leave out become NULL
+INSERT INTO texas (date, county, state, cases) VALUES ('2021-01-01', 'Dallas', 'Texas', 195000);   -- INSERT 0 1
+SELECT * FROM texas WHERE date = '2021-01-01';              -- the two new rows, Dallas with no fips and no deaths
+-- UPDATE changes the columns after SET, in every row its WHERE matches
+UPDATE texas SET deaths = 2400
+  WHERE county = 'Dallas' AND date = '2021-01-01';          -- UPDATE 1
+UPDATE texas SET county = 'Harris County'
+  WHERE county = 'Harris';                                  -- UPDATE 303: one command, every matching row
+-- DELETE removes every row its WHERE matches
+DELETE FROM texas WHERE date = '2021-01-01';                -- DELETE 2
+DELETE FROM texas WHERE county = 'Unknown';                 -- DELETE 1
+SELECT count(*) FROM texas;                                 -- 67001
+-- DROP TABLE removes the whole table
+DROP TABLE texas;
 ```
 
-A CSV would have accepted that line without complaint, and the problem would have appeared much later, in the middle of an analysis. A database refuses bad data at the door. Types are the simplest of its guarantees. Later you can add rules such as `NOT NULL`, `UNIQUE` and `CHECK`.
+After each command `psql` reports how many rows it touched (`UPDATE 303`, `DELETE 2`). Read that number every time. It is your only check that the `WHERE` matched what you meant.
 
-## Changing data
+::: {.callout-warning}
+## `UPDATE` and `DELETE` without `WHERE`
+`DELETE FROM texas;` deletes *every* row, and `UPDATE texas SET deaths = 0;` changes every row, with no question asked and no undo. Before you run one, run the same `WHERE` as a `SELECT count(*)` first, and check the number.
+:::
 
-Fixing one value touches only the rows you name:
+Compare this with Lab 3, Part 5: adding or deleting a single row of a Parquet file meant reading and rewriting the whole file. Here each command touches only the rows it names.
+
+### Changing the table itself: `ALTER TABLE`
+
+`INSERT`, `UPDATE` and `DELETE` change the rows. `ALTER TABLE` changes the *table*: its columns, their names and their types. Again on a copy, here of the whole table:
 
 ```sql
-UPDATE covid SET deaths = deaths + 1
+CREATE TABLE covid_copy AS SELECT * FROM covid;                          -- SELECT 884737
+\timing on
+-- ADD COLUMN: every existing row gets NULL in the new column
+ALTER TABLE covid_copy ADD COLUMN notes text;                             -- about 2 ms
+-- or a DEFAULT value instead of NULL, also in about 2 ms
+ALTER TABLE covid_copy ADD COLUMN reviewed boolean DEFAULT false;
+-- a new column is usually filled in with UPDATE
+ALTER TABLE covid_copy ADD COLUMN death_rate double precision;
+UPDATE covid_copy SET death_rate = deaths::float / cases WHERE cases > 0; -- UPDATE 884022, about 2 s: every row is rewritten
+-- RENAME COLUMN and DROP COLUMN
+ALTER TABLE covid_copy RENAME COLUMN death_rate TO cfr;                   -- about 2 ms
+ALTER TABLE covid_copy DROP COLUMN notes;                                 -- about 2 ms
+-- ALTER COLUMN ... TYPE: a bigger type, for when cases might pass 2 billion
+ALTER TABLE covid_copy ALTER COLUMN cases TYPE bigint;                    -- about 1.3 s
+-- text to integer has no automatic conversion
+ALTER TABLE covid_copy ALTER COLUMN fips TYPE integer;
+-- ERROR:  column "fips" cannot be cast automatically to type integer
+-- HINT:  You might need to specify "USING fips::integer".
+-- (USING fips::integer would work, but would turn '01001' into 1001: this is why fips is text)
+-- RENAME TO renames the table itself
+ALTER TABLE covid_copy RENAME TO covid_scratch;
+\timing off
+\d covid_scratch
+DROP TABLE covid_scratch;
+```
+
+Adding, renaming or dropping a column takes a few milliseconds whatever the size of the table, because Postgres only changes its description of the table (what `\d` prints). It does not touch the rows. A dropped column is just hidden, and its space is reclaimed later as the rows are rewritten. Changing a column's type is different: every value must be converted, so the whole table is rewritten, and it takes about as long as the `UPDATE` does.
+
+Compare this with Parquet. A Parquet file stores each column separately, but its metadata and row groups are written once, so even adding a column means writing a new file. With a table split over thousands of Parquet files, adding one column means rewriting every one of them.
+
+## Views: naming a query for good
+
+A CTE's name lasts for one query. A **view** is a named query *saved in the database*: every later query, in any session, from `psql`, R or Python, can use it like a table, until you remove it.
+
+```sql
+-- the dec31 CTE from above, saved once
+CREATE VIEW dec31 AS SELECT * FROM covid WHERE date = '2020-12-31';
+-- now it works in any query, without repeating the WITH
+SELECT count(*) FROM dec31;                                 -- 3245
+SELECT county, cases FROM dec31
+  WHERE state = 'Texas' ORDER BY cases DESC LIMIT 1;        -- Harris 237727
+-- \d+ shows the saved query behind it
+\d+ dec31
+```
+
+A view stores **no data**. It is only the saved `SELECT`, and every query against the view runs it again. So the view is always current. Change a row of `covid` with `UPDATE` and the view shows the change at once:
+
+```sql
+UPDATE covid SET cases = cases + 1
+  WHERE state = 'Texas' AND county = 'Harris' AND date = '2020-12-31';
+SELECT county, cases FROM dec31
+  WHERE state = 'Texas' ORDER BY cases DESC LIMIT 1;        -- Harris 237728
+-- put it back
+UPDATE covid SET cases = cases - 1
   WHERE state = 'Texas' AND county = 'Harris' AND date = '2020-12-31';
 ```
 
-A database does not care where a row "goes": it writes the change into free space and updates its index, which takes a fraction of a millisecond. Compare that with rewriting a 35 GB Parquet file. You can also wrap several changes in a **transaction** (`BEGIN; ... COMMIT;`), and either all of them happen or none of them do. If the machine crashes halfway through, the database recovers to a consistent state.
+A **materialized view** does store the answer, like a table. Reading it is fast, but it does not see later changes until you refresh it:
 
-## Using the database from the shell
-
-You do not need the interactive prompt. `psql -c` runs one statement, and the output can feed straight back into the pipes you already know:
-
-```bash
-psql lec04 -c "SELECT count(*) FROM covid"
-psql lec04 -At -c "SELECT county FROM covid WHERE state='Utah'" | sort -u
-psql lec04 -c "\copy (SELECT * FROM covid WHERE state='Utah') \
-  TO 'utah.csv' CSV HEADER"
+```sql
+CREATE VIEW daily AS
+  SELECT date, sum(cases) AS cases FROM covid GROUP BY date;
+CREATE MATERIALIZED VIEW daily_m AS
+  SELECT date, sum(cases) AS cases FROM covid GROUP BY date;
+\timing on
+SELECT max(cases) FROM daily;                               -- 20024801, about 70 ms: the GROUP BY runs again
+SELECT max(cases) FROM daily_m;                             -- 20024801, under 1 ms: it only reads the 346 saved rows
+-- after an UPDATE to covid, daily is current at once, but daily_m is out of date until
+REFRESH MATERIALIZED VIEW daily_m;                          -- runs the query again and saves the new answer
+\timing off
 ```
 
-`-A` turns off the table formatting and `-t` removes headers and footers, which leaves plain lines for `sort`, `wc` and friends. The last line goes the other way and writes the result of a query out as a CSV.
+Views are used everywhere in practice:
 
-## What did you install?
+* **Data warehouses and analytics teams.** The most popular modern tool for analytics pipelines, **dbt**, is largely a system for writing `SELECT` statements that it saves as views or tables. Analysts at many companies spend their days building views on top of views: raw data, then cleaned, then business-ready.
+* **Dashboards and BI tools.** Tableau, Power BI, Looker and Metabase are usually pointed at views, not raw tables, so the logic sits in one place in the database instead of being copied into every report.
+* **A stable name to hand to others.** R, Python or a colleague can query `dec31` without knowing how it is built.
+* **Security.** "Analysts may see these columns, or only their region's rows" is very often enforced by giving people access to a view instead of the table, for example `CREATE VIEW patients_public AS SELECT visit_date, age FROM patients`, which leaves out `name` (Lab 3, scenario (b)). Giving the access itself is done with `GRANT`, for a later lecture.
+* **Keeping old code working.** When a table is restructured, a view with the old name and shape lets existing queries keep running.
+* **Materialized views** are the standard fix when a dashboard query is too slow to run on every page load.
 
-Postgres is a lot of software. Add it up, with `du` ("disk usage") for the program files and the database itself for your data:
+They also have their usual problems:
 
-```bash
-du -ch /usr/lib/postgresql /usr/share/postgresql | tail -n 1   # the program
-psql -At -c "SELECT pg_size_pretty(sum(pg_database_size(datname)))
-             FROM pg_database"                          # all your data
+* **Hidden cost.** A view looks like a cheap table, but every query re-runs it. Views built on views built on views can hide a slow query several layers down.
+* **They lock the tables underneath.** You often cannot change a column while a view uses it:
+
+```sql
+ALTER TABLE covid ALTER COLUMN cases TYPE bigint;
+-- ERROR:  cannot alter type of a column used by a view or rule
+-- DETAIL:  rule _RETURN on view dec31 depends on column "cases"
 ```
 
-`du -c` adds a grand total at the end and `tail -n 1` keeps only that line. On Ubuntu the program is about 50 MB. (On a Mac with Homebrew, use `du -shL "$(brew --prefix postgresql@18)"`.) The `covid` table alone took about 63 MB with its index, almost twice the 35 MB CSV.
+The shell has no real equivalent. The closest to a view is a saved script (or a shell function), which runs the whole pipeline again every time you call it and so is always current. A file you wrote once, such as `awk -F, '$1=="2020-12-31"' covid.csv > dec31.csv`, is like a materialized view: fast to read, but stale as soon as `covid.csv` changes.
 
-That is a lot of space for a program whose job is to store rows. But look at what it bought you in this unit:
+Clean up:
 
-- **Speed:** the same question went from scanning every row (about 70 ms here, and growing with the table) to under 1 ms with an index, and that stays true as the table grows.
-- **Correctness:** typed columns refused `'N/A'` as a number, and rules such as `NOT NULL` and `UNIQUE` can refuse other nonsense when it arrives.
-- **Safe changes:** single-row updates and transactions that happen completely or not at all, even if the machine crashes.
-- **Many users at once:** many programs reading and writing the same tables at once without corrupting them.
-- **A query language** instead of one-off shell pipelines: SQL, with joins, grouping and sorting, and a planner that picks how to run each query.
-
-PostgreSQL grew out of research at Berkeley in the 1980s and has had decades of engineering since. Nobody would write all of that again for one analysis. That is why it is worth the space: you get it for free, and it is already installed.
-
-## Clean up
-
-```bash
-dropdb lec04                     # delete the whole database
+```sql
+DROP VIEW dec31;
+DROP VIEW daily;
+DROP MATERIALIZED VIEW daily_m;
 ```
 
-::: {.callout-tip}
-## Try it
-1. Find the five counties with the highest `deaths` on 2020-12-31, as a single SQL statement (`ORDER BY` and `LIMIT`). Your first attempt will probably list counties with *no* number at all. Some rows in the CSV have an empty `deaths`, which the database stores as `NULL`, and `ORDER BY ... DESC` puts `NULL` first. Fix it with `NULLS LAST`.
-2. Time the query "maximum `cases` in Harris, Texas" with and without the index (`DROP INDEX` to remove it). Then do the same with `awk` on the CSV. How many times faster is the indexed query?
-3. Load the CSV again into a second table, but declare `cases` as `text`. What changes, and which of the queries above breaks or gives wrong answers? (Try `max(cases)`: as text, `'9999'` sorts after `'237727'`.)
-:::
+## Other topics
 
+1. ALTER TABLE: changing a table that already exists, with ADD COLUMN, DROP COLUMN, RENAME COLUMN and ALTER COLUMN ... TYPE. Lab03 scenario (f) asks about adding a column to a table split across 10,000 Parquet files. In Postgres it's one quick command, which makes a nice contrast. The views section also already shows ALTER COLUMN ... TYPE failing.
+2. Constraints and the primary key: NOT NULL, UNIQUE, CHECK (cases >= 0), DEFAULT and especially PRIMARY KEY. lec05's "The database checks your data" only names them. A primary key on (date, state, county) would show both refusing duplicate rows and getting an index for free. You'll also need it for joins later, since a foreign key points at a primary key.
+3. NULL helpers: coalesce(deaths, 0) replaces a NULL with a default, and NULLIF(cases, 0) avoids dividing by zero. The death-rate query would fail with "division by zero" on any county with 0 cases if the cases >= 1000 filter were removed. Students will hit both in practice.
+4. Random samples: ORDER BY random() LIMIT 1000, or the much faster TABLESAMPLE SYSTEM (1) for large tables. For a statistics course about big data, "take a random sample of rows" is one of the most useful queries there is, and it's missing.
+5. Date arithmetic: date - 7, date - interval '1 month', date_trunc('week', date), current_date. We have extract but not arithmetic or truncation, which are what grouping by week or month really need.
 
-This section was moved here from Lecture 3 so that it is taught once we have access to a remote machine. (The data lake section that used to be here is now in Lecture 13, `lec13_data_lakes_nosql_ethics.qmd`.)
+Smaller things, one line each:
+- ILIKE for case-insensitive LIKE, and ~ for regular expressions, which matches awk's ~ exactly.
+- String functions: lower, upper, length, substr, trim.
+- INSERT ... ON CONFLICT DO UPDATE ("upsert": insert, or update if the row already exists). It needs a UNIQUE constraint or primary key, so it belongs after point 2.
+- RETURNING: DELETE ... RETURNING * shows the rows that were just removed.
+- TRUNCATE: empty a table instantly, keeping its definition.
+- FETCH FIRST 1 ROWS WITH TIES: the standard way to get top-N rows with ties. That's a cleaner answer to the tie problem in the subquery section.
+- Quoted identifiers: "Column Name" for columns with spaces or capitals, which come up when loading CSVs made by others.

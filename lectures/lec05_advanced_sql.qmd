@@ -20,79 +20,159 @@ cp ../lec01/covid.csv .
 ls -alh
 ```
 
-# Logging in with keys and `~/.ssh/config`
+Talk through the `setup_docs/04_setup_ssh.qmd` document here.
 
-## Making your life logging in easier
+# `tmux` on the server: keep your work alive
 
-Typing a password each time gets tedious. A **key pair** replaces it: you create a private key that stays on your computer and a public key that you give to the server:
-
-```bash
-#ssh-keygen -t ed25519    # make the key pair, once (you've done this already for github)
-ssh-copy-id user@server  # install your public key on the server
-ssh user@server          # now logs in without a password
-```
-
-## `~/.ssh/` configuration files
-
-The folder `~/.ssh/` in your home folder holds the configuration files for `ssh`: your keys, your settings, and the servers you know. Take a look:
-
-```bash
-ls ~/.ssh/
-```
-
-Yours will show some of these:
-
-+--------------------+----------------------------------------------------------------------+-------------------------+
-| File               | What it is                                                           | Share it?               |
-+====================+======================================================================+=========================+
-| `id_ed25519`       | your default **private key**, made by `ssh-keygen -t ed25519`        | **never**               |
-+--------------------+----------------------------------------------------------------------+-------------------------+
-| `id_ed25519.pub`   | its **public key**, the line `ssh-copy-id` installs on servers       | yes - grants access     |
-+--------------------+----------------------------------------------------------------------+-------------------------+
-| `myserver_key`     | an extra **private key**, made for one particular server             | **never**               |
-+--------------------+----------------------------------------------------------------------+-------------------------+
-| `myserver_key.pub` | its public key                                                       | yes - grants access     |
-+--------------------+----------------------------------------------------------------------+-------------------------+
-| `myserver_key.ppk` | the same private key in the format of PuTTY, a Windows `ssh` program | **never**               |
-+--------------------+----------------------------------------------------------------------+-------------------------+
-| `config`           | your `ssh` settings, such as short names for servers (below)         | not secret, but private |
-+--------------------+----------------------------------------------------------------------+-------------------------+
-| `known_hosts`      | the fingerprint of every server you have connected to                | not secret              |
-+--------------------+----------------------------------------------------------------------+-------------------------+
-| `known_hosts.old`  | a backup made when an entry is removed from `known_hosts`            | not secret              |
-+--------------------+----------------------------------------------------------------------+-------------------------+
-
-`ssh` uses `id_ed25519` automatically. Any other key you name with `-i` or with an `IdentityFile` line in `config`. Some people make a separate key pair for each server, so that they can withdraw one without touching the others.
-
-`known_hosts` protects you from impostors. The first time you connect to a server, `ssh` asks `Are you sure you want to continue connecting?`. If you answer `yes`, it saves the server's fingerprint here. On every later login it checks that the server shows the same fingerprint. If not, it stops with a loud `REMOTE HOST IDENTIFICATION HAS CHANGED` warning, because someone may be pretending to be the server. (The usual innocent cause is a server that was reinstalled. Then `ssh-keygen -R server` removes the old entry and saves the backup `known_hosts.old`.)
-
-Public keys are like deadbolt locks (and the private key is the key). You can share the public key. Anyone is allowed to install your deadbolt on any door allowing you access.
-
-## `~/.ssh/config`: give the server a short name
-
-The Moriah command is long to type every time. Put the details in the file `~/.ssh/config` on your own computer (create it if it is not there), using your own login in place of `kapelner`:
-
-```bash
-cat >> ~/.ssh/config <<'EOF'
-Host moriah
-    HostName moriah-gw.cs.huji.ac.il
-    User kapelner
-    ProxyJump kapelner@bava.cs.huji.ac.il
-EOF
-cat ~/.ssh/config                # check it
-```
-
-`cat >> file <<'EOF'` appends every line up to `EOF` to the end of the file, and creates the file if it is not there yet. Use `>>` and not `>`, which would wipe any settings already in the file.
-
-`Host` is the short name you choose. `HostName` is the real address, `User` is your login, and `ProxyJump` is the same jump as `-J`. Now this is all you type:
+This is what `tmux` from Lecture 2 is for. Start it *on the server*, right after you log in, and run your long job inside it:
 
 ```bash
 ssh moriah
+tmux new -s analysis             # a session on the server
+Rscript long_job.R               # start the long job
+# Ctrl+B then D : detach
+exit                             # log out; the job keeps running
 ```
 
-The short name works everywhere `ssh` is used underneath, including `ssh-copy-id`, and `scp` and `rsync` from Lecture 4. To log in to Moriah without passwords, install your key on both machines, because each hop checks it:
+Close your laptop, lose your Wi-Fi, go home. Later:
 
 ```bash
-ssh-copy-id kapelner@bava.cs.huji.ac.il   # the gateway
-ssh-copy-id moriah                        # the cluster
+ssh moriah
+tmux ls                          # analysis: 1 windows ...
+tmux attach -t analysis          # back where you left off, output and all
 ```
+
+The session lives on the server, not on your laptop, so it survives a dropped `ssh` connection as well as a deliberate logout.
+
+`nohup` from Lecture 2 also works for this but `tmux` is the safer choice where the job's terminal belongs to the `tmux` session, which never goes away when you log out. Neither one comes with a guarantee. A remote server is not your machine: the system administrator is in control and can kill anything they want. They may set the server to kill all of your processes when you log out, `tmux` included, or kill any job that runs too long or uses too much memory on a shared login machine. Read your server's rules, and on a cluster put long jobs in the "scheduler", which is what it is there for. We will return to the scheduler later (on moriah they use a program called SLURM).
+
+Make it a habit: whenever you `ssh` in to do something that takes more than a minute, start or attach to a `tmux` session first.
+
+# Using Postgres on Moriah
+
+Log into moriah and try `psql`. You will most likely get `command not found`. A cluster serves hundreds of users who need different programs, and often different versions of the same program, so most software is installed side by side and switched off until you ask for it. The `module` command does the asking. First search for what is available:
+
+```bash
+ssh -J kapelner@bava.cs.huji.ac.il kapelner@moriah-gw.cs.huji.ac.il
+psql #fails
+```
+
+This gives
+
+```
+psql: error: connection to server at "*" (127.0.0.1), port 5432 failed: Connection refused
+        Is the server running on that host and accepting TCP/IP connections?
+```
+
+We need to "load" it on the server:
+
+```bash
+module spider postgres           # every Postgres version installed here
+module spider postgres/17        # details about one version
+```
+
+`module spider` only *searches*. To actually use a version, load it:
+
+```bash
+module load postgres/17          # adds psql and friends to your PATH
+which psql                       # now found
+psql --version
+```
+
+A loaded module lasts only until you log out, and the next login starts clean again. To load it every time, put the line into `~/.bashrc` on Moriah, which bash runs at the start of every session. Then `source` the file, which runs it in the current shell, so you do not have to log out and back in:
+
+```bash
+echo 'module load postgres/17' >> ~/.bashrc   # >> appends; > would wipe the file
+source ~/.bashrc
+```
+
+From now on Postgres is there every time you log in, and you never need to think about this whole `module` thing ever again.
+
+## The database checks your data
+
+Try to add a row with a nonsense value:
+
+```sql
+INSERT INTO covid VALUES ('2021-01-01', 'Harris', 'Texas', '48201', 'N/A', 0);
+-- ERROR:  invalid input syntax for type integer: "N/A"
+```
+
+A CSV would have accepted that line without complaint, and the problem would have appeared much later, in the middle of an analysis. A database refuses bad data at the door. Types are the simplest of its guarantees. Later you can add rules such as `NOT NULL`, `UNIQUE` and `CHECK`.
+
+## Changing data
+
+Fixing one value touches only the rows you name:
+
+```sql
+UPDATE covid SET deaths = deaths + 1
+  WHERE state = 'Texas' AND county = 'Harris' AND date = '2020-12-31';
+```
+
+A database does not care where a row "goes": it writes the change into free space and updates its index, which takes a fraction of a millisecond. Compare that with rewriting a 35 GB Parquet file. You can also wrap several changes in a **transaction** (`BEGIN; ... COMMIT;`), and either all of them happen or none of them do. If the machine crashes halfway through, the database recovers to a consistent state.
+
+
+
+## What did you install?
+
+Postgres is a lot of software. Add it up, with `du` ("disk usage") for the program files and the database itself for your data:
+
+```bash
+du -ch /usr/lib/postgresql /usr/share/postgresql | tail -n 1   # the program
+psql -At -c "SELECT pg_size_pretty(sum(pg_database_size(datname)))
+             FROM pg_database"                          # all your data
+```
+
+`du -c` adds a grand total at the end and `tail -n 1` keeps only that line. On Ubuntu the program is about 50 MB. (On a Mac with Homebrew, use `du -shL "$(brew --prefix postgresql@18)"`.) The `covid` table alone took about 63 MB with its index, almost twice the 35 MB CSV.
+
+That is a lot of space for a program whose job is to store rows. But look at what it bought you in this unit:
+
+- **Speed:** the same question went from scanning every row (about 70 ms here, and growing with the table) to under 1 ms with an index, and that stays true as the table grows.
+- **Correctness:** typed columns refused `'N/A'` as a number, and rules such as `NOT NULL` and `UNIQUE` can refuse other nonsense when it arrives.
+- **Safe changes:** single-row updates and transactions that happen completely or not at all, even if the machine crashes.
+- **Many users at once:** many programs reading and writing the same tables at once without corrupting them.
+- **A query language** instead of one-off shell pipelines: SQL, with joins, grouping and sorting, and a planner that picks how to run each query.
+
+PostgreSQL grew out of research at Berkeley in the 1980s and has had decades of engineering since. Nobody would write all of that again for one analysis. That is why it is worth the space: you get it for free, and it is already installed.
+
+## Why is the table bigger than the CSV?
+
+The `covid` table alone is 57 MB, bigger than the CSV and far bigger than the Parquet file of Lecture 3. Postgres stores each row in a way built for *changing* it, while Parquet is built for *storing* it compactly:
+
++----------------+----------+----------------+
+| Format         | Size     | Per row        |
++================+==========+================+
+| CSV            | 35.9 MB  | about 40 bytes |
++----------------+----------+----------------+
+| Parquet (zstd) | ~3.3 MB  | about 4 bytes  |
++----------------+----------+----------------+
+| Postgres table | 57 MB    | about 67 bytes |
++----------------+----------+----------------+
+
+Postgres is bigger than the CSV because of overhead that every row pays:
+
+* **A row header of about 24 bytes.** It holds the ID of the transaction that created the row and of the one that deleted it (`xmin` and `xmax`), plus some flags. That is how Postgres lets many people read and write at once, and how it undoes a failed transaction: each reader checks those IDs to decide whether it should see the row.
+* **A 4-byte pointer to each row**, stored at the top of its page.
+* **Padding.** Values are aligned to 4- or 8-byte boundaries, so some bytes between columns sit empty.
+
+That is about 28 bytes per row before any data, or roughly 25 MB of the 57. The data itself is actually *smaller* than in the CSV: a date takes 4 bytes instead of 10 characters, and `cases` takes 4 bytes instead of up to 6 digits. The overhead outweighs that saving.
+
+Parquet is so much smaller for three reasons:
+
+* **Columns, not rows.** All 884,737 states sit next to each other, so dictionary encoding stores "Texas" once plus a small code per row (Lecture 3).
+* **Compression.** zstd squeezes the already-encoded columns further. Postgres does not compress ordinary rows at all; it only compresses single values larger than about 2 KB.
+* **No per-row overhead.** No header, no pointer, no padding.
+
+So the 57 MB is the price of the database's features. The row header is what lets `UPDATE` change one row without rewriting the file, and what lets a transaction happen fully or not at all. Parquet has none of that, which is exactly the pain you felt in Lab 3, Part 5: adding one row rewrites the whole file.
+
+## Clean up
+
+```bash
+dropdb lec04                     # delete the whole database
+```
+
+::: {.callout-tip}
+## Try it
+1. Find the five counties with the highest `deaths` on 2020-12-31, as a single SQL statement (`ORDER BY` and `LIMIT`). Your first attempt will probably list counties with *no* number at all. Some rows in the CSV have an empty `deaths`, which the database stores as `NULL`, and `ORDER BY ... DESC` puts `NULL` first. Fix it with `NULLS LAST`.
+2. Time the query "maximum `cases` in Harris, Texas" with and without the index (`DROP INDEX` to remove it). Then do the same with `awk` on the CSV. How many times faster is the indexed query?
+3. Load the CSV again into a second table, but declare `cases` as `text`. What changes, and which of the queries above breaks or gives wrong answers? (Try `max(cases)`: as text, `'9999'` sorts after `'237727'`.)
+:::
