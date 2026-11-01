@@ -33,9 +33,7 @@ I'm assuming your private github repository for this class (as set up in `setup/
 export my_52002_repo="$HOME/workspace/HUJI_52002_Fall_2026"
 ```
 
-Create a directory for this assignment, download this file and move it into `$my_52002_repo/labs/04/`. As in the previous labs, commit / push after chunks of work; the timestamp of your final push is your submission date.
-
-Create a scratch folder for this lab and move into it (the `scratch` line you added to `.gitignore` in Lab 1 keeps it out of git). Then copy the covid data into it:
+Create a directory for this assignment, download this file and move it into `$my_52002_repo/labs/04/`. As in the previous labs, commit / push after chunks of work; the timestamp of your final push is your submission date. Create a scratch folder for this lab and move into it (the `scratch` line you added to `.gitignore` in Lab 1 keeps it out of git). Then copy the covid data into it:
 
 ```bash
 mkdir -p $my_52002_repo/labs/04/scratch
@@ -45,12 +43,26 @@ cd $my_52002_repo/labs/04/scratch
 
 # Part 1: Logging in with `ssh`
 
-Log in to Moriah from your laptop, with your own login in place of `user` (you will be asked for a one-time code and then for your password):
+Log in to Moriah from your laptop, with your own login in place of the two `user` placeholders. Enter your OTP and your password.
 
 ```bash
 ssh -J user@bava.cs.huji.ac.il user@moriah-gw.cs.huji.ac.il
+```
+
+If you setup your machine using the instructions found in `04_setup_fast_ssh.qmd`, you will use simply the following instead
+
+```bash
+ssh moriah
+```
+
+and you will only need one OTP every four hours and no password (your keys are used in lieu).
+
+Now run the following:
+
+```bash
 hostname
 whoami
+cd ~
 pwd
 nproc
 free -h
@@ -59,72 +71,30 @@ exit
 
 Now run the same `hostname`, `pwd`, `nproc` and `free -h` on your laptop (a Mac has no `free`: use `sysctl -n hw.memsize`, which is in bytes).
 
-#TODO [the output of the commands on the two machines. How many cores and how much memory does Moriah's login machine have compared to your laptop? <1pts>]
+#TODO [How many cores and how much memory does Moriah's login machine have compared to your laptop? <1pts>]
+#TODO [Why is the `pwd` different on Moriah vs your laptop? <1pts>]
 #TODO [why can't you just `ssh` straight to `moriah-gw` from home? What is the name for a machine like `bava`? <1pts>]
-#TODO [can `bava` read what you type on `moriah-gw`? Why or why not? <1pts>]
 
-**A short name.** Put the details in the file `~/.ssh/config` on your laptop, as in the lecture, so that `ssh moriah` is all you need to type:
-
-```
-#TODO [the contents of your ~/.ssh/config <1pts>]
-```
-
-**Keys.** You made a key pair when you set up GitHub, so don't make a new one (`ls ~/.ssh` will show `id_ed25519` and `id_ed25519.pub`). Install the public key:
-
-```bash
-#TODO [the two commands which install your public key on both of the machines <1pts>]
-ssh moriah hostname
-```
-
-#TODO [why do you have to install the key on both machines? <1pts>]
-#TODO [which of the two key files went to the server? Why is it OK to hand that one out, but not the other? <1pts>]
-
-**One command at a time.** You can run a command on the server without staying there. Run these two from your laptop, and first predict how the outputs differ:
-
-```bash
-ssh moriah "echo $HOME"
-ssh moriah 'echo $HOME'
-```
-
-#TODO [what did each print? Who replaced `$HOME` by its value in each of the two lines, and why are they different? <2pts>]
-
-# Part 2: Moving files with `scp` and `rsync`
+# Part 2: Moving files with `rsync`
 
 All of these commands are run **on your laptop**, in `labs/04/scratch`. First make a folder on the server, without logging in:
 
 ```bash
 cd $my_52002_repo/labs/04/scratch
-#TODO [one line command, run on your laptop, which makes the folder lab04 in your home directory on Moriah <1pts>]
+#TODO [login to moriah and make the folder lab04 in your home directory <1pts>]
 ```
 
-**`scp`.** Send the data over and check that it arrived whole. `md5sum` prints a *checksum*, a short code computed from all of the bytes of a file, so two equal codes mean two equal files (on a Mac, use `md5 covid.csv` for the first line):
+Send the data over and check that it arrived whole. `md5sum` prints a *checksum*, a short code computed from all of the bytes of a file (we will dicussing this more formally when we do hash functions), so two equal codes mean two equal files (on a Mac, use `md5 covid.csv` for the first line):
 
 ```bash
 md5sum covid.csv
-time #TODO [the scp command which copies covid.csv to the lab04 folder on Moriah <1pts>]
-ssh moriah "md5sum ~/lab04/covid.csv"
+time #TODO [the rsync command which copies covid.csv to the lab04 folder on Moriah <1pts>]
+#TODO [login to moriah and run "md5sum ~/lab04/covid.csv" <1pts>]
 ```
 
-#TODO [how long did it take, and do the two checksums agree? <1pts>]
+#TODO [how long did the `rsync` transfer take, and do the two checksums agree? <1pts>]
 
-Do the work on the server and bring back only the result:
-
-```bash
-ssh moriah "cd ~/lab04 && grep Texas covid.csv > texas.csv"
-#TODO [the scp command which copies texas.csv from Moriah to this folder <1pts>]
-ls -alh texas.csv
-```
-
-What happens if you forget the colon? Predict first, and then run:
-
-```bash
-scp texas.csv moriah
-ls -l moriah
-```
-
-#TODO [what did this do, and why? What should you run to clean it up? <1pts>]
-
-**`rsync`.** Make a folder of many small files, one per day, the same way you did in Lab 2:
+Make a folder of many small files, one per day, the same way you did in Lab 2:
 
 ```bash
 mkdir days
@@ -132,59 +102,21 @@ awk -F, 'NR>1 {print > ("days/" $1 ".csv")}' covid.csv
 ls days | wc -l
 ```
 
-Copy it with `scp`, twice:
-
-```bash
-time scp -r -q days moriah:~/lab04/days_scp
-time scp -r -q days moriah:~/lab04/days_scp
-```
-
-Now copy it with `rsync`, twice:
+Copy the entire folder with `rsync`, twice:
 
 ```bash
 time rsync -a --stats days/ moriah:~/lab04/days_rsync/
 time rsync -a --stats days/ moriah:~/lab04/days_rsync/
 ```
 
-#TODO [the four times. Which of the second runs was much faster, and why? <2pts>]
+#TODO [Why was the second `rsync` run so much faster? <2pts>]
 #TODO [the `--stats` output has a line "Total bytes sent". What was it in each of the two rsync runs? <1pts>]
-
-Change one file, and predict what `rsync` will send before you run it:
-
-```bash
-echo "2020-06-15,Fake,Texas,99999,1,0" >> days/2020-06-15.csv
-rsync -av days/ moriah:~/lab04/days_rsync/
-```
-
-#TODO [which files were sent? How did `rsync` find out, without you telling it? <1pts>]
-
-The trailing slash matters. Look at the plans of these two commands; neither one copies anything:
-
-```bash
-rsync -avn days/ moriah:~/lab04/slash_test/ | head -n 5
-rsync -avn days moriah:~/lab04/slash_test/ | head -n 5
-```
-
-#TODO [what does `-n` do? In which folder would the file `2020-06-15.csv` end up on Moriah in each of the two commands? <2pts>]
-
-`-z` compresses while sending. Try it on a text file and on a file that is already compressed:
-
-```bash
-rsync -av --stats covid.csv moriah:~/lab04/plain.csv | grep "bytes sent"
-rsync -avz --stats covid.csv moriah:~/lab04/zipped.csv | grep "bytes sent"
-xz -k covid.csv
-rsync -av --stats covid.csv.xz moriah:~/lab04/plain.xz | grep "bytes sent"
-rsync -avz --stats covid.csv.xz moriah:~/lab04/zipped.xz | grep "bytes sent"
-```
-
-#TODO [the four numbers. For which file did `-z` help, for which did it not, and why? <2pts>]
-#TODO [your Wi-Fi drops 90% of the way through copying a 200 GB file. Which of `scp` and `rsync` would you have wanted to use, with which option, and why? <1pts>]
 
 Clean up on both sides:
 
 ```bash
-rm -r days moriah texas.csv covid.csv.xz
-ssh moriah "cd ~/lab04 && rm -r days_scp days_rsync plain.csv zipped.csv plain.xz zipped.xz texas.csv; ls -alh"
+rm -r days 
+# TODO [login to moriah and cleanup covid.csv and the days/ folder]
 ```
 
 # Part 3: Looking at processes with `ps` and `pgrep`
@@ -192,7 +124,7 @@ ssh moriah "cd ~/lab04 && rm -r days_scp days_rsync plain.csv zipped.csv plain.x
 From here to the end of the lab, everything is done on Moriah (unless it says otherwise):
 
 ```bash
-ssh moriah
+#TODO [login to moriah <0pts>]
 cd ~/lab04
 ```
 

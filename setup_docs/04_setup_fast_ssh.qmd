@@ -70,7 +70,7 @@ Host moriah
     User kapelner
     ProxyJump kapelner@bava.cs.huji.ac.il
 EOF
-cat ~/.ssh/config                # check it
+cat ~/.ssh/config # check it - you should see Host github.com ...<3 tabbed lines>... Host moriah ...<3 tabbed lines>...
 ```
 
 `Host` is the short name you choose. `HostName` is the real address, `User` is your login, and `ProxyJump` is the same jump as `-J`. Now this is all you type:
@@ -79,9 +79,40 @@ cat ~/.ssh/config                # check it
 ssh moriah
 ```
 
-The short name works everywhere `ssh` is used underneath, including `ssh-copy-id`, and `scp` and `rsync` from Lecture 4. To log in to Moriah without passwords, install your key on both machines, because each hop checks it:
+The short name works everywhere `ssh` is used underneath, including `ssh-copy-id`, and `scp` and `rsync` from Lecture 4. To log in to Moriah without its password, install your key there:
 
 ```bash
-ssh-copy-id kapelner@bava.cs.huji.ac.il   # the gateway
-ssh-copy-id moriah                        # the cluster
+ssh-copy-id moriah
 ```
+
+You still type the one-time password (OTP) for `bava`. This command will ask for at least three OTPs, because it makes three separate connections through `bava`: one to read which version of `ssh` Moriah runs, one to check whether your key is already installed there, and one to install it (this last one also asks for your Moriah password). Make sure you wait for a new OTP code for each prompt.
+
+Do not run `ssh-copy-id` on `bava` itself: your account there only forwards connections and has no shell, so it stops with `This account is currently not available` and installs nothing.
+
+Now we make our lives even easier by asking the `bava` to persist for the next four hours:
+
+```bash
+cat >> ~/.ssh/config <<'EOF'
+Host bava.cs.huji.ac.il
+    User kapelner
+    ControlMaster auto
+    ControlPath ~/.ssh/cm-%r@%h-%p
+    ControlPersist 4h
+EOF
+```
+
+and let's enter the OTP once
+
+```bash
+ssh moriah
+exit
+```
+
+and try again to ssh in:
+
+```bash
+ssh moriah
+```
+
+And voila! No OTP and no password required!!!
+
