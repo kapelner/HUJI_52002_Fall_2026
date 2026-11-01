@@ -1,6 +1,6 @@
 # HUJI 52002 Big Data Algorithms & Data Mining Fall 2026
 
-This is the course homepage for Math 52002 (and Masters level 52019) at Hebrew University of Jerusalem taught by Professor Adam Kapelner. The course syllabus can be found [here](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/syllabus/syllabus.pdf). We use this [discord channel](https://discord.com/channels/1556341692754567288) for class announcements and discussions. 
+This is the course homepage for Math 52002 (and mains level 52019) at Hebrew University of Jerusalem taught by Professor Adam Kapelner. The course syllabus can be found [here](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/syllabus/syllabus.pdf). We use this [discord channel](https://discord.com/channels/1556341692754567288) for class announcements and discussions. 
 
 ## Setting up your Computer
 
@@ -10,18 +10,18 @@ There are heavy tech requirements for this class. I have tried to make a complet
 
 None released yet
 <!-- 
-* [Lab 12, due Oct 17 23:59](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/master/labs/lab11.qmd) pushed to your github repo 
-* [Lab 11, due Oct 17 23:59](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/master/labs/lab11.qmd) pushed to your github repo 
-* [Lab 10, due Oct 17 23:59](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/master/labs/lab10.qmd) pushed to your github repo
-* [Lab 9, due Oct 17 23:59](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/master/labs/lab09.qmd) pushed to your github repo
-* [Lab 8, due Oct 17 23:59](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/master/labs/lab08.qmd) pushed to your github repo
-* [Lab 7, due Oct 17 23:59](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/master/labs/lab07.qmd) pushed to your github repo
-* [Lab 6, due Oct 17 23:59](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/master/labs/lab06.qmd) pushed to your github repo
-* [Lab 5, due Oct 17 23:59](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/master/labs/lab05.qmd) pushed to your github repo
-* [Lab 4, due Oct 17 23:59](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/master/labs/lab04.qmd) pushed to your github repo-->
-* [Lab 3, due Nov 6  15:59](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/master/labs/lab03.qmd) pushed to your github repo
-* [Lab 2, due Oct 30 16:59](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/master/labs/lab02.qmd) pushed to your github repo
-* [Lab 1, due Oct 21 23:59](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/master/labs/lab01.qmd) pushed to your github repo
+* [Lab 12, due Oct 17 23:59](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/labs/lab11.qmd) pushed to your github repo 
+* [Lab 11, due Oct 17 23:59](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/labs/lab11.qmd) pushed to your github repo 
+* [Lab 10, due Oct 17 23:59](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/labs/lab10.qmd) pushed to your github repo
+* [Lab 9, due Oct 17 23:59](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/labs/lab09.qmd) pushed to your github repo
+* [Lab 8, due Oct 17 23:59](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/labs/lab08.qmd) pushed to your github repo
+* [Lab 7, due Oct 17 23:59](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/labs/lab07.qmd) pushed to your github repo
+* [Lab 6, due Oct 17 23:59](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/labs/lab06.qmd) pushed to your github repo
+* [Lab 5, due Oct 17 23:59](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/labs/lab05.qmd) pushed to your github repo
+* [Lab 4, due Oct 17 23:59](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/labs/lab04.qmd) pushed to your github repo-->
+* [Lab 3, due Nov 6  15:59](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/labs/lab03.qmd) pushed to your github repo
+* [Lab 2, due Oct 30 16:59](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/labs/lab02.qmd) pushed to your github repo
+* [Lab 1, due Oct 21 23:59](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/labs/lab01.qmd) pushed to your github repo
 
 
 ## Theory Homeworks
@@ -29,11 +29,11 @@ None released yet
 None released yet
 
 <!--  
-* Homework 5 [(download)](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/master/homeworks/hw05/hw05t.pdf?raw=true) [(view)](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/master/homeworks/hw05/hw05t.pdf) (due Oct 17 23:59 pushed to your github repo)
-* Homework 4 [(download)](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/master/homeworks/hw04/hw04t.pdf?raw=true) [(view)](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/master/homeworks/hw04/hw04t.pdf) (due Oct 17 23:59 pushed to your github repo)
-* Homework 3 [(download)](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/master/homeworks/hw03/hw03t.pdf?raw=true) [(view)](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/master/homeworks/hw03/hw03t.pdf) (due Oct 17 23:59 pushed to your github repo)
-* Homework 2 [(download)](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/master/homeworks/hw02/hw02t.pdf?raw=true) [(view)](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/master/homeworks/hw02/hw02t.pdf) (due Oct 17 23:59 pushed to your github repo)
-* Homework 1 [(download)](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/master/homeworks/hw01/hw01t.pdf?raw=true) [(view)](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/master/homeworks/hw01/hw01t.pdf) (due Oct 17 23:59 pushed to your github repo) -->
+* Homework 5 [(download)](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/homeworks/hw05/hw05t.pdf?raw=true) [(view)](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/homeworks/hw05/hw05t.pdf) (due Oct 17 23:59 pushed to your github repo)
+* Homework 4 [(download)](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/homeworks/hw04/hw04t.pdf?raw=true) [(view)](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/homeworks/hw04/hw04t.pdf) (due Oct 17 23:59 pushed to your github repo)
+* Homework 3 [(download)](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/homeworks/hw03/hw03t.pdf?raw=true) [(view)](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/homeworks/hw03/hw03t.pdf) (due Oct 17 23:59 pushed to your github repo)
+* Homework 2 [(download)](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/homeworks/hw02/hw02t.pdf?raw=true) [(view)](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/homeworks/hw02/hw02t.pdf) (due Oct 17 23:59 pushed to your github repo)
+* Homework 1 [(download)](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/homeworks/hw01/hw01t.pdf?raw=true) [(view)](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/homeworks/hw01/hw01t.pdf) (due Oct 17 23:59 pushed to your github repo) -->
 
 ## Exams
 
