@@ -1,0 +1,24 @@
+---
+title: "Lecture 6: Advanced SQL"
+subtitle: "Big Data Algorithms"
+format:
+  html:
+    toc: true
+    toc-depth: 2
+    number-sections: true
+    code-copy: true
+    embed-resources: true
+---
+
+Make a scratch folder for this lecture and bring the data along (we use it again in the database unit):
+
+```bash
+mkdir -p ~/workspace/HUJI_52002_Fall_2026/scratch/lec06
+cd ~/workspace/HUJI_52002_Fall_2026/scratch/lec06
+cp ../lec01/covid.csv .
+ls -alh
+```
+
+# Using postgres on moriah
+
+

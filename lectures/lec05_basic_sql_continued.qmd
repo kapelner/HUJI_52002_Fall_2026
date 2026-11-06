@@ -12,7 +12,11 @@ format:
 
 Talk through the `setup_docs/04_setup_fast_ssh.qmd` document here.
 
-
+```bash
+ssh moriah
+exit
+ssh moriah
+```
 
 
 
@@ -30,13 +34,42 @@ ls -alh
 
 # `tmux` on the server: keep your work alive
 
-This is what `tmux` from Lecture 2 is for. Start it *on the server*, right after you log in, and run your long job inside it:
+This is what `tmux` from Lecture 2 is for. For a stand-in "long job", here is `long_job.sh`, which adds up 0, 0.01, 0.02, ..., 10000 (that's 1,000,001 numbers) and sleeps between each addition, so it takes about 6 hours:
+
+```bash
+#!/bin/bash
+# long_job.sh: add 0 + 0.01 + 0.02 + ... + 10000, slowly (~6 hours)
+# bash only does integer arithmetic, so we count in hundredths: i = 0, 1, ..., 1000000
+sum=0
+for ((i = 0; i <= 1000000; i++)); do
+    sum=$((sum + i))
+    if ((i % 10 == 0)); then  # progress report
+        printf "%s  at %d.%02d, sum so far %d.%02d\n" "$(date +%T)" $((i / 100)) $((i % 100)) $((sum / 100)) $((sum % 100))
+    fi
+    sleep 0.017                  # 1,000,001 x 0.017s = 4.7 hours, plus ~5ms overhead per sleep = ~6 hours
+done
+printf "final sum: %d.%02d\n" $((sum / 100)) $((sum % 100))  # 5000005000.00
+```
+
+Let's save this here and upload it to the server:
+
+```bash
+vi long_job.sh                    # paste the script above, then Ctrl+O, Enter (save) and Ctrl+X (exit)
+bash -n long_job.sh               # -n : check the syntax without running it (no output = OK)
+rsync -avP long_job.sh moriah:~/  # copy it to your home folder on the server (no need for compression - it's small)
+```
+
+Start it *on the server*, right after you log in, and run your long job inside `tmux`:
 
 ```bash
 ssh moriah
-tmux new -s analysis             # a session on the server
-Rscript long_job.R               # start the long job
+tmux new -s long_job             # a session on the server
+pwd
+ls -lh
+bash long_job.sh                 # start the long job
 # Ctrl+B then D : detach
+tmux ls
+tmux attach -t long_job          # back where you left off, output and all
 exit                             # log out; the job keeps running
 ```
 
@@ -45,7 +78,7 @@ Close your laptop, lose your Wi-Fi, go home. Later:
 ```bash
 ssh moriah
 tmux ls                          # analysis: 1 windows ...
-tmux attach -t analysis          # back where you left off, output and all
+tmux attach -t long_job          # back where you left off, output and all
 ```
 
 The session lives on the server, not on your laptop, so it survives a dropped `ssh` connection as well as a deliberate logout.
@@ -54,66 +87,58 @@ The session lives on the server, not on your laptop, so it survives a dropped `s
 
 Make it a habit: whenever you `ssh` in to do something that takes more than a minute, start or attach to a `tmux` session first.
 
-
-# Using Postgres on Moriah
-
-Log into moriah and try `psql`. You will most likely get `command not found`. A cluster serves hundreds of users who need different programs, and often different versions of the same program, so most software is installed side by side and switched off until you ask for it. The `module` command does the asking. First search for what is available:
-
-```bash
-ssh -J kapelner@bava.cs.huji.ac.il kapelner@moriah-gw.cs.huji.ac.il
-psql #fails
-```
-
-This gives
-
-```
-psql: error: connection to server at "*" (127.0.0.1), port 5432 failed: Connection refused
-        Is the server running on that host and accepting TCP/IP connections?
-```
-
-We need to "load" it on the server:
-
-```bash
-module spider postgres           # every Postgres version installed here
-module spider postgres/17        # details about one version
-```
-
-`module spider` only *searches*. To actually use a version, load it:
-
-```bash
-module load postgres/17          # adds psql and friends to your PATH
-which psql                       # now found
-psql --version
-```
-
-A loaded module lasts only until you log out, and the next login starts clean again. To load it every time, put the line into `~/.bashrc` on Moriah, which bash runs at the start of every session. Then `source` the file, which runs it in the current shell, so you do not have to log out and back in:
-
-```bash
-echo 'module load postgres/17' >> ~/.bashrc   # >> appends; > would wipe the file
-source ~/.bashrc
-```
-
-From now on Postgres is there every time you log in, and you never need to think about this whole `module` thing ever again.
-
 ## More queries
-
-
 
 ## Continuing with grouped aggregate queries
 
-Review: `GROUP BY` splits the rows into groups, here one group per state, and the aggregate is computed separately for each group, so the answer has one row per group. 
+Let's open up psql with the database that houses the covid csv table from last class 
 
+```bash
+psql lec04
+```
+
+and turn on timing
+
+```sql
+\timing on
+```
+
+Let's talk about something that wasn't clear last class:
+
+```sql
+SELECT count(*), count(deaths)
+  FROM covid
+  WHERE state = 'Puerto Rico'; 
+```
+
+The `count(deaths)` counts the number of present rows (not NULL). This is low considering there are ~19,000 rows which made me second-guess my first explanation. But it's true. There was a problem recording data in Puerto Rico:
+
+```sql
+SELECT *
+  FROM covid
+  WHERE state = 'Puerto Rico'
+  ORDER BY random()
+  LIMIT 10; 
+```
+
+Recall from the end of last class: `GROUP BY` splits the rows into groups, here one group per state, and the aggregate is computed separately for each group, so the answer has one row per group. 
 
 `HAVING` then filters the groups, the way `WHERE` filters the rows: `WHERE` runs before the grouping and `HAVING` after it, so only `HAVING` can test an aggregate such as `count(*) < 5`. The order of the clauses is `WHERE`, `GROUP BY`, `HAVING`, then `ORDER BY`:
 
-
 ```sql
 -- group by two columns: one group per county (county names repeat across states, so state is needed too)
-SELECT state, county, max(cases) FROM covid
-  GROUP BY state, county ORDER BY max(cases) DESC LIMIT 3;  -- Los Angeles 770915, New York City 430863, Cook 393652
+SELECT state, county, max(cases)
+  FROM covid
+  GROUP BY state, county
+  ORDER BY max(cases) DESC
+  LIMIT 3;                                                  -- Los Angeles 770915, New York City 430863, Cook 393652
 -- HAVING filters the groups, after they are computed (WHERE filters the rows, before)
-SELECT state, count(*) FROM covid WHERE date = '2020-12-31'
-  GROUP BY state HAVING count(*) < 5 ORDER BY count(*);     -- District of Columbia 1, Guam 1, Northern Mariana Islands 2, Virgin Islands 3, Delaware 4
+SELECT state, count(*)
+  FROM covid
+  WHERE date = '2020-12-31'
+  GROUP BY state
+  HAVING count(*) < 5
+  ORDER BY count(*);                                        -- District of Columbia 1, Guam 1, Northern Mariana Islands 2, Virgin Islands 3, Delaware 4
 ```
 
 There is one rule to remember. Every column after `SELECT` must either be in the `GROUP BY` or be inside an aggregate. `SELECT state, county, count(*) ... GROUP BY state` fails, because a state has many counties and Postgres cannot know which one to show. (A `GROUP BY` with no aggregate at all, such as `SELECT state FROM covid GROUP BY state`, is legal but only removes duplicates, so write it the clearer way, `SELECT DISTINCT state FROM covid`.)
@@ -122,33 +147,12 @@ The same in `awk` (for reference only - I don't expect you to become `awk` maste
 
 ```bash
 #date,county,state,fips,cases,deaths
-# GROUP BY is an array indexed by the group: n[$3]++ keeps one counter per state, and END prints one line per state
-awk -F, 'NR>1 {n[$3]++} END {for (s in n) print s "," n[s]}' covid.csv
-# ORDER BY and LIMIT are sort and head, as before
-awk -F, 'NR>1 {n[$3]++} END {for (s in n) print s "," n[s]}' covid.csv | sort -t, -k2,2nr | head -n 5
-# WHERE is the pattern, so it runs before the grouping
-awk -F, '$1=="2020-12-31" {s[$3] += $5} END {for (k in s) print k "," s[k]}' covid.csv | sort -t, -k2,2nr | head -n 5
-# AS: no equivalent, awk output has no column names (echo a header line yourself)
-{ echo "state,total_cases"
-  awk -F, '$1=="2020-12-31" {s[$3] += $5} END {for (k in s) print k "," s[k]}' covid.csv | sort -t, -k2,2nr | head -n 3
-} | column -s, -t
-# count(DISTINCT ...) per group: drop the repeated (state, county) pairs with sort -u first, then count
-awk -F, -v OFS=, 'NR>1 {print $3, $2}' covid.csv | sort -u | awk -F, '{n[$1]++} END {for (s in n) print s "," n[s]}' | sort -t, -k2,2nr | head -n 3
-# min per group: keep the smallest date seen so far for each state
-awk -F, 'NR>1 && (!($3 in m) || $1 < m[$3]) {m[$3] = $1} END {for (s in m) print s "," m[s]}' covid.csv | sort -t, -k2,2 | head -n 3
-# one group per day: index the array by the date instead
-awk -F, 'NR>1 {d[$1] += $6} END {for (k in d) print k "," d[k]}' covid.csv | sort -r | head -n 3
-# several aggregates per group: one array per aggregate, all indexed by the state
-awk -F, '$1=="2020-12-31" {n[$3]++; s[$3] += $6; if ($6 > m[$3]) m[$3] = $6} END {for (k in n) print k "," n[k] "," s[k] "," m[k]}' covid.csv | sort -t, -k3,3nr | head -n 3
-# median per group: no easy equivalent, since every value of every state must be kept and sorted
-# sort by state, then by cases, and pick the middle value of each state as its last line goes by
-awk -F, -v OFS=, '$1=="2020-12-31" {print $3, $5}' covid.csv | sort -t, -k1,1 -k2,2n |
-  awk -F, 'function out() {print prev "," (n%2 ? a[(n+1)/2] : (a[n/2] + a[n/2+1])/2)}
-           $1 != prev {if (n) out(); n = 0; prev = $1} {a[++n] = $2} END {out()}' | sort -t, -k2,2nr | head -n 3
-# two grouping columns: glue them together into one array index
-awk -F, 'NR>1 {k = $3 "," $2; if ($5 > m[k]) m[k] = $5} END {for (k in m) print k "," m[k]}' covid.csv | sort -t, -k3,3nr | head -n 3
-# HAVING: a test inside the END loop, after the groups are computed
-awk -F, '$1=="2020-12-31" {n[$3]++} END {for (s in n) if (n[s] < 5) print s "," n[s]}' covid.csv | sort -t, -k2,2n
+# group by two columns: glue state and county into one array index, k = $3 "," $2 (county names repeat across states)
+awk -F, 'NR>1 {k = $3 "," $2; if ($5 > m[k]) m[k] = $5} END {for (k in m) print k "," m[k]}' covid.csv |
+  sort -t, -k3,3nr | head -n 3     # Los Angeles 770915, New York City 430863, Cook 393652
+# HAVING: a test inside the END loop, after the groups are computed (the WHERE is still the pattern, before)
+awk -F, '$1=="2020-12-31" {n[$3]++} END {for (s in n) if (n[s] < 5) print s "," n[s]}' covid.csv |
+  sort -t, -k2,2n                   # District of Columbia 1, Guam 1, Northern Mariana Islands 2, Virgin Islands 3, Delaware 4
 ```
 
 Each SQL clause has an awk counterpart:
@@ -244,10 +248,19 @@ A real speed-up comes next.
 
 ## Indexes
 
+Consider how fast this query runs:
+
+```sql
+SELECT max(cases)
+  FROM covid
+  WHERE state = 'Texas' AND county = 'Harris';
+```
+
 An **index** is a sorted lookup structure that the database keeps beside the table, like the index at the back of a book. Instead of reading every page to find "Harris", it looks up the entry and jumps to the right pages.
 
 ```sql
-EXPLAIN ANALYZE SELECT max(cases) FROM covid
+EXPLAIN ANALYZE SELECT max(cases)
+  FROM covid
   WHERE state = 'Texas' AND county = 'Harris';
 ```
 
@@ -259,15 +272,24 @@ Now create the index and run the same `EXPLAIN ANALYZE` again:
 CREATE INDEX ON covid (state, county);     -- takes about a second, once
 ```
 
-In the postgres version I have installed (v18.6), the plan changes to a `Bitmap Index Scan` which uses a data structure called a "B-tree".
-
+Now let's run the query again:
 
 ```sql
-EXPLAIN ANALYZE SELECT max(cases) FROM covid
+SELECT max(cases)
+  FROM covid
   WHERE state = 'Texas' AND county = 'Harris';
 ```
 
-and the time drops to **under 3 ms**. The table has 884,737 rows, and the database looked at about 300 of them.
+and the time drops to **under 5 ms** for a ~10x efficiency improvement. The table has 884,737 rows, and the database looked at about 300 of them.
+
+In the postgres version I have installed (v18.6), the plan changes to a `Bitmap Index Scan` which uses a data structure called a "B-tree".
+
+```sql
+EXPLAIN ANALYZE SELECT max(cases)
+  FROM covid
+  WHERE state = 'Texas' AND county = 'Harris';
+```
+
 
 The time to answer is now almost independent of the table's size. That is a huge advantage of databases. The index cost is paid once, when you build the index (about 1.2 seconds here), plus a little extra on every insert to keep the index up to date and some extra disk space.
 
@@ -296,7 +318,7 @@ SELECT pg_size_pretty(pg_table_size('covid'))          AS table_size,
 
 The index takes about 6 MB next to the table's 57 MB, about 11% more space. It is this small because the key repeats a lot: Harris County, Texas appears in 300 rows, and Postgres stores each repeated key only once, followed by the list of rows that have it. An index whose keys are almost all different gets no such saving: one on `(state, county, date)` takes 35 MB, more than half the size of the table. Every index you add costs its own space, so index the columns you actually search by, not every column.
 
- Databases in general pay for features using disk space. Note that 57MB is larger than the original 35MB covid.csv. We will see why next lecture.
+Databases in general pay for features using disk space. Note that 57MB is larger than the original 35MB covid.csv. We will see why next lecture. If you want to remove the index for whatever reason use `DROP INDEX <name in \di>;` so for our example, `DROP INDEX covid_state_county_idx;`.
 
 
 ### B-trees
@@ -321,59 +343,109 @@ The index Postgres builds is a **B-tree**. It is the sorted list of all the `(st
 
 ```sql
 -- the inner query finds 770915, and the outer one finds the row(s) with that value
-SELECT date, county, state, cases FROM covid
-  WHERE cases = (SELECT max(cases) FROM covid);             -- 2020-12-31 | Los Angeles | California | 770915
+SELECT date, county, state, cases AS maximum_cases
+  FROM covid
+  WHERE cases = (
+    SELECT max(cases)
+      FROM covid
+  );                                                        -- 2020-12-31 | Los Angeles | California | 770915
 -- the inner query needs its own WHERE too, otherwise it finds the max of the whole country
-SELECT date, county, cases FROM covid
+SELECT date, county, cases AS maximum_cases
+  FROM covid
   WHERE state = 'Texas'
-    AND cases = (SELECT max(cases) FROM covid WHERE state = 'Texas');   -- 2020-12-31 | Harris | 237727
+    AND cases = (
+      SELECT max(cases)
+        FROM covid
+        WHERE state = 'Texas'
+    );                                                      -- 2020-12-31 | Harris | 237727
 -- any aggregate works: the counties above the national mean (6171) at the end of 2020
-SELECT count(*) FROM covid
+SELECT count(*)
+  FROM covid
   WHERE date = '2020-12-31'
-    AND cases > (SELECT avg(cases) FROM covid WHERE date = '2020-12-31');   -- 587 of the 3245
+    AND cases > (
+      SELECT avg(cases)
+        FROM covid
+        WHERE date = '2020-12-31'
+    );                                                      -- 587 of the 3245
 -- the latest day in the data, without knowing what it is
-SELECT county, state, cases FROM covid
-  WHERE date = (SELECT max(date) FROM covid)
-  ORDER BY cases DESC LIMIT 3;                              -- Los Angeles 770915, New York City 430863, Cook 393652
+SELECT county, state, cases
+  FROM covid
+  WHERE date = (
+    SELECT max(date)
+      FROM covid
+  )
+  ORDER BY cases DESC
+  LIMIT 3;                                                  -- Los Angeles 770915, New York City 430863, Cook 393652
 ```
 
 The subquery must return what its place in the outer query expects. After `=`, `<` or `>` it stands for a **single value**, so it must return exactly one row and one column, of a type that can be compared with the other side. Aggregates without `GROUP BY` always return one row, which is why they are the usual inner query. Get the shape or the type wrong and Postgres refuses:
 
 ```sql
 -- many rows where one value is expected
-SELECT county FROM covid
-  WHERE cases = (SELECT cases FROM covid WHERE state = 'Texas');
+SELECT county
+  FROM covid
+  WHERE cases = (
+    SELECT cases
+      FROM covid
+      WHERE state = 'Texas'
+  );
 -- ERROR:  more than one row returned by a subquery used as an expression
 -- two columns where one is expected
-SELECT county FROM covid
-  WHERE cases = (SELECT max(cases), min(cases) FROM covid);
+SELECT county
+  FROM covid
+  WHERE cases = (
+    SELECT max(cases), min(cases)
+      FROM covid
+  );
 -- ERROR:  subquery must return only one column
 -- a date where a number is expected
-SELECT county FROM covid
-  WHERE cases = (SELECT max(date) FROM covid);
+SELECT county
+  FROM covid
+  WHERE cases = (
+    SELECT max(date)
+      FROM covid
+  );
 -- ERROR:  operator does not exist: integer = date
 -- no rows at all is allowed: the subquery becomes NULL, and nothing equals NULL
-SELECT county FROM covid
-  WHERE cases = (SELECT max(cases) FROM covid WHERE state = 'Atlantis');   -- (0 rows)
+SELECT county
+  FROM covid
+  WHERE cases = (
+    SELECT max(cases)
+      FROM covid
+      WHERE state = 'Atlantis'
+  );                                                        -- (0 rows)
 ```
 
 After `IN`, the subquery stands for a **list of values** instead, so it may return many rows, but still only one column:
 
 ```sql
 -- all counties in the states that have at least one county above 200,000 cases
-SELECT count(*) FROM covid
+SELECT count(*)
+  FROM covid
   WHERE date = '2020-12-31'
-    AND state IN (SELECT state FROM covid WHERE date = '2020-12-31' AND cases > 200000);   -- 555
+    AND state IN (
+      SELECT state
+        FROM covid
+        WHERE date = '2020-12-31' AND cases > 200000
+    );                                                      -- 555
 ```
 
 `ORDER BY cases DESC LIMIT 1` is the easy workaround, but it gives only one row, even when several are tied. On 2020-12-31 the fewest cases is 0, and two rows have it:
 
 ```sql
-SELECT county, state, cases FROM covid
-  WHERE date = '2020-12-31' ORDER BY cases LIMIT 1;         -- only one of the two
-SELECT county, state, cases FROM covid
+SELECT county, state, cases
+  FROM covid
   WHERE date = '2020-12-31'
-    AND cases = (SELECT min(cases) FROM covid WHERE date = '2020-12-31');   -- Unknown | Kansas | 0 and Unknown | Maryland | 0
+  ORDER BY cases
+  LIMIT 1;                                                  -- only one of the two
+SELECT county, state, cases
+  FROM covid
+  WHERE date = '2020-12-31'
+    AND cases = (
+      SELECT min(cases)
+        FROM covid
+        WHERE date = '2020-12-31'
+    );                                                      -- Unknown | Kansas | 0 and Unknown | Maryland | 0
 ```
 
 In `awk` a subquery is a **second pass** over the file. Giving `awk` the same file twice, `covid.csv covid.csv`, reads it twice. `NR==FNR` is true only during the first file (`NR` counts all lines read so far, `FNR` only those of the current file), so the first block computes the inner answer and `next` skips the rest; the pattern after it runs on the second pass:
@@ -400,28 +472,41 @@ After `SELECT` you are not limited to column names. Any expression works: arithm
 
 ```sql
 -- arithmetic: careful, an integer divided by an integer is an integer in SQL, rounded down
-SELECT deaths / cases FROM covid
+SELECT deaths / cases
+  FROM covid
   WHERE state = 'Texas' AND county = 'Harris' AND date = '2020-12-31';   -- 0
 -- make one side a decimal number first, with ::float (a "cast") or by multiplying by 100.0
-SELECT deaths::float / cases FROM covid
+SELECT deaths::float / cases
+  FROM covid
   WHERE state = 'Texas' AND county = 'Harris' AND date = '2020-12-31';   -- 0.014310532669827155
-SELECT round(100.0 * deaths / cases, 2) AS death_rate FROM covid
+SELECT round(100.0 * deaths / cases, 2) AS death_rate
+  FROM covid
   WHERE state = 'Texas' AND county = 'Harris' AND date = '2020-12-31';   -- 1.43 (percent)
 -- a computed column can be sorted by its name; the IS NOT NULL keeps the empty deaths from sorting first
-SELECT county, state, round(100.0 * deaths / cases, 2) AS death_rate FROM covid
+SELECT county, state, round(100.0 * deaths / cases, 2) AS death_rate
+  FROM covid
   WHERE date = '2020-12-31' AND cases >= 1000 AND deaths IS NOT NULL
-  ORDER BY death_rate DESC LIMIT 3;                         -- Unknown, Puerto Rico 38.79 (most of its cases are listed by municipality, its deaths are not), Franklin, Massachusetts 7.20, New York City 5.84
+  ORDER BY death_rate DESC
+  LIMIT 3;                                                  -- Unknown, Puerto Rico 38.79 (most of its cases are listed by municipality, its deaths are not), Franklin, Massachusetts 7.20, New York City 5.84
 -- || glues text together
-SELECT county || ', ' || state AS place, cases FROM covid
-  WHERE date = '2020-12-31' ORDER BY cases DESC LIMIT 1;    -- Los Angeles, California | 770915
+SELECT county || ', ' || state AS place, cases
+  FROM covid
+  WHERE date = '2020-12-31'
+  ORDER BY cases DESC
+  LIMIT 1;                                                  -- Los Angeles, California | 770915
 -- CASE is if/else: it turns each row into a label, which you can then group by
 SELECT CASE 
   WHEN cases > 100000 THEN 'big' ELSE 'small' END 
-  AS size, count(*) FROM covid
-  WHERE date = '2020-12-31' GROUP BY size;                  -- big 16, small 3229
+  AS size, count(*)
+  FROM covid
+  WHERE date = '2020-12-31'
+  GROUP BY size;                                            -- big 16, small 3229
 -- functions on dates: extract pulls out one part, here the month, which you can also group by
-SELECT extract(month FROM date) AS month, count(*) FROM covid
-  GROUP BY month ORDER BY month LIMIT 3;                    -- 1 39, 2 359, 3 23482: the rows grow as the virus spreads
+SELECT extract(month FROM date) AS month, count(*)
+  FROM covid
+  GROUP BY month
+  ORDER BY month
+  LIMIT 3;                                                  -- 1 39, 2 359, 3 23482: the rows grow as the virus spreads
 ```
 
 `awk` does the same with arithmetic on fields, the `? :` operator for if/else, and string functions. There are no integer surprises: `awk` always divides as decimals.
@@ -450,28 +535,49 @@ These combine the answers of two whole queries, treating each answer as a set of
 
 ```sql
 -- the counties with a row in March but none in December: all 18 are "Unknown", cases that were later assigned to a real county
-SELECT state, county FROM covid WHERE date BETWEEN '2020-03-01' AND '2020-03-31'
+SELECT state, county
+  FROM covid
+  WHERE date BETWEEN '2020-03-01' AND '2020-03-31'
 EXCEPT
-SELECT state, county FROM covid WHERE date BETWEEN '2020-12-01' AND '2020-12-31'
+SELECT state, county
+  FROM covid
+  WHERE date BETWEEN '2020-12-01' AND '2020-12-31'
 ORDER BY state, county;                                     -- Arizona Unknown, California Unknown, ... (18 rows)
 -- the other way round: counties with no row yet in March, mostly the virus reaching them later
-SELECT count(*) FROM (
-  SELECT state, county FROM covid WHERE date BETWEEN '2020-12-01' AND '2020-12-31'
-  EXCEPT
-  SELECT state, county FROM covid WHERE date BETWEEN '2020-03-01' AND '2020-03-31'
-) t;                                                        -- 1104
+SELECT count(*)
+  FROM (
+    SELECT state, county
+      FROM covid
+      WHERE date BETWEEN '2020-12-01' AND '2020-12-31'
+    EXCEPT
+    SELECT state, county
+      FROM covid
+      WHERE date BETWEEN '2020-03-01' AND '2020-03-31'
+  ) t;                                                      -- 1104
 -- counties among the first to report (data on 2020-01-31) and among the biggest at the end of the year
-SELECT state, county FROM covid WHERE date = '2020-01-31'
+SELECT state, county
+  FROM covid
+  WHERE date = '2020-01-31'
 INTERSECT
-SELECT state, county FROM covid WHERE date = '2020-12-31' AND cases > 200000;   -- Arizona Maricopa, California Los Angeles, Illinois Cook
+SELECT state, county
+  FROM covid
+  WHERE date = '2020-12-31' AND cases > 200000;             -- Arizona Maricopa, California Los Angeles, Illinois Cook
 -- either one: 6 + 6 counties, but the 3 above are in both, so 9 rows
-SELECT state, county FROM covid WHERE date = '2020-01-31'
+SELECT state, county
+  FROM covid
+  WHERE date = '2020-01-31'
 UNION
-SELECT state, county FROM covid WHERE date = '2020-12-31' AND cases > 200000;   -- 9 rows
+SELECT state, county
+  FROM covid
+  WHERE date = '2020-12-31' AND cases > 200000;             -- 9 rows
 -- UNION ALL keeps the repeats: 12 rows
-SELECT state, county FROM covid WHERE date = '2020-01-31'
+SELECT state, county
+  FROM covid
+  WHERE date = '2020-01-31'
 UNION ALL
-SELECT state, county FROM covid WHERE date = '2020-12-31' AND cases > 200000;   -- 12 rows
+SELECT state, county
+  FROM covid
+  WHERE date = '2020-12-31' AND cases > 200000;             -- 12 rows
 ```
 
 The `ORDER BY` at the end sorts the combined answer, not just the second query.
@@ -501,39 +607,56 @@ The classic use is the **top row per group**, such as each state's biggest count
 
 ```sql
 -- the window function can't go in WHERE (WHERE runs before it is computed), so it goes in a subquery in FROM
-SELECT state, county, cases FROM (
-  SELECT state, county, cases,
-         row_number() OVER (PARTITION BY state ORDER BY cases DESC) AS r
-  FROM covid WHERE date = '2020-12-31'
-) t
-WHERE r = 1 ORDER BY state LIMIT 3;                         -- Alabama Jefferson 52339, Alaska Anchorage 22820, Arizona Maricopa 322449
+SELECT state, county, cases
+  FROM (
+    SELECT state, county, cases,
+           row_number() OVER (PARTITION BY state ORDER BY cases DESC) AS r
+      FROM covid
+      WHERE date = '2020-12-31'
+  ) t
+  WHERE r = 1
+  ORDER BY state
+  LIMIT 3;                                                  -- Alabama Jefferson 52339, Alaska Anchorage 22820, Arizona Maricopa 322449
 -- the top 3 per state is just r <= 3, which GROUP BY can't do at all
-SELECT county, cases, r FROM (
-  SELECT state, county, cases,
-         row_number() OVER (PARTITION BY state ORDER BY cases DESC) AS r
-  FROM covid WHERE date = '2020-12-31'
-) t
-WHERE state = 'Texas' AND r <= 3 ORDER BY r;                -- Harris 237727 1, Dallas 193318 2, Tarrant 150004 3
+SELECT county, cases, r
+  FROM (
+    SELECT state, county, cases,
+           row_number() OVER (PARTITION BY state ORDER BY cases DESC) AS r
+      FROM covid
+      WHERE date = '2020-12-31'
+  ) t
+  WHERE state = 'Texas' AND r <= 3
+  ORDER BY r;                                               -- Harris 237727 1, Dallas 193318 2, Tarrant 150004 3
 -- rank() gives tied rows the same number, then skips: here 1, 1, 3, 3 (row_number would give 1, 2, 3, 4)
 -- with no PARTITION BY the window is the whole answer
-SELECT state, county, cases, rank() OVER (ORDER BY cases) AS r FROM covid
-  WHERE date = '2020-12-31' ORDER BY cases LIMIT 4;         -- Kansas/Maryland Unknown 0 1, Hawaii Kalawao 1 3, Maine Unknown 1 3
+SELECT state, county, cases, rank() OVER (ORDER BY cases) AS r
+  FROM covid
+  WHERE date = '2020-12-31'
+  ORDER BY cases
+  LIMIT 4;                                                  -- Kansas/Maryland Unknown 0 1, Hawaii Kalawao 1 3, Maine Unknown 1 3
 -- an aggregate with OVER: each county next to the total of its state, and its share of it
 SELECT county, cases,
        round(100.0 * cases / sum(cases) OVER (PARTITION BY state), 1) AS pct_of_state
-  FROM covid WHERE date = '2020-12-31' AND state = 'Texas'
-  ORDER BY cases DESC LIMIT 3;                              -- Harris 13.4%, Dallas 10.9%, Tarrant 8.5%
--- lag() looks at the previous row of the window. cases is a running total, so today minus yesterday = the new cases
-SELECT date, cases, cases - lag(cases) OVER (ORDER BY date) AS new_cases FROM covid
-  WHERE state = 'Texas' AND county = 'Harris'
-  ORDER BY date DESC LIMIT 3;                               -- 2020-12-31 237727 1054, 2020-12-30 236673 1937, 2020-12-29 234736 1406
--- the same for every county at once: PARTITION BY restarts lag() at each county
-SELECT county, state, new_cases FROM (
-  SELECT county, state, date,
-         cases - lag(cases) OVER (PARTITION BY state, county ORDER BY date) AS new_cases
   FROM covid
-) t
-WHERE date = '2020-12-31' ORDER BY new_cases DESC NULLS LAST LIMIT 3;   -- Los Angeles 14503, Maricopa 5181, New York City 4584
+  WHERE date = '2020-12-31' AND state = 'Texas'
+  ORDER BY cases DESC
+  LIMIT 3;                                                  -- Harris 13.4%, Dallas 10.9%, Tarrant 8.5%
+-- lag() looks at the previous row of the window. cases is a running total, so today minus yesterday = the new cases
+SELECT date, cases, cases - lag(cases) OVER (ORDER BY date) AS new_cases
+  FROM covid
+  WHERE state = 'Texas' AND county = 'Harris'
+  ORDER BY date DESC
+  LIMIT 3;                                                  -- 2020-12-31 237727 1054, 2020-12-30 236673 1937, 2020-12-29 234736 1406
+-- the same for every county at once: PARTITION BY restarts lag() at each county
+SELECT county, state, new_cases
+  FROM (
+    SELECT county, state, date,
+           cases - lag(cases) OVER (PARTITION BY state, county ORDER BY date) AS new_cases
+      FROM covid
+  ) t
+  WHERE date = '2020-12-31'
+  ORDER BY new_cases DESC NULLS LAST
+  LIMIT 3;                                                  -- Los Angeles 14503, Maricopa 5181, New York City 4584
 ```
 
 Postgres also has a shortcut for the top row per group, `SELECT DISTINCT ON (state) state, county, cases FROM covid WHERE date = '2020-12-31' ORDER BY state, cases DESC`, but it works only in Postgres and keeps just one of several tied rows. Window functions work everywhere and let you choose how to treat ties.
@@ -567,33 +690,55 @@ Subqueries in `FROM`, like the window function queries above, get hard to read a
 WITH ranked AS (
   SELECT state, county, cases,
          row_number() OVER (PARTITION BY state ORDER BY cases DESC) AS r
-  FROM covid WHERE date = '2020-12-31'
+    FROM covid
+    WHERE date = '2020-12-31'
 )
-SELECT state, county, cases FROM ranked
-  WHERE r = 1 ORDER BY state LIMIT 3;                       -- Alabama Jefferson 52339, Alaska Anchorage 22820, Arizona Maricopa 322449
+SELECT state, county, cases
+  FROM ranked
+  WHERE r = 1
+  ORDER BY state
+  LIMIT 3;                                                  -- Alabama Jefferson 52339, Alaska Anchorage 22820, Arizona Maricopa 322449
 -- a name can be used more than once: here in the outer query and in its subquery, so the date is written only once
-WITH dec31 AS (SELECT * FROM covid WHERE date = '2020-12-31')
-SELECT count(*) FROM dec31
-  WHERE cases > (SELECT avg(cases) FROM dec31);             -- 587, as in the subquery section
+WITH dec31 AS (
+  SELECT *
+    FROM covid
+    WHERE date = '2020-12-31'
+)
+SELECT count(*)
+  FROM dec31
+  WHERE cases > (
+    SELECT avg(cases)
+      FROM dec31
+  );                                                        -- 587, as in the subquery section
 -- names can build on each other, separated by commas: national totals per day, then the new cases per day
 WITH daily AS (
-  SELECT date, sum(cases) AS cases FROM covid GROUP BY date
+  SELECT date, sum(cases) AS cases
+    FROM covid
+    GROUP BY date
 ),
 new AS (
-  SELECT date, cases - lag(cases) OVER (ORDER BY date) AS new_cases FROM daily
+  SELECT date, cases - lag(cases) OVER (ORDER BY date) AS new_cases
+    FROM daily
 )
-SELECT date, new_cases FROM new
-  ORDER BY new_cases DESC NULLS LAST LIMIT 3;               -- 2020-12-11 280016, 2020-12-18 251190, 2020-12-16 244827
+SELECT date, new_cases
+  FROM new
+  ORDER BY new_cases DESC NULLS LAST
+  LIMIT 3;                                                  -- 2020-12-11 280016, 2020-12-18 251190, 2020-12-16 244827
 -- a window can also be a range of rows around the current one: the 7-day moving average of the new cases
 WITH daily AS (
-  SELECT date, sum(cases) AS cases FROM covid GROUP BY date
+  SELECT date, sum(cases) AS cases
+    FROM covid
+    GROUP BY date
 ),
 new AS (
-  SELECT date, cases - lag(cases) OVER (ORDER BY date) AS new_cases FROM daily
+  SELECT date, cases - lag(cases) OVER (ORDER BY date) AS new_cases
+    FROM daily
 )
 SELECT date, new_cases,
        round(avg(new_cases) OVER (ORDER BY date ROWS BETWEEN 6 PRECEDING AND CURRENT ROW)) AS week_avg
-  FROM new ORDER BY date DESC LIMIT 2;                      -- 2020-12-31 231024 188556, 2020-12-30 228949 183197
+  FROM new
+  ORDER BY date DESC
+  LIMIT 2;                                                  -- 2020-12-31 231024 188556, 2020-12-30 228949 183197
 ```
 
 The third query needs `NULLS LAST` because `lag()` has no previous row on the first day, so that day's `new_cases` is `NULL`, and `DESC` would sort it first. In the same way, `sum(new_cases) OVER (ORDER BY date)` (no `ROWS ...`) is a **running total**: the sum of all rows up to the current one.
@@ -615,21 +760,28 @@ All the queries so far only *read*. Three more commands change the rows. Let's t
 
 ```sql
 -- a new table holding the Texas rows (it is a real copy: later changes to covid do not reach it)
-CREATE TABLE texas AS SELECT * FROM covid WHERE state = 'Texas';   -- SELECT 67002
+CREATE TABLE texas AS SELECT *
+  FROM covid
+  WHERE state = 'Texas';                                           -- SELECT 67002
 -- INSERT adds rows; the values go in the order of the columns
 INSERT INTO texas VALUES ('2021-01-01', 'Harris', 'Texas', '48201', 239000, 3500);   -- INSERT 0 1
 -- or name the columns you give; the ones you leave out become NULL
 INSERT INTO texas (date, county, state, cases) VALUES ('2021-01-01', 'Dallas', 'Texas', 195000);   -- INSERT 0 1
-SELECT * FROM texas WHERE date = '2021-01-01';              -- the two new rows, Dallas with no fips and no deaths
+SELECT *
+  FROM texas
+  WHERE date = '2021-01-01';                                -- the two new rows, Dallas with no fips and no deaths
 -- UPDATE changes the columns after SET, in every row its WHERE matches
 UPDATE texas SET deaths = 2400
   WHERE county = 'Dallas' AND date = '2021-01-01';          -- UPDATE 1
 UPDATE texas SET county = 'Harris County'
   WHERE county = 'Harris';                                  -- UPDATE 303: one command, every matching row
 -- DELETE removes every row its WHERE matches
-DELETE FROM texas WHERE date = '2021-01-01';                -- DELETE 2
-DELETE FROM texas WHERE county = 'Unknown';                 -- DELETE 1
-SELECT count(*) FROM texas;                                 -- 67001
+DELETE FROM texas
+  WHERE date = '2021-01-01';                                -- DELETE 2
+DELETE FROM texas
+  WHERE county = 'Unknown';                                 -- DELETE 1
+SELECT count(*)
+  FROM texas;                                               -- 67001
 -- DROP TABLE removes the whole table
 DROP TABLE texas;
 ```
@@ -648,7 +800,8 @@ Compare this with Lab 3, Part 5: adding or deleting a single row of a Parquet fi
 `INSERT`, `UPDATE` and `DELETE` change the rows. `ALTER TABLE` changes the *table*: its columns, their names and their types. Again on a copy, here of the whole table:
 
 ```sql
-CREATE TABLE covid_copy AS SELECT * FROM covid;                          -- SELECT 884737
+CREATE TABLE covid_copy AS SELECT *
+  FROM covid;                                                            -- SELECT 884737
 \timing on
 -- ADD COLUMN: every existing row gets NULL in the new column
 ALTER TABLE covid_copy ADD COLUMN notes text;                             -- about 2 ms
@@ -656,7 +809,8 @@ ALTER TABLE covid_copy ADD COLUMN notes text;                             -- abo
 ALTER TABLE covid_copy ADD COLUMN reviewed boolean DEFAULT false;
 -- a new column is usually filled in with UPDATE
 ALTER TABLE covid_copy ADD COLUMN death_rate double precision;
-UPDATE covid_copy SET death_rate = deaths::float / cases WHERE cases > 0; -- UPDATE 884022, about 2 s: every row is rewritten
+UPDATE covid_copy SET death_rate = deaths::float / cases
+  WHERE cases > 0;                                                        -- UPDATE 884022, about 2 s: every row is rewritten
 -- RENAME COLUMN and DROP COLUMN
 ALTER TABLE covid_copy RENAME COLUMN death_rate TO cfr;                   -- about 2 ms
 ALTER TABLE covid_copy DROP COLUMN notes;                                 -- about 2 ms
@@ -684,11 +838,17 @@ A CTE's name lasts for one query. A **view** is a named query *saved in the data
 
 ```sql
 -- the dec31 CTE from above, saved once
-CREATE VIEW dec31 AS SELECT * FROM covid WHERE date = '2020-12-31';
+CREATE VIEW dec31 AS SELECT *
+  FROM covid
+  WHERE date = '2020-12-31';
 -- now it works in any query, without repeating the WITH
-SELECT count(*) FROM dec31;                                 -- 3245
-SELECT county, cases FROM dec31
-  WHERE state = 'Texas' ORDER BY cases DESC LIMIT 1;        -- Harris 237727
+SELECT count(*)
+  FROM dec31;                                               -- 3245
+SELECT county, cases
+  FROM dec31
+  WHERE state = 'Texas'
+  ORDER BY cases DESC
+  LIMIT 1;                                                  -- Harris 237727
 -- \d+ shows the saved query behind it
 \d+ dec31
 ```
@@ -698,8 +858,11 @@ A view stores **no data**. It is only the saved `SELECT`, and every query agains
 ```sql
 UPDATE covid SET cases = cases + 1
   WHERE state = 'Texas' AND county = 'Harris' AND date = '2020-12-31';
-SELECT county, cases FROM dec31
-  WHERE state = 'Texas' ORDER BY cases DESC LIMIT 1;        -- Harris 237728
+SELECT county, cases
+  FROM dec31
+  WHERE state = 'Texas'
+  ORDER BY cases DESC
+  LIMIT 1;                                                  -- Harris 237728
 -- put it back
 UPDATE covid SET cases = cases - 1
   WHERE state = 'Texas' AND county = 'Harris' AND date = '2020-12-31';
@@ -709,12 +872,18 @@ A **materialized view** does store the answer, like a table. Reading it is fast,
 
 ```sql
 CREATE VIEW daily AS
-  SELECT date, sum(cases) AS cases FROM covid GROUP BY date;
+  SELECT date, sum(cases) AS cases
+    FROM covid
+    GROUP BY date;
 CREATE MATERIALIZED VIEW daily_m AS
-  SELECT date, sum(cases) AS cases FROM covid GROUP BY date;
+  SELECT date, sum(cases) AS cases
+    FROM covid
+    GROUP BY date;
 \timing on
-SELECT max(cases) FROM daily;                               -- 20024801, about 70 ms: the GROUP BY runs again
-SELECT max(cases) FROM daily_m;                             -- 20024801, under 1 ms: it only reads the 346 saved rows
+SELECT max(cases)
+  FROM daily;                                               -- 20024801, about 70 ms: the GROUP BY runs again
+SELECT max(cases)
+  FROM daily_m;                                             -- 20024801, under 1 ms: it only reads the 346 saved rows
 -- after an UPDATE to covid, daily is current at once, but daily_m is out of date until
 REFRESH MATERIALIZED VIEW daily_m;                          -- runs the query again and saves the new answer
 \timing off

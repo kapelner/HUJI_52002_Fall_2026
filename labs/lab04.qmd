@@ -41,23 +41,18 @@ cd $my_52002_repo/labs/04/scratch
 #TODO [command to copy covid.csv from last lab's scratch folder or the download command <1pts>]
 ```
 
-# Part 1: Logging in with `ssh`
+# Part 1: Remote computing with `ssh`
 
 Log in to Moriah from your laptop, with your own login in place of the two `user` placeholders. Enter your OTP and your password.
 
 ```bash
 ssh -J user@bava.cs.huji.ac.il user@moriah-gw.cs.huji.ac.il
-```
-
-If you setup your machine using the instructions found in `04_setup_fast_ssh.qmd`, you will use simply the following instead
-
-```bash
+#If you setup your machine using the instructions found in `04_setup_fast_ssh.qmd`, you will use simply the following instead
+#and you will only need one OTP every four hours and no password (your keys are used in lieu).
 ssh moriah
 ```
 
-and you will only need one OTP every four hours and no password (your keys are used in lieu).
-
-Now run the following:
+Now once inside the moriah gateway computer, run the following:
 
 ```bash
 hostname
@@ -66,7 +61,7 @@ cd ~
 pwd
 nproc
 free -h
-exit
+exit #go back to your laptop
 ```
 
 Now run the same `hostname`, `pwd`, `nproc` and `free -h` on your laptop (a Mac has no `free`: use `sysctl -n hw.memsize`, which is in bytes).
@@ -116,7 +111,7 @@ Clean up on both sides:
 
 ```bash
 rm -r days 
-# TODO [login to moriah and cleanup covid.csv and the days/ folder]
+# TODO [login to moriah and cleanup covid.csv and the days/ folder <2pts>]
 ```
 
 # Part 3: Looking at processes with `ps` and `pgrep`
@@ -135,314 +130,184 @@ sleep 600 &
 echo $!
 ```
 
-#TODO [what did the line `[1] 12345` that appeared after the first command show, and how is `echo $!` related to it? <1pts>]
-
-`ps` can show just the columns you ask for, for just the processes you ask for. Read the `-o` and `-p` options in `man ps` and run:
-
-```bash
-ps -o pid,ppid,stat,command -p $!
-```
-
-#TODO [what are the four columns that came out, in your own words? <1pts>]
-#TODO [the parent PID of your `sleep` is the PID of another process. Write the command that shows that process, and say what it is <1pts>]
-#TODO [keep following the parents upward, one `ps` at a time, until you find the program which let you in. What is it called, and how does this chain explain why your programs are at risk when the connection drops? <2pts>]
-
-Now find the same process by its name, three ways:
-
-```bash
-ps aux | grep sleep
-pgrep -a sleep
-pgrep -u $USER -a sleep
-```
-
-#TODO [why does `ps aux | grep sleep` print an extra line that `pgrep -a sleep` does not? <1pts>]
-#TODO [rewrite `ps aux | grep sleep` so that the extra line is gone, without using `pgrep` (the lecture calls this the "bracket trick") <2pts>]
-#TODO [why is `-u $USER` needed on Moriah when you wouldn't need it on your own laptop? How many users have a `sleep` running right now? <1pts>]
-
-Leave this `sleep 600` running for the next part.
-
-# Part 4: Background jobs: `&`, `jobs`, `fg`, `bg` and `wait`
-
-You should still have one `sleep 600` running from Part 3. Start two more and list the jobs of this terminal:
-
-```bash
-sleep 601 &
-sleep 602 &
-jobs
-jobs -p
-```
-
-`jobs -p` prints only the PIDs. Read `man bash` (search for `jobs [`; or run `help jobs`) and find the option that prints the job number *and* the PID together:
-
-```bash
-#TODO [command that lists job numbers together with their PIDs <1pts>]
-```
-
-Bring job number 2 to the foreground, and then press Ctrl+Z:
-
-```bash
-#TODO [command that brings job number 2 to the foreground <1pts>]
-```
-
-Ctrl+Z does not stop the job for good; it **suspends** (pauses) it. Look at the job list and at the `STAT` column of its process, then resume it, this time in the background:
+#TODO [what did the line `[1] <number>` that appeared after the first command show, and how is `echo $!` related to it? <1pts>]
 
 ```bash
 jobs
-ps -o pid,stat,command -p $(jobs -p | sed -n 2p)
-#TODO [command that resumes the suspended job in the background <1pts>]
-jobs
 ```
 
-#TODO [what did `jobs` print while the job was suspended, and what does the first letter of `STAT` mean for a suspended process versus a running one? <1pts>]
+#TODO [Is the output of the above expected? Why/why not? <1pts>]
 
-Sometimes you start several jobs and need to wait until they are all done before continuing. That is what `wait` is for. Compare these two:
+Now let's find this job in the linux process list. `ps` can show just the columns you ask for, for just the processes you ask for. Read the `-o` and `-p` options in `man ps` and run:
 
 ```bash
-time (sleep 2; sleep 2; sleep 2)
-time (sleep 2 & sleep 2 & sleep 2 & wait)
+ps -o pid,ppid,user,stat,command -p $!
+#TODO [the parent PID of your `sleep` is the PID of another process. Write the command that shows that process' command, and say what it is <1pts>]
 ```
-
-#TODO [the two times, and what each one tells you about `;` and `&`? <1pts>]
-
-Open a second terminal on your laptop, log in with `ssh moriah` and type `jobs` there. It prints nothing, but `pgrep -u $USER -a sleep` does show your three sleeps.
-
-#TODO [why is `jobs` empty in the second terminal, although the processes are clearly running? <1pts>]
-
-Run `exit` in the second terminal and return to the first. Stop **all** the background jobs of this terminal in one line, using `jobs -p` and `xargs` (see Lecture 2):
 
 ```bash
-#TODO [one line command that kills every background job of this terminal <2pts>]
-jobs
-pgrep -u $USER -a sleep
+#TODO [keep following the parents upward, one `ps` at a time, until you find the program which let you into moriah. The user will be "root". <1pts>]
 ```
 
-# Part 5: Signals and `kill`
-
-`kill` sends a **signal** to a process. A process killed by signal number *n* has exit status 128 + *n*. List all of the signals and find the numbers of `HUP`, `INT`, `KILL`, `TERM`, `STOP` and `CONT`:
+#TODO [How does this explain why your background job is at risk when the connection drops? <1pts>]
 
 ```bash
-kill -l
+#TODO [How many different users (besides root) on Moriah have a `sleep` running right now? <2pts>]
 ```
 
-Create a program that refuses to die when it is politely asked to stop. The `trap '' TERM` line tells bash to ignore the TERM signal:
+#TODO [Print out a table of the users running sleep. <2pts>]
 
 ```bash
-cat > stubborn.sh << 'EOF'
-#!/usr/bin/env bash
-trap '' TERM
-while true; do sleep 1; done
-EOF
-chmod +x stubborn.sh
-./stubborn.sh &
-echo $!
+#TODO [kill your sleep job without losing your connection to moriah <1pts>]
 ```
 
-Ask it to stop (the default signal of `kill` is TERM) and look at it:
+# Part 4: A terminal that survives: `tmux`
 
-```bash
-kill $!
-sleep 2
-ps -o pid,stat,command -p $!
-```
-
-#TODO [is the process still there, and why? <1pts>]
-#TODO [write the command that stops it for sure, and the command that proves that it is gone <1pts>]
-
-Use `wait` to get the exit status of processes that were killed by different signals. `wait PID` waits for that process and then sets `$?` to its exit status:
-
-```bash
-sleep 600 &
-kill $!
-wait $!
-echo $?
-
-sleep 600 &
-kill -9 $!
-wait $!
-echo $?
-```
-
-#TODO [the two exit statuses that you got, and which signal numbers do they correspond to? <2pts>]
-
-A process can be paused without dying. `STOP` suspends it and `CONT` resumes it. This is the signal that Ctrl+Z sends (almost; Ctrl+Z sends a variant called `TSTP`):
-
-```bash
-sleep 600 &
-kill -STOP $!
-ps -o pid,stat,command -p $!
-kill -CONT $!
-ps -o pid,stat,command -p $!
-kill $!
-```
-
-#TODO [what was the `STAT` in each of the two `ps` lines? <1pts>]
-#TODO [`stubborn.sh` ignored TERM. Try to make it ignore `KILL` by editing the `trap` line: what happens, and why does that explain what `kill -9` is for? <2pts>]
-
-There is also `pkill`, which kills by *name* instead of by PID. Moriah is exactly the kind of machine where you must think before you use it. **Do not run this one**, just think about it:
-
-```bash
-pkill -x sleep       # -x : the process name must match exactly
-```
-
-#TODO [Moriah has other people's `sleep` commands running. What would this command do to theirs, to yours and why? If you had administrator rights, how would the answer change? <1pts>]
-#TODO [rewrite the command so that it only tries to touch your own processes <1pts>]
-
-Clean up:
-
-```bash
-rm stubborn.sh
-pgrep -u $USER -a sleep
-```
-
-# Part 6: Surviving a logout with `nohup`
-
-When you close a terminal, the system sends the **HUP** ("hang-up") signal to the programs that were started from it, and by default they die. `nohup` makes a program ignore HUP. You can test that without closing anything, by sending HUP yourself:
-
-```bash
-sleep 600 &
-echo $!
-nohup sleep 601 > /dev/null 2>&1 &
-echo $!
-```
-
-#TODO [what does `> /dev/null 2>&1` do, and why does `nohup` need it in this line? <1pts>]
-
-Send the HUP signal to both processes and see which ones survive. Use `wait` on the first one to see its exit status:
-
-```bash
-#TODO [command that sends HUP to the two sleeps you just started <1pts>]
-pgrep -u $USER -a sleep
-```
-
-#TODO [which process died and which survived? What was the exit status of the one that died (use `wait`) and why? <2pts>]
-
-Clean up what is left:
-
-```bash
-pkill -u $USER -x sleep
-```
-
-Now a realistic job. This script is a stand-in for a long computation: it writes the date to the standard output every second.
-
-```bash
-cat > infinite_loop.sh << 'EOF'
-#!/usr/bin/env bash
-while true; do date; sleep 1; done
-EOF
-chmod +x infinite_loop.sh
-```
-
-Start it so that it survives logging out, and so that its output is saved:
-
-```bash
-#TODO [command that runs infinite_loop.sh with nohup in the background, saving all its output (including errors) to out.log <2pts>]
-tail -n 3 out.log
-```
-
-#TODO [explain each of the four pieces `nohup`, `> out.log`, `2>&1` and `&` in one sentence each <2pts>]
-
-Now a real lost connection: **close the terminal window on your laptop**, without typing `exit`. Open a new one and log in again:
-
-```bash
-ssh moriah
-cd ~/lab04
-jobs
-pgrep -u $USER -af infinite_loop
-tail -n 3 out.log
-date
-```
-
-#TODO [what did `jobs` print in the new terminal and what did `pgrep` print (paste the line)? Is `out.log` still growing? How do you know? <1pts>]
-
-Stop the job and prove that it is gone:
-
-```bash
-#TODO [command that kills your infinite_loop process (you may use `pgrep` or `pkill`, but touch only your own) <1pts>]
-pgrep -u $USER -af infinite_loop
-```
-
-#TODO [why did you have to use a PID or a name this time, instead of `kill %1`? <1pts>]
-
-Clean up:
-
-```bash
-rm out.log nohup.out 2>/dev/null
-```
-
-# Part 7: A terminal that survives: `tmux`
-
-`nohup` keeps one command alive. `tmux` keeps a whole **terminal** alive, so that you can go away and come back to see it as you left it. Start a session called `lab4` on Moriah (if you get `command not found`, look for it with `module spider tmux`, as in the lecture):
+`tmux` keeps a whole **terminal** alive, so that you can go away and come back to see it as you left it. Start a session called `lab4` on Moriah (if you get `command not found`, look for it with `module spider tmux`, as in the lecture):
 
 ```bash
 tmux new -s lab4
 ```
 
-You are now inside tmux (note the green bar at the bottom). Inside it, start the loop in the background and look at it:
+You are now inside tmux (note the green bar at the bottom). We now navigate to the shared folder where there's a program you should run that persists.
 
 ```bash
-cd ~/lab04
-./infinite_loop.sh > out.log 2>&1 &
-tail -n 2 out.log
+cd /sci/courses/2026/52002/shared/
 ```
 
-Detach: press Ctrl+B, release both keys, then press d. You are back in your normal terminal on Moriah. Look at the session and at the job, and then come back:
+Now run the shared program called `tmux_proof`. Run it with your name as follows.
+
+```bash
+./tmux_proof "<first name> <last name>" #fill in your first name and last name!
+```
+
+After 24hr it will print out a unique encrypted code. We will decode it to reveal your full name and the hostname of the computer (which should be moriah). So don't share codes as you won't get credit if your name doesn't appear.
+
+Detach: press Ctrl+B, release both keys, then press d. You are back in your normal terminal on Moriah. Then go back into the terminal and ensure it's still running.
 
 ```bash
 tmux ls
-pgrep -u $USER -af infinite_loop
-jobs
 tmux attach -t lab4
-jobs
 ```
+Detach again: press Ctrl+B, release both keys, then press d.
 
-#TODO [paste the line that `tmux ls` printed. Why did `jobs` print nothing in the normal terminal but print the job after you attached? <1pts>]
+Now you can skip the next TODO and continue the rest of the assignment. You can exit moriah and come back in 24hr and it will still be running.
 
-Detach again. Now really leave: run `exit` to log out of Moriah, so that you are back on your laptop. Run `tmux ls` on your laptop, then log in again and reattach:
 
 ```bash
-tmux ls                     # on your laptop
-ssh moriah
-tmux ls                     # on Moriah
+tmux ls
 tmux attach -t lab4
-tail -n 2 out.log
+#now copy the code
 ```
 
-#TODO [what did `tmux ls` print on the laptop versus on Moriah, and why? Where does the session live? <1pts>]
+#TODO [write the encrypted code from tmux_proof after it completes <2pts>]
 
-Inside the session, press Ctrl+B and then c to create a second tabbed window, and Ctrl+B and then n / p to move between the two. Then detach again and kill the whole session from outside:
+After the code is pasted above, you should cleanup your `tmux` terminal:
 
 ```bash
 tmux kill-session -t lab4
-tmux ls
-pgrep -u $USER -af infinite_loop
+tmux ls #ensures it's not there
+exit #leave moriah and return to your own computer
 ```
 
-#TODO [is the loop still running after the session was killed? Explain what you saw in one sentence using what you learned about HUP in Part 6. <2pts>]
+# Part 5: Basic SQL on postgres
 
-You do not have to attach to a session to start something in it. The `-d` option starts a session **detached** and runs a command in it:
+This part reinforces the section "PostgreSQL" of Lecture 4. Unlike Parts 3 and 4, you do it **on your laptop**, with your own postgres server, from the `scratch` folder that holds `covid.csv`. This is because postgres still is not set up for the class on moriah. By next week hopefully it will be done. 
+
+Write each SQL statement on its own line underneath its `#TODO` line, and below it paste the answer Postgres gave you (or, if it is long, the first few rows). Use only what we covered in the lecture.
+
+## Databases
 
 ```bash
-#TODO [one line command that creates a detached tmux session called lab4b which runs infinite_loop.sh and writes its output to out.log <2pts>]
-tmux ls
-tail -n 2 out.log
-pgrep -u $USER -af infinite_loop
+cd $my_52002_repo/labs/04/scratch
+#TODO [create a new empty database called lab04 and open psql inside it <1pts>]
 ```
 
-#TODO [what happens to the session when the program inside it finishes or is killed? Check by killing the loop with `pkill -u $USER -f infinite_loop` and running `tmux ls` again <1pts>]
+```sql
+#TODO [print which database, user and socket you are connected through <1pts>]
+#TODO [list all the databases on your server <1pts>]
+#TODO [connect to the database called postgres, then back to lab04 <1pts>]
+```
 
-#TODO [give one situation where you would choose `nohup ... &` and one where you would choose `tmux` <1pts>]
-#TODO [neither of them comes with a guarantee on a machine like this one. Why not, and where do really long jobs belong on a cluster? <1pts>]
+## Loading the covid data
 
-Clean up, and then leave Moriah:
+```sql
+#TODO [turn on the timing of each statement, create the table covid with a correctly-typed column for each of the 6 columns of covid.csv, and load covid.csv into it. Show the table's columns and their types, and the list of tables in the database <3pts>]
+#TODO [count the rows of covid <1pts>]
+```
 
-```bash
-tmux kill-session -t lab4b 2>/dev/null
-rm infinite_loop.sh out.log
-pgrep -u $USER -a sleep
-pgrep -u $USER -af infinite_loop
-cd ~
-rm -r ~/lab04
-exit
+Now make a common mistake on purpose: run your `\copy` line a second time.
+
+```sql
+#TODO [count the rows of covid again <1pts>]
+```
+
+#TODO [What happened, and why did postgres not stop you? <1pts>]
+
+```sql
+#TODO [delete the table (in a way that won't error if it is already gone)<1pts>]
+#TODO [create it again (just copy the code from the previous chunk)]
+#TODO [reload the CSV covid data into it (just copy the code from the previous chunk)]
+#TODO [Count the # of rows to check <1pts>]
+```
+
+## Row-level queries
+
+```sql
+#TODO [all rows, all columns]
+#TODO [all the columns of the first 5 days of Snohomish County, Washington (the first known US case), oldest first <1pts>]
+#TODO [every county of Rhode Island, each listed once, in alphabetical order <1pts>]
+#TODO [on 2020-11-30, the county, state and deaths of the counties ranked 11 to 15 by deaths, most deaths first <1pts>]
+```
+
+#TODO [Look at the deaths column of your answer above. What went wrong? Write the corrected query below, using a condition from the lecture <2pts>]
+
+```sql
+#TODO [corrected query <1pts>]
+#TODO [on 2020-12-31, the state, county and deaths of every county in Maine, New Hampshire and Vermont (write the states as a list, not with OR), sorted by state and, within each state, by deaths, most first <1pts>]
+#TODO [on 2020-12-31, the counties outside New York state with more than 300000 cases or more than 5000 deaths, most cases first (you should get 3) <1pts>]
+#TODO [the cases in Los Angeles County, California from July 1 to July 4 2020, both days included, with one comparison only <1pts>]
+#TODO [on 2020-12-31, the county and state of every county whose name ends in "ville" <1pts>]
+#TODO [on 2020-12-31, the California counties (California's fips codes are "06" followed by 3 characters) with fewer than 200 cases, using the fips column and not the state column <1pts>]
+#TODO [the number of different county names that contain "lake", first with LIKE and then with ILIKE <1pts>]
+```
+
+#TODO [Why do the two counts differ? <1pts>]
+
+```sql
+#TODO [every different county name that starts with "Mc" or "Mac" followed by a capital letter, in alphabetical order, using a regular expression. How many are there? <2pts>]
+```
+
+## Aggregate queries
+
+```sql
+#TODO [how many rows have a missing fips? Answer with one query that uses two different count()s, then list the different county names of those rows <2pts>]
+```
+
+#TODO [Why do you think those counties have no fips code? <1pts>]
+
+```sql
+#TODO [for Florida on 2020-12-31, in one query: the total, mean (rounded), smallest, largest, standard deviation (rounded) and median of deaths per county <2pts>]
+#TODO [the most common number of deaths in a county on 2020-12-31 <1pts>]
+```
+
+## Random samples
+
+```sql
+#TODO [3 random rows from Florida (run it twice: are they the same?) <1pts>]
+#TODO [the row count and the rounded mean of deaths in a 5% sample of covid that is the same every time (use the seed 2026), and the same two numbers for the whole table <2pts>]
+#TODO [save that same 5% sample as a new table covid_5pct, write it to the file covid_5pct.csv with a header row, then delete the table <2pts>]
+\q
+```
+
+## Grouped aggregate queries
+
+```sql
+#TODO [on 2020-12-31, the total deaths of each state, with the column named total_deaths; show the 5 states with the fewest <1pts>]
+#TODO [for each state, the number of different county names it ever reported, with the column named n_counties; show the 3 states with the fewest <1pts>]
+#TODO [the total cases in the whole country on each day of the first week of April 2020 (April 1 to 7), oldest first <1pts>]
+#TODO [for each state on 2020-12-31, in one query: the number of counties, the mean of cases (rounded) and the median of cases, named n_counties, mean_cases and median_cases; show the 3 states with the highest mean <2pts>]
+#TODO [for each state, the first date it reported a death, with the column named first_death; show the 5 earliest <2pts>]
 ```
 
 # Final checklist
@@ -451,6 +316,5 @@ Before you push, check that:
 
 * every `#TODO` has a line afterwards that is filled in with your command, the real output, or a written English answer to the question in your own words;
 * nothing of yours is left running on Moriah: `ssh moriah 'pgrep -u $USER -a sleep; pgrep -u $USER -af infinite_loop; tmux ls'` prints no processes and no `lab4` session;
-* the `lab04` folder is gone from your home directory on Moriah;
 * no scratch files (`covid.csv`, the `days` folder) are in your repository (`git status` should not mention them), and your private key is nowhere in this file;
 * the file renders: `quarto render lab04.qmd` produces an HTML page with no errors (nothing in this lab is executed during rendering).

@@ -460,10 +460,6 @@ SELECT state, county, cases FROM covid
 SELECT date, county, state, cases FROM covid
   ORDER BY random()
   LIMIT 5;
--- TABLESAMPLE BERNOULLI (1): about 1% of the rows, each row picked on its own (about 8,800 rows, a different number each time)
-SELECT count(*) FROM covid TABLESAMPLE BERNOULLI (1);
--- REPEATABLE (seed): the same sample every time, like set.seed in R
-SELECT count(*) FROM covid TABLESAMPLE BERNOULLI (1) REPEATABLE (52002);
 -- AS: name the columns of the answer, and use the name in ORDER BY (Harris, Dallas, Tarrant)
 SELECT county, cases AS total_cases, deaths AS total_deaths FROM covid
   WHERE date = '2020-12-31' AND state = 'Texas'
@@ -531,9 +527,6 @@ SELECT date, county, state, cases FROM covid
 -- BERNOULLI (1): each row kept with probability 1%, so about 8,800 rows (about 40 ms)
 SELECT date, county, state, cases FROM covid TABLESAMPLE BERNOULLI (1);
 \timing off
--- a sample is queried like any table: the mean of cases in a 1% sample (about 1957) vs. in all the rows (1952)
-SELECT count(*), round(avg(cases)) FROM covid TABLESAMPLE BERNOULLI (1);
-SELECT count(*), round(avg(cases)) FROM covid;
 -- save a sample as a table, the same one every time thanks to REPEATABLE (SELECT 8841)...
 CREATE TABLE covid_1pct AS SELECT * FROM covid TABLESAMPLE BERNOULLI (1) REPEATABLE (52002);
 -- ...and as a CSV for R or Python (COPY 8841)
