@@ -54,7 +54,8 @@ printf "final sum: %d.%02d\n" $((sum / 100)) $((sum % 100))  # 5000005000.00
 Let's save this here and upload it to the server:
 
 ```bash
-vi long_job.sh                    # paste the script above, then Ctrl+O, Enter (save) and Ctrl+X (exit)
+vi long_job.sh :q
+                   # paste the script above, then Ctrl+O, Enter (save) and Ctrl+X (exit)
 bash -n long_job.sh               # -n : check the syntax without running it (no output = OK)
 rsync -avP long_job.sh moriah:~/  # copy it to your home folder on the server (no need for compression - it's small)
 ```
@@ -147,9 +148,8 @@ County names are not unique: there is a Washington County in 31 states. So "how 
 -- SELECT DISTINCT already works on the whole row: each different (state, county) pair once
 SELECT DISTINCT state, county
   FROM covid
-  WHERE county = 'Washington'
   ORDER BY state
-  LIMIT 3;                                                  -- Alabama Washington, Arkansas Washington, Colorado Washington
+  LIMIT 5;                                                  -- Alabama Washington, Arkansas Washington, Colorado Washington
 -- count(DISTINCT ...) takes only one value: the county names alone undercount
 SELECT count(DISTINCT county)
   FROM covid;                                               -- 1930
@@ -171,6 +171,10 @@ In `awk` a tuple is the columns glued into one string with a separator that cann
 ```bash
 awk -F, 'NR>1 {print $2}' covid.csv | sort -u | wc -l             # 1930: the county names alone
 awk -F, 'NR>1 {print $3 "," $2}' covid.csv | sort -u | wc -l      # 3273: the (state, county) pairs
+# SELECT DISTINCT state, county ... ORDER BY state LIMIT 5: glue the pair, sort -u, head
+awk -F, -v OFS=, 'NR>1 {print $3, $2}' covid.csv | sort -u | head -n 5   # Alabama,Autauga Alabama,Baldwin Alabama,Barbour Alabama,Bibb Alabama,Blount
+# (state, county) = ('Texas', 'Harris'): compare the glued string
+awk -F, -v OFS=, '$1=="2020-12-31" && $3 "," $2 == "Texas,Harris" {print "(" $3 "," $2 ")", $5}' covid.csv   # (Texas,Harris),237727
 ```
 
 ## Computed columns and `CASE` logic
@@ -224,7 +228,7 @@ SELECT county || ', ' || state AS place, cases
   ORDER BY cases DESC
   LIMIT 1;                                                  -- Los Angeles, California | 770915
 -- CASE is if/else: it turns each row into a label, which you can then group by
-SELECT CASE WHEN cases > 100000 THEN 'many' ELSE 'few' END AS size, count(*) AS num_counties
+SELECT (CASE WHEN cases > 100000 THEN 'many' ELSE 'few' END) AS size, count(*) AS num_counties
   FROM covid
   WHERE date = '2020-12-31'
   GROUP BY size;                                            -- many 16, few 3229
@@ -239,10 +243,10 @@ SELECT county, state, length(county) AS county_name_num_char
   ORDER BY county_name_num_char DESC
   LIMIT 3;                                                  -- Bristol Bay plus Lake and Peninsula 35, Prince of Wales-Hyder Census Area 33, Southeast Fairbanks Census Area 31 (all Alaska)
 -- substr(text, start, how many): the first 2 characters of a fips code are the state's code
-SELECT substr(fips, 1, 2) AS state_code, count(*)
+SELECT substr(fips, 1, 2) AS state_code, fips, count(*)
   FROM covid
   WHERE date = '2020-12-31' AND state = 'Texas'
-  GROUP BY state_code;                                      -- 48 | 254
+  GROUP BY state_code, fips;                                      -- 48 | 254
 -- trim removes the spaces at both ends (ltrim and rtrim only at one end), useful for messy CSVs
 SELECT '[' || trim('  Harris  ') || ']', '[' || ltrim('  Harris  ') || ']', --gluing again
        length('  Harris  '), length(trim('  Harris  '));   -- [Harris] | [Harris  ] | 10 | 6
@@ -265,6 +269,8 @@ awk -F, 'BEGIN {print "death_rate"} $3=="Texas" && $2=="Harris" && $1=="2020-12-
 awk -F, '$3=="Texas" && $2=="Harris" && $1=="2020-12-31" {printf "%.2f\n", 100 * $6 / $5}' covid.csv   # 1.43
 # the computed column, then ORDER BY it DESC LIMIT 3; $6 != "" is the IS NOT NULL
 awk -F, '$1=="2020-12-31" && $5 >= 1000 && $6 != "" {printf "%s,%s,%.2f\n", $2, $3, 100 * $6 / $5}' covid.csv | sort -t, -k3,3nr | head -n 3   # Unknown,Puerto Rico,38.79 Franklin,Massachusetts,7.20 New York City,New York,5.84
+# SELECT *, round(...): $0 is the whole line, then the computed column after it
+awk -F, -v OFS=, '$1=="2020-12-31" && $5 >= 1000 && $6 != "" {print $0, sprintf("%.2f", 100 * $6 / $5)}' covid.csv | sort -t, -k7,7nr | head -n 3   # 2020-12-31,Unknown,Puerto Rico,,3875,1503,38.79 ...
 # county || ', ' || state: in awk, gluing text is just putting the pieces next to each other
 awk -F, '$1=="2020-12-31" {print $2 ", " $3 "," $5}' covid.csv | sort -t, -k3,3nr | head -n 1   # Los Angeles, California,770915
 # CASE is the ? : operator (condition ? if true : if false), then group by the label
@@ -273,8 +279,8 @@ awk -F, '$1=="2020-12-31" {size = ($5 > 100000 ? "many" : "few"); n[size]++} END
 awk -F, '$1=="2020-12-31" && $3=="Texas" && $2=="Harris" {print toupper($2), tolower($3)}' covid.csv   # HARRIS texas
 # length
 awk -F, -v OFS=, '$1=="2020-12-31" {print $2, $3, length($2)}' covid.csv | sort -t, -k3,3nr | head -n 3   # Bristol Bay plus Lake and Peninsula,Alaska,35 ...
-# substr(fips, 1, 2), then group by it
-awk -F, '$1=="2020-12-31" && $3=="Texas" {n[substr($4, 1, 2)]++} END {for (c in n) print c "," n[c]}' covid.csv   # 48,254
+# substr(fips, 1, 2) and fips, grouped by both: one group per fips code
+awk -F, -v OFS=, '$1=="2020-12-31" && $3=="Texas" {n[substr($4, 1, 2) "," $4]++} END {for (k in n) print k, n[k]}' covid.csv | sort | head -n 3   # 48,48001,1 48,48003,1 48,48005,1
 # trim and ltrim: awk has neither, so gsub (every match) and sub (the first match) cut the spaces off
 awk 'BEGIN {x = "  Harris  "; y = x; gsub(/^ +| +$/, "", y); z = x; sub(/^ +/, "", z); print "[" y "]", "[" z "]", length(x), length(y)}'   # [Harris] [Harris  ] 10 6
 # county <> trim(county)
@@ -293,7 +299,7 @@ SELECT date, county, cases, coalesce(deaths, 0) AS deaths
   ORDER BY date DESC, county
   LIMIT 2;                                                  -- 2020-12-31 Adjuntas 396 0, 2020-12-31 Aguada 889 0
 -- careful: a missing number is not a zero. Filling in 0 changes every aggregate
-SELECT count(*) as num_rows, 
+SELECT count(*) AS num_rows, 
        count(deaths) AS num_times_death_recorded,
        round(avg(deaths), 2) AS avg_deaths_known, 
        round(avg(coalesce(deaths, 0)), 2) AS avg_deaths_zero_filled_for_unknown
@@ -327,8 +333,8 @@ awk -F, '$3=="Puerto Rico" {n++; if ($6 != "") d++} END {print n, d}' covid.csv 
 awk -F, '$3=="Puerto Rico"' covid.csv | shuf -n 10
 # coalesce(deaths, 0): ($6 == "" ? 0 : $6)
 awk -F, -v OFS=, '$3=="Puerto Rico" && $6=="" {print $1, $2, $5, ($6 == "" ? 0 : $6)}' covid.csv | sort -t, -k1,1r -k2,2 | head -n 2   # 2020-12-31,Adjuntas,396,0 2020-12-31,Aguada,889,0
-# avg(deaths) vs avg(coalesce(deaths, 0)): divide the same sum by the known count or by all the lines
-awk -F, '$3=="Puerto Rico" {n++; if ($6 != "") {k++; s += $6}} END {printf "%d %d %.0f %.0f\n", k, n, s / k, s / n}' covid.csv   # 294 19055 458 7
+# count(*), count(deaths), round(avg(deaths), 2), round(avg(coalesce(deaths, 0)), 2): divide the same sum by the known count or by all the lines
+awk -F, '$3=="Puerto Rico" {n++; if ($6 != "") {k++; s += $6}} END {printf "%d %d %.2f %.2f\n", n, k, s / k, s / n}' covid.csv   # 19055 294 457.54 7.06
 # the division by zero stops awk as well
 awk -F, '$1=="2020-12-31" {print $2, 100 * $6 / $5}' covid.csv > /dev/null   # fatal: division by zero attempted
 # NULLIF(cases, 0): test before dividing, and leave the field empty
@@ -459,7 +465,7 @@ Why does the following fail?
 
 ```sql
 -- group by two columns: one group per county (county names repeat across states, so state is needed too)
-SELECT state, county, max(cases) AS max_cases
+SELECT state, count(*), max(cases) AS max_cases
   FROM covid
   GROUP BY state
   ORDER BY max_cases DESC
@@ -537,8 +543,7 @@ SELECT date, extract(month FROM date) AS month, state, county
 SELECT extract(month FROM date) AS month, count(*)
   FROM covid
   GROUP BY month
-  ORDER BY month
-  LIMIT 3;                                                  -- 1 39, 2 359, 3 23482: the rows grow as the virus spreads
+  ORDER BY month;                                                  -- 1 39, 2 359, 3 23482: the rows grow as the virus spreads
 ```
 
 But `extract(month FROM date)` gives the month *number*, so it would put January 2020 and January 2021 in the same group. Grouping by week or month really needs dates you can do arithmetic on and cut down to the start of their week or month. Postgres treats a `date` as a number of days:
@@ -548,17 +553,17 @@ But `extract(month FROM date)` gives the month *number*, so it would put January
 -- (in a comparison with a date column, like date = '2020-12-31', Postgres works that out by itself)
 -- date - 7 is a week earlier, date - date is the number of days between them,
 -- interval '1 month' knows that months have different lengths, and current_date is today
-SELECT DATE '2020-12-31' - 7                         AS week_before,
-       DATE '2020-12-31' - DATE '2020-01-21'         AS days,
+SELECT DATE '2020-12-31' - 7                          AS week_before,
+       DATE '2020-12-31' - DATE '2020-01-21'          AS days,
        (DATE '2020-12-31' - interval '1 month')::date AS month_before,
-       current_date - DATE '2020-12-31'              AS days_since;  -- 2020-12-24 | 345 | 2020-11-30 | (depends on today)
+       current_date - DATE '2020-12-31'               AS days_since;  -- 2020-12-24 | 345 | 2020-11-30 | (depends on today)
 -- in a WHERE: Harris County a week before the end of the year
 SELECT county, cases
   FROM covid
   WHERE state = 'Texas' AND county = 'Harris'
     AND date = DATE '2020-12-31' - 7;                        -- Harris | 225102
 -- max(date) - min(date) per group: how many days of data each state has
-SELECT state, min(date) AS first_case, max(date) - min(date) AS days_with_data
+SELECT state, min(date) AS first_case, max(date) - min(date) AS day_range_recording
   FROM covid
   GROUP BY state
   ORDER BY first_case
@@ -624,7 +629,7 @@ In `awk` a date is just text, so there is no date arithmetic. `extract` and cutt
 ```bash
 # extract(month ...): substr cuts characters 6 and 7 out of YYYY-MM-DD, and + 0 turns "03" into 3
 awk -F, -v OFS=, 'NR>1 {print $1, substr($1, 6, 2) + 0, $3, $2}' covid.csv | sort | head -n 3   # 2020-01-21,1,Washington,Snohomish ...
-awk -F, 'NR>1 {n[substr($1, 6, 2) + 0]++} END {for (m in n) print m "," n[m]}' covid.csv | sort -t, -k1,1n | head -n 3   # 1,39 2,359 3,23482
+awk -F, 'NR>1 {n[substr($1, 6, 2) + 0]++} END {for (m in n) print m "," n[m]}' covid.csv | sort -t, -k1,1n   # 1,39 2,359 3,23482 ... 12,100603
 # date - 7, date - date (in seconds since 1970, divided by the 86400 seconds of a day) and - 1 month
 date -d "2020-12-31 - 7 days" +%F                                                      # 2020-12-24
 echo $(( ($(date -d 2020-12-31 +%s) - $(date -d 2020-01-21 +%s)) / 86400 ))            # 345
@@ -642,16 +647,16 @@ awk -F, 'NR>1 {m = substr($1, 1, 7); if (!seen[m "," $3 "," $2]++) n[m]++} END {
 paste -d, <(awk -F, '$3=="Texas" && $2=="Harris" {print $1}' covid.csv | date -f - +%G-W%V) \
           <(awk -F, '$3=="Texas" && $2=="Harris" {print $5}' covid.csv) |
   awk -F, '$2 > m[$1] {m[$1] = $2} END {for (w in m) print w "," m[w]}' | sort -r | head -n 3   # 2020-W53,237727 2020-W52,231707 2020-W51,219265
-# extract(dow ...) with to_char(..., 'Dy'): count the rows per date, then date +%w,%a turns each date into "0,Sun" etc.
-awk -F, 'NR>1 {n[$1]++} END {for (k in n) print k "," n[k]}' covid.csv | sort > rows_per_day.csv
-paste -d, <(cut -d, -f1 rows_per_day.csv | date -f - +%w,%a) <(cut -d, -f2 rows_per_day.csv) |
-  awk -F, '{n[$1 "," $2] += $3} END {for (k in n) print k "," n[k]}' | sort   # 0,Sun,125919 1,Mon,126279 ... 6,Sat,125551
+# extract(dow ...) with to_char(..., 'Dy') and sum(cases): sum per date, then date +%w,%a turns each date into "0,Sun" etc.
+awk -F, 'NR>1 {d[$1] += $5} END {for (k in d) print k "," d[k]}' covid.csv | sort > cases_per_day.csv
+paste -d, <(cut -d, -f1 cases_per_day.csv | date -f - +%w,%a) <(cut -d, -f2 cases_per_day.csv) |
+  awk -F, '{n[$1 "," $2] += $3} END {for (k in n) print k "," n[k]}' | sort   # 0,Sun,243752175 1,Mon,246479319 ... 6,Sat,241381234
 # the new cases by day of the week: national totals per day, minus the day before (the lag), then grouped by weekday
 awk -F, 'NR>1 {d[$1] += $5} END {for (k in d) print k "," d[k]}' covid.csv | sort |
   awk -F, -v OFS=, 'NR > 1 {print $1, $2 - prev} {prev = $2}' > new_cases.csv
 paste -d, <(cut -d, -f1 new_cases.csv | date -f - +%w,%a) <(cut -d, -f2 new_cases.csv) |
   awk -F, '{n[$1 "," $2] += $3; t += $3} END {for (k in n) printf "%s,%d,%.1f\n", k, n[k], 100 * n[k] / t}' | sort   # 0,Sun,2370941,11.8 ... 6,Sat,2809393,14.0
-rm rows_per_day.csv new_cases.csv
+rm cases_per_day.csv new_cases.csv
 ```
 
 Note the `(!)`: the shell's "1 month before 2020-12-31" is 2020-11-31, which does not exist, so `date` rolls over to 2020-12-01. Postgres's `interval '1 month'` knows that November has 30 days and gives 2020-11-30.
@@ -666,6 +671,8 @@ Here is a translation for `awk` (for reference only - I don't expect you to beco
 # group by two columns: glue state and county into one array index, k = $3 "," $2 (county names repeat across states)
 awk -F, 'NR>1 {k = $3 "," $2; if ($5 > m[k]) m[k] = $5} END {for (k in m) print k "," m[k]}' covid.csv |
   sort -t, -k3,3nr | head -n 3     # California,Los Angeles,770915 New York,New York City,430863 Illinois,Cook,393652
+# count(*) and max(cases) per state, ORDER BY max_cases DESC LIMIT 3
+awk -F, -v OFS=, 'NR>1 {n[$3]++; if ($5 > m[$3]) m[$3] = $5} END {for (s in n) print s, n[s], m[s]}' covid.csv | sort -t, -k3,3nr | head -n 3   # California,16801,770915 New York,16808,430863 Illinois,28236,393652
 # count(*) per state, ORDER BY count(*)
 awk -F, '$1=="2020-12-31" {n[$3]++} END {for (s in n) print s "," n[s]}' covid.csv |
   sort -t, -k2,2n                   # District of Columbia,1 Guam,1 Northern Mariana Islands,2 Virgin Islands,3 Delaware,4 ...
@@ -982,17 +989,7 @@ SELECT date, county, state, cases AS maximum_cases
   );                  -- 2020-12-31 | Los Angeles | California | 770915
 ```
 
-
-
-
-
-
-
-
-
-
-
-
+Answer:
 
 ```sql
 -- the inner query needs its own WHERE too, otherwise it finds the max of the whole country
@@ -1006,651 +1003,13 @@ SELECT date, county, cases AS maximum_cases
     );  -- 2020-12-31 | Harris | 237727
 ```  
 
-Any aggregate works for scalar subqueries e.g. the counties above the national mean (6171) at the end of 2020
-
-```sql 
-SELECT count(*)
-  FROM covid
-  WHERE date = '2020-12-31'
-    AND cases > (
-      SELECT avg(cases)
-        FROM covid
-        WHERE date = '2020-12-31'
-    );                                                      -- 587 of the 3245
-```
-
-A subquery can also sit in the `SELECT`, as one more column. Which counties alone had more than 1% of all the cases in the country at the end of 2020, and what share did each have?
-
-```sql
--- the same subquery twice: once to filter the rows, once to compute each county's share
-SELECT county, state, cases,
-       round(100.0 * cases / (
-         SELECT sum(cases)
-           FROM covid
-           WHERE date = '2020-12-31'
-       ), 1) AS pct_of_usa
-  FROM covid
-  WHERE date = '2020-12-31'
-    AND cases > 0.01 * (
-      SELECT sum(cases)
-        FROM covid
-        WHERE date = '2020-12-31'
-    )
-  ORDER BY cases DESC;
--- Los Angeles   | California | 770915 | 3.8
--- New York City | New York   | 430863 | 2.2
--- Cook          | Illinois   | 393652 | 2.0
--- Maricopa      | Arizona    | 322449 | 1.6
--- Miami-Dade    | Florida    | 298872 | 1.5
--- Harris        | Texas      | 237727 | 1.2
-```
-
-Only 6 of the 3,245 counties, and together they had 12.3% of all the cases in the US. Why `100.0` and not `100`? `cases` and `sum(cases)` are whole numbers, and dividing two whole numbers in SQL throws away the remainder, so the shares would come out as 3, 2, 1, 1, 1, 1.
-
-The subquery must return what its place in the outer query expects. After `=`, `<` or `>` it stands for a **single value**, so it must return exactly one row and one column, of a type that can be compared with the other side. Aggregates without `GROUP BY` always return one row, which is why they are the usual inner query. Get the shape or the type wrong and Postgres refuses. 
-
-How do you think each of the following will error?
-
-```sql
-SELECT county
-  FROM covid
-  WHERE cases = (
-    SELECT cases
-      FROM covid
-      WHERE state = 'Texas'
-  );
-SELECT county
-  FROM covid
-  WHERE cases = (
-    SELECT max(cases), min(cases)
-      FROM covid
-  );
-SELECT county
-  FROM covid
-  WHERE cases = (
-    SELECT max(date)
-      FROM covid
-  );
-SELECT county
-  FROM covid
-  WHERE cases = (
-    SELECT max(cases)
-      FROM covid
-      WHERE state = 'Atlantis'
-  ); 
-```
-
-We can use multiple-value vector subqueries when they're appropriate. For example, after `IN`, the subquery stands for a **list of values** instead, so it may return many rows, but still only one column:
-
-```sql
--- all counties in the states that have at least one county above 200,000 cases
-SELECT count(*)
-  FROM covid
-  WHERE date = '2020-12-31'
-    AND state IN (
-      SELECT state
-        FROM covid
-        WHERE date = '2020-12-31' AND cases > 200000
-    );                                                      -- 555
-```
-
-Up until now the subqueries were all used as stand-ins for values within the `WHERE`. We will now look at subqueries as `FROM`. 
-A subquery in `FROM` is called a **derived table**. Postgres treats its answer as a temporary table and needs a name to refer to it, e.g. `SELECT t.state ... FROM ( ... ) AS t`. The `t` is the common "throwaway" name and it is nothing but an arbitrary alias just like for a column `AS <my_new_col_name>`. In those below nothing refers to `t`, because `count(*)` and `sum(deaths)` need no table name, and since version 16 Postgres lets you leave the alias out. We will write the alias in anyway: older Postgres versions refuse the query with `ERROR: subquery in FROM must have an alias`, and so do other SQL dialects such as MySQL and SQL Server. The `AS` is also optional here.
-
-
-```sql
-SELECT count(*)
-  FROM ( --this whole chunk creates a derived on-the-fly table
-    SELECT state, county
-      FROM covid
-      WHERE date BETWEEN '2020-12-01' AND '2020-12-31'
-    EXCEPT
-    SELECT state, county
-      FROM covid
-      WHERE date BETWEEN '2020-03-01' AND '2020-03-31'
-  ) AS t;  -- 1104
-```
-
-It is nicer to actually name the throwaway table because you write code for yourself, not for the SQL interpreter:
-
-```sql
-SELECT count(*)
-  FROM ( --this whole chunk creates a derived on-the-fly table
-    SELECT state, county
-      FROM covid
-      WHERE date BETWEEN '2020-12-01' AND '2020-12-31'
-    EXCEPT
-    SELECT state, county
-      FROM covid
-      WHERE date BETWEEN '2020-03-01' AND '2020-03-31'
-  ) AS covid_state_county_subset;  -- 1104
-```
-
-An example with the set operations I promised to return to from above:
-
-```sql                                                   
-SELECT sum(deaths)                                                      
-  FROM (
-    SELECT deaths
-      FROM covid
-      WHERE date = '2020-12-31' AND state = 'Vermont'
-    UNION
-    SELECT deaths
-      FROM covid
-      WHERE date = '2020-12-31' AND state = 'New Hampshire'
-  ) AS covid_death_subset;                                                    -- 870, wrong -- why?
-SELECT sum(deaths)
-  FROM (
-    SELECT deaths
-      FROM covid
-      WHERE date = '2020-12-31' AND state = 'Vermont'
-    UNION ALL
-    SELECT deaths
-      FROM covid
-      WHERE date = '2020-12-31' AND state = 'New Hampshire'
-  ) AS covid_death_subset;                                                    -- 895, right
-```
-
-When do you actually need an alias? When two tables in one query have columns with the same name and you must say which one you mean. The alias works the same way for a real table as for a derived table: `FROM covid AS c` names this use of `covid` `c`. Here is the biggest county of each state, which `GROUP BY state` cannot give (it finds the biggest number, not the county it belongs to). The inner query also reads `covid`, so a bare `state` inside it means the inner `covid.state`, and `c.state` is the state of the outer row:
-
-```sql
--- with the alias: c.state is the outer row's state, so the inner max is that state's max
-SELECT state, county, cases
-  FROM covid AS c
-  WHERE date = '2020-12-31'
-    AND cases = (
-      SELECT max(cases)
-        FROM covid
-        WHERE date = '2020-12-31' AND state = c.state
-    )
-  ORDER BY state
-  LIMIT 3;                                                  -- Alabama Jefferson 52339, Alaska Anchorage 22820, Arizona Maricopa 322449
--- without the alias: state = state is true on every row, so the inner max is the max of the whole country
-SELECT state, county, cases
-  FROM covid
-  WHERE date = '2020-12-31'
-    AND cases = (
-      SELECT max(cases)
-        FROM covid
-        WHERE date = '2020-12-31' AND state = state
-    )
-  ORDER BY state
-  LIMIT 3;                                                  -- California Los Angeles 770915, and no error: just a wrong answer
-```
-
-The inner subquery here is **correlated**: it uses a value from the outer row, so Postgres runs it again for every outer row (or finds a smarter plan that gives the same answer). We will see a cleaner way to get the top row per group with window functions (coming later).
-
-Two more places a subquery can go. `EXISTS ( ... )` is true if the inner query returns at least one row, whatever is in it (so the inner `SELECT` is usually just `SELECT 1`), and `NOT EXISTS` is true if it returns none. It is almost always correlated, so the outer `covid` again gets the alias `c`:
-
-```sql
--- the states where no county reached 20000 cases by the end of 2020
-SELECT DISTINCT state
-  FROM covid AS c
-  WHERE date = '2020-12-31'
-    AND NOT EXISTS (
-      SELECT 1
-        FROM covid
-        WHERE date = '2020-12-31' AND state = c.state AND cases > 20000
-    )
-  ORDER BY state;
--- Guam, Hawaii, Maine, Mississippi, Montana, New Hampshire, North Dakota, Northern Mariana Islands,
--- Puerto Rico, Vermont, Virgin Islands, West Virginia, Wyoming (13 rows; EXISTS instead gives the other 42)
-```
-
-A subquery also works in `HAVING`, to compare each group with a number computed from all the groups. The average state total is the national total divided by the number of states, which one subquery can compute:
-
-```sql
--- the states whose total cases are above the average state total (364087, over 55 states and territories)
-SELECT state, sum(cases) AS total_cases
-  FROM covid
-  WHERE date = '2020-12-31'
-  GROUP BY state
-  HAVING sum(cases) > (
-    SELECT sum(cases) / count(DISTINCT state)
-      FROM covid
-      WHERE date = '2020-12-31'
-  )
-  ORDER BY total_cases DESC;
--- California 2307860, Texas 1770527, Florida 1323307, ..., Massachusetts 375178 (18 rows)
-```
-
-Only 18 of the 55 are above the average: a few huge states pull it up, just as the few huge counties did for the county mean.
-
-
-
-
-
-
 In `awk` a subquery is a **second pass** over the file. Giving `awk` the same file twice, `covid.csv covid.csv`, reads it twice. `NR==FNR` is true only during the first file (`NR` counts all lines read so far, `FNR` only those of the current file), so the first block computes the inner answer and `next` skips the rest; the pattern after it runs on the second pass:
 
 ```bash
 # max(cases) alone: one pass
 awk -F, 'NR>1 && $5 > m {m = $5} END {print m}' covid.csv   # 770915
-# the max, then the row(s) with the max
+# the max, then the row(s) with the max: two passes over the same file
 awk -F, -v OFS=, 'NR==FNR {if (FNR>1 && $5 > m) m = $5; next} FNR>1 && $5 == m {print $1, $2, $3, $5}' covid.csv covid.csv   # 2020-12-31,Los Angeles,California,770915
 # the same within Texas: both passes have the Texas test
 awk -F, -v OFS=, 'NR==FNR {if ($3=="Texas" && $5 > m) m = $5; next} $3=="Texas" && $5 == m {print $1, $2, $5}' covid.csv covid.csv   # 2020-12-31,Harris,237727
-# above the mean: the first pass computes the mean, the second counts
-awk -F, 'NR==FNR {if ($1=="2020-12-31") {s += $5; n++}; next} $1=="2020-12-31" && $5 > s/n {c++} END {print c}' covid.csv covid.csv   # 587
-# the share of the national total: the first pass sums, the second filters and divides
-awk -F, 'NR==FNR {if ($1=="2020-12-31") s += $5; next} $1=="2020-12-31" && $5 > 0.01 * s {printf "%s,%s,%d,%.1f\n", $2, $3, $5, 100 * $5 / s}' covid.csv covid.csv | sort -t, -k3,3nr   # Los Angeles,California,770915,3.8 ... Harris,Texas,237727,1.2
-# IN (subquery): the first pass remembers the states in an array, the second tests membership with "in"
-awk -F, 'NR==FNR {if ($1=="2020-12-31" && $5 > 200000) big[$3] = 1; next} $1=="2020-12-31" && ($3 in big) {c++} END {print c}' covid.csv covid.csv   # 555
-# the EXCEPT in FROM, then count(*): the first pass remembers the March counties, the second counts the December ones not among them (once each)
-awk -F, 'NR==FNR {if ($1 >= "2020-03-01" && $1 <= "2020-03-31") mar[$3 "," $2] = 1; next} $1 >= "2020-12-01" && $1 <= "2020-12-31" && !(($3 "," $2) in mar) && !seen[$3 "," $2]++ {c++} END {print c}' covid.csv covid.csv   # 1104
-# sum over a UNION: sort -u removes the repeated numbers, as UNION does
-{ awk -F, '$1=="2020-12-31" && $3=="Vermont" {print $6}' covid.csv
-  awk -F, '$1=="2020-12-31" && $3=="New Hampshire" {print $6}' covid.csv; } | sort -u | awk '{s += $1} END {print s}'   # 870, wrong
-# sum over a UNION ALL: no sort -u, every row counts
-{ awk -F, '$1=="2020-12-31" && $3=="Vermont" {print $6}' covid.csv
-  awk -F, '$1=="2020-12-31" && $3=="New Hampshire" {print $6}' covid.csv; } | awk '{s += $1} END {print s}'   # 895, right
-# the biggest county of each state: the first pass keeps each state's max in an array, the second finds its row
-awk -F, -v OFS=, 'NR==FNR {if ($1=="2020-12-31" && $5 > m[$3]) m[$3] = $5; next} $1=="2020-12-31" && $5 == m[$3] {print $3, $2, $5}' covid.csv covid.csv | sort | head -n 3   # Alabama,Jefferson,52339 Alaska,Anchorage,22820 Arizona,Maricopa,322449
-# NOT EXISTS: the first pass remembers the states that have such a county, the second keeps the others (once each)
-awk -F, 'NR==FNR {if ($1=="2020-12-31" && $5 > 20000) big[$3] = 1; next} $1=="2020-12-31" && !($3 in big) && !seen[$3]++ {print $3}' covid.csv covid.csv | sort   # Guam ... Wyoming (13 lines)
-# HAVING with a subquery: one pass for the state totals, then the average and the test both in END
-awk -F, -v OFS=, '$1=="2020-12-31" {s[$3] += $5} END {for (st in s) {t += s[st]; n++}; for (st in s) if (s[st] > t / n) print st, s[st]}' covid.csv | sort -t, -k2,2nr   # California,2307860 ... Massachusetts,375178 (18 lines)
 ```
-
-Why do you think `awk` has to do two passes of the dataset?
-
-The `awk` version reads the 35 MB file twice. Without an index Postgres also scans the table twice, but with the index on `(state, county)` both passes of the Texas query read only the 67,002 Texas rows instead of all 884,737. So an index speeds up a subquery the same way it speeds up any query: each pass costs $O(\log n + k)$ instead of $O(n)$.
-
-
-
-## Changing the data: `INSERT`, `UPDATE` and `DELETE`
-
-We are still not done with querying a single table. But we should introduce write operations first as it will make clear why the next querying commands are useful. 
-
-Three commands change the table's rows. Let's try them on a copy, so `covid` itself stays as it is. `CREATE TABLE ... AS SELECT` saves the answer of any query as a new table:
-
-```sql
--- a new table holding the Texas rows (it is a real copy: later changes to covid do not reach it)
-CREATE TABLE texas AS (
-  SELECT *
-    FROM covid
-    WHERE state = 'Texas'
-  );                                           -- SELECT 67002
-\dt
-SELECT count(*) 
-  FROM texas;
--- INSERT adds rows; the values go in the order of the columns
-INSERT INTO texas VALUES ('2021-01-01', 'Harris', 'Texas', '48201', 239000, 3500);   -- INSERT 0 1
--- or name the columns you give; the ones you leave out become NULL
-INSERT INTO texas (date, county, state, cases) VALUES ('2021-01-01', 'Dallas', 'Texas', 195000);   -- INSERT 0 1
-SELECT count(*) 
-  FROM texas;
-SELECT *
-  FROM texas
-  WHERE date = '2021-01-01';                                -- the two new rows, Dallas with no fips and no deaths
--- UPDATE changes the columns after SET, in every row its WHERE matches
-UPDATE texas SET deaths = 2400
-  WHERE county = 'Dallas' AND date = '2021-01-01';          -- UPDATE 1
-UPDATE texas SET county = 'Harris County'
-  WHERE county = 'Harris';                                  -- UPDATE 303: one command, every matching row
--- DELETE removes every row its WHERE matches
-DELETE FROM texas
-  WHERE date = '2021-01-01';                                -- DELETE 2
--- RETURNING * also shows the rows that were just removed (it works with INSERT and UPDATE too)
-DELETE FROM texas
-  WHERE county = 'Unknown'
-  RETURNING *;                                              -- 2020-03-24 | Unknown | Texas | | 0 | 1, then DELETE 1
-SELECT count(*)
-  FROM texas;                                               -- 67001
--- DROP TABLE removes the whole table
-DROP TABLE texas;
-```
-
-After each command `psql` reports how many rows it touched (`UPDATE 303`, `DELETE 2`). Read that number every time. It is your only check that the `WHERE` matched what you meant, unless you add `RETURNING`, which shows you *which* rows were touched, not just how many.
-
-::: {.callout-warning}
-## `UPDATE` and `DELETE` without `WHERE`
-`DELETE FROM texas;` deletes *every* row, and `UPDATE texas SET deaths = 0;` changes every row, with no question asked and no undo. Before you run one, run the same `WHERE` as a `SELECT count(*)` first, and check the number.
-:::
-
-Compare this with Lab 3, Part 5: adding or deleting a single row of a Parquet file meant reading and rewriting the whole file. Here each command touches only the rows it names. A database does not care where a row "goes": it writes the change into free space and updates its index, which takes a fraction of a millisecond. You can also wrap several changes in a **transaction** (`BEGIN; ... COMMIT;`), and either all of them happen or none of them do. If the machine crashes halfway through, the database recovers to a consistent state.
-
-
-### The database checks your data
-
-Try to add a row with a nonsense value:
-
-```sql
-INSERT INTO covid VALUES ('2021-01-01', 'Harris', 'Texas', '48201', 'N/A', 0);
--- ERROR:  invalid input syntax for type integer: "N/A"
-```
-
-A CSV would have accepted that line without complaint, and the problem would have appeared much later, in the middle of an analysis. A database refuses bad data at the door. Types are the simplest of its guarantees. Later you can add rules such as `NOT NULL`, `UNIQUE` and `CHECK`.
-
-### Changing the table itself: `ALTER TABLE`
-
-
-`INSERT`, `UPDATE` and `DELETE` change the rows. `ALTER TABLE` changes the *table*: its columns, their names and their types. Again on a copy, here of the whole table:
-
-```sql
-CREATE TABLE covid_copy AS SELECT *
-  FROM covid;                                                            -- SELECT 884737
-\timing on
--- ADD COLUMN: every existing row gets NULL in the new column
-ALTER TABLE covid_copy ADD COLUMN notes text;                             -- about 2 ms
--- or a DEFAULT value instead of NULL, also in about 2 ms
-ALTER TABLE covid_copy ADD COLUMN reviewed boolean DEFAULT false;
--- a new column is usually filled in with UPDATE
-ALTER TABLE covid_copy ADD COLUMN death_rate double precision;
-UPDATE covid_copy SET death_rate = deaths::float / cases
-  WHERE cases > 0;                                                        -- UPDATE 884022, about 2 s: every row is rewritten
--- RENAME COLUMN and DROP COLUMN
-ALTER TABLE covid_copy RENAME COLUMN death_rate TO cfr;                   -- about 2 ms
-ALTER TABLE covid_copy DROP COLUMN notes;                                 -- about 2 ms
--- ALTER COLUMN ... TYPE: a bigger type, for when cases might pass 2 billion
-ALTER TABLE covid_copy ALTER COLUMN cases TYPE bigint;                    -- about 1.3 s
--- text to integer has no automatic conversion
-ALTER TABLE covid_copy ALTER COLUMN fips TYPE integer;
--- ERROR:  column "fips" cannot be cast automatically to type integer
--- HINT:  You might need to specify "USING fips::integer".
--- (USING fips::integer would work, but would turn '01001' into 1001: this is why fips is text)
--- RENAME TO renames the table itself
-ALTER TABLE covid_copy RENAME TO covid_scratch;
-\timing off
-\d covid_scratch
-DROP TABLE covid_scratch;
-```
-
-Adding, renaming or dropping a column takes a few milliseconds whatever the size of the table, because Postgres only changes its description of the table (what `\d` prints). It does not touch the rows. A dropped column is just hidden, and its space is reclaimed later as the rows are rewritten. Changing a column's type is different: every value must be converted, so the whole table is rewritten, and it takes about as long as the `UPDATE` does.
-
-Compare this with Parquet. A Parquet file stores each column separately, but its metadata and row groups are written once, so even adding a column means writing a new file. With a table split over thousands of Parquet files, adding one column means rewriting every one of them.
-
-## Window functions
-
-An aggregate with `GROUP BY` boils each group down to one row. A **window function** computes the same kind of per-group answer but *keeps every row*, and writes the answer next to it. The group is called the **window** and is given after `OVER`: `PARTITION BY` says which rows belong together (like `GROUP BY`), and `ORDER BY` says in which order to go through them. Window functions are standard SQL and work in almost every database (Postgres, MySQL, SQLite, DuckDB, BigQuery, Spark).
-
-The classic use is the **top row per group**, such as each state's biggest county. `GROUP BY state` cannot do it, for the same reason as `max(cases)` in the subquery section: it finds the biggest number but not the county it belongs to. `row_number()` numbers the rows of each state from 1, biggest first, and then we keep the 1s:
-
-```sql
--- the top 3 per state is just r <= 3, which GROUP BY can't do at all
-SELECT county, cases, r
-  FROM (
-    SELECT state, county, cases,
-           row_number() OVER (PARTITION BY state ORDER BY cases DESC) AS r
-      FROM covid
-      WHERE date = '2020-12-31'
-  ) AS t
-  WHERE state = 'Texas' AND r <= 3
-  ORDER BY r;                                               -- Harris 237727 1, Dallas 193318 2, Tarrant 150004 3
--- the window function can't go in WHERE (WHERE runs before it is computed), so it goes in a subquery in FROM
-SELECT state, county, cases
-  FROM (
-    SELECT state, county, cases,
-           row_number() OVER (PARTITION BY state ORDER BY cases DESC) AS r
-      FROM covid
-      WHERE date = '2020-12-31'
-  ) AS t
-  WHERE r = 1
-  ORDER BY state
-  LIMIT 10;                                                  -- Alabama Jefferson 52339, Alaska Anchorage 22820, Arizona Maricopa 322449
--- rank() gives tied rows the same number, then skips: here 1, 1, 3, 3 (row_number would give 1, 2, 3, 4)
--- with no PARTITION BY the window is the whole answer
-SELECT state, county, cases, rank() OVER (ORDER BY cases) AS r
-  FROM covid
-  WHERE date = '2020-12-31'
-  ORDER BY cases
-  LIMIT 4;                                                  -- Kansas/Maryland Unknown 0 1, Hawaii Kalawao 1 3, Maine Unknown 1 3
--- an aggregate with OVER: each county next to the total of its state, and its share of it
-SELECT county, cases,
-       round(100.0 * cases / sum(cases) OVER (PARTITION BY state), 1) AS pct_of_state
-  FROM covid
-  WHERE date = '2020-12-31' AND state = 'Texas'
-  ORDER BY cases DESC
-  LIMIT 3;                                                  -- Harris 13.4%, Dallas 10.9%, Tarrant 8.5%
--- lag() looks at the previous row of the window. cases is a running total, so today minus yesterday = the new cases
-SELECT date, cases, cases - lag(cases) OVER (ORDER BY date) AS new_cases
-  FROM covid
-  WHERE state = 'Texas' AND county = 'Harris'
-  ORDER BY date DESC
-  LIMIT 3;                                                  -- 2020-12-31 237727 1054, 2020-12-30 236673 1937, 2020-12-29 234736 1406
--- the same for every county at once: PARTITION BY restarts lag() at each county
-SELECT county, state, new_cases
-  FROM (
-    SELECT county, state, date,
-           cases - lag(cases) OVER (PARTITION BY state, county ORDER BY date) AS new_cases
-      FROM covid
-  ) AS t
-  WHERE date = '2020-12-31'
-  -- NULLS LAST: lag() has no previous row on a county's first day, so new_cases is NULL there,
-  -- and DESC sorts NULLs first; NULLS LAST puts them at the end instead (NULLS FIRST does the opposite)
-  ORDER BY new_cases DESC NULLS LAST
-  LIMIT 3;                                                  -- Los Angeles 14503, Maricopa 5181, New York City 4584
-```
-
-Postgres also has a shortcut for the top row per group, `SELECT DISTINCT ON (state) state, county, cases FROM covid WHERE date = '2020-12-31' ORDER BY state, cases DESC`, but it works only in Postgres and keeps just one of several tied rows. Window functions work everywhere and let you choose how to treat ties.
-
-They have a cost. A window function must **sort** the rows of each window, which is $O(n \log n)$. For one day (3,245 rows) that is cheap, about 26 ms here. For the latest row of every county over the whole table (884,737 rows) it took about 1.5 s, while a `GROUP BY` version (`max(date)` per county, then an `IN` subquery to find those rows) took about 0.3 s, because a `GROUP BY` can use a hash table, which needs no sort.
-
-In `awk` a window is "sort by the group, then walk down the lines remembering the previous one". The `sort` does what `PARTITION BY ... ORDER BY` does:
-
-```bash
-# row_number() = 1: sort by state, then cases from biggest, and keep the first line of each state
-awk -F, -v OFS=, '$1=="2020-12-31" {print $3, $2, $5}' covid.csv | sort -t, -k1,1 -k3,3nr | awk -F, '!seen[$1]++' | head -n 3   # Alabama,Jefferson,52339 Alaska,Anchorage,22820 Arizona,Maricopa,322449
-# row_number(): NR after the sort is the row number
-awk -F, -v OFS=, '$1=="2020-12-31" && $3=="Texas" {print $2, $5}' covid.csv | sort -t, -k2,2nr | awk -v OFS=, '{print $0, NR}' | head -n 3   # Harris,237727,1 Dallas,193318,2 Tarrant,150004,3
-# rank(): the line number of the first line with this value
-awk -F, -v OFS=, '$1=="2020-12-31" {print $3, $2, $5}' covid.csv | sort -t, -k3,3n | awk -F, -v OFS=, '{if (NR == 1 || $3 != prev) r = NR; prev = $3; print $0, r}' | head -n 4   # Kansas,Unknown,0,1 Maryland,Unknown,0,1 Hawaii,Kalawao,1,3 Maine,Unknown,1,3
-# sum() OVER (PARTITION BY state): a first pass for the total, as for subqueries
-awk -F, 'NR==FNR {if ($1=="2020-12-31" && $3=="Texas") s += $5; next} $1=="2020-12-31" && $3=="Texas" {printf "%s,%d,%.1f\n", $2, $5, 100 * $5 / s}' covid.csv covid.csv | sort -t, -k2,2nr | head -n 3   # Harris,237727,13.4 Dallas,193318,10.9 Tarrant,150004,8.5
-# lag(): remember the previous line's value
-awk -F, -v OFS=, '$3=="Texas" && $2=="Harris" {print $1, $5}' covid.csv | sort | awk -F, -v OFS=, '{print $1, $2, (NR > 1 ? $2 - prev : ""); prev = $2}' | tail -n 3   # 2020-12-29,234736,1406 2020-12-30,236673,1937 2020-12-31,237727,1054
-# lag() with PARTITION BY: also remember the previous line's county, and only subtract within the same one
-awk -F, -v OFS=, 'NR>1 {print $3, $2, $1, $5}' covid.csv | sort -t, -k1,1 -k2,2 -k3,3 | awk -F, -v OFS=, '{k = $1 "," $2; if (k == pk && $3 == "2020-12-31") print $2, $1, $4 - prev; pk = k; prev = $4}' | sort -t, -k3,3nr | head -n 3   # Los Angeles,California,14503 Maricopa,Arizona,5181 New York City,New York,4584
-```
-
-
-## `WITH`: naming a subquery
-
-Subqueries in `FROM` (derived table), like the window function queries above, get hard to read as they nest. `WITH` lets you write the inner query first and give it a name, a **common table expression** (CTE). After that, the name works like a table, for this one query only: 
-
-```sql
--- the top county per state from the window function section, written with WITH: read it top to bottom
-WITH ranked AS (
-  SELECT state, county, cases,
-         row_number() OVER (PARTITION BY state ORDER BY cases DESC) AS r
-    FROM covid
-    WHERE date = '2020-12-31'
-)
-SELECT state, county, cases
-  FROM ranked
-  WHERE r = 1
-  ORDER BY state
-  LIMIT 3;                                                  -- Alabama Jefferson 52339, Alaska Anchorage 22820, Arizona Maricopa 322449
--- a name can be used more than once: here in the outer query and in its subquery, so the date is written only once
-WITH dec31 AS (
-  SELECT *
-    FROM covid
-    WHERE date = '2020-12-31'
-)
-SELECT count(*)
-  FROM dec31
-  WHERE cases > (
-    SELECT avg(cases)
-      FROM dec31
-  );                                                        -- 587, as in the subquery section
--- names can build on each other, separated by commas: national totals per day, then the new cases per day
-WITH daily AS (
-  SELECT date, sum(cases) AS cases
-    FROM covid
-    GROUP BY date
-),
-new AS (
-  SELECT date, cases - lag(cases) OVER (ORDER BY date) AS new_cases
-    FROM daily
-)
-SELECT date, new_cases
-  FROM new
-  ORDER BY new_cases DESC NULLS LAST
-  LIMIT 3;                                                  -- 2020-12-11 280016, 2020-12-18 251190, 2020-12-16 244827
--- a window can also be a range of rows around the current one: the 7-day moving average of the new cases
-WITH daily AS (
-  SELECT date, sum(cases) AS cases
-    FROM covid
-    GROUP BY date
-),
-new AS (
-  SELECT date, cases - lag(cases) OVER (ORDER BY date) AS new_cases
-    FROM daily
-)
-SELECT date, new_cases,
-       round(avg(new_cases) OVER (ORDER BY date ROWS BETWEEN 6 PRECEDING AND CURRENT ROW)) AS week_avg
-  FROM new
-  ORDER BY date DESC
-  LIMIT 2;                                                  -- 2020-12-31 231024 188556, 2020-12-30 228949 183197
-```
-
-The third query needs `NULLS LAST` for the same reason as in the window functions section: `lag()` has no previous row on the first day, so that day's `new_cases` is `NULL`, and `DESC` would sort it first. In the same way, `sum(new_cases) OVER (ORDER BY date)` (no `ROWS ...`) is a **running total**: the sum of all rows up to the current one.
-
-In the shell, the closest thing to a CTE is saving an intermediate result to a file, for example `awk -F, '$1=="2020-12-31"' covid.csv > dec31.csv`, and then using `dec31.csv` in the next commands. Pipes play the role of names that build on each other. (The first two `WITH` queries, `ranked` and `dec31`, give the same answers as queries already mirrored above: the `row_number() = 1` pipeline in the window functions section and the above-the-mean two-pass `awk` in the subquery section.)
-
-```bash
-# daily: national totals per day; then new: the change from the previous day (lag)
-awk -F, 'NR>1 {d[$1] += $5} END {for (k in d) print k "," d[k]}' covid.csv | sort |
-  awk -F, -v OFS=, 'NR > 1 {print $1, $2 - prev} {prev = $2}' | sort -t, -k2,2nr | head -n 3   # 2020-12-11,280016 ...
-# the 7-day moving average: keep the last 7 new counts in an array, w[NR % 7], and average them
-awk -F, 'NR>1 {d[$1] += $5} END {for (k in d) print k "," d[k]}' covid.csv | sort |
-  awk -F, 'NR > 1 {new = $2 - prev; w[NR % 7] = new; n = (NR - 1 < 7 ? NR - 1 : 7); s = 0; for (i in w) s += w[i]; printf "%s,%d,%.0f\n", $1, new, s / n} {prev = $2}' | tail -n 2   # 2020-12-30,228949,183197 and 2020-12-31,231024,188556
-```
-
-
-## Views: naming a query for good
-
-A CTE's name lasts for one query. A **view** is a named query *saved in the database*: every later query, in any session, from `psql`, R or Python, can use it like a table, until you remove it.
-
-```sql
--- the dec31 CTE from above, saved once
-CREATE VIEW dec31 AS SELECT *
-  FROM covid
-  WHERE date = '2020-12-31';
--- now it works in any query, without repeating the WITH
-SELECT count(*)
-  FROM dec31;                                               -- 3245
-SELECT county, cases
-  FROM dec31
-  WHERE state = 'Texas'
-  ORDER BY cases DESC
-  LIMIT 1;                                                  -- Harris 237727
--- \d+ shows the saved query behind it
-\d+ dec31
-```
-
-A view stores **no data**. It is only the saved `SELECT`, and every query against the view runs it again. So the view is always current. Change a row of `covid` with `UPDATE` and the view shows the change at once:
-
-```sql
-UPDATE covid SET cases = cases + 1
-  WHERE state = 'Texas' AND county = 'Harris' AND date = '2020-12-31';
-SELECT county, cases
-  FROM dec31
-  WHERE state = 'Texas'
-  ORDER BY cases DESC
-  LIMIT 1;                                                  -- Harris 237728
--- put it back
-UPDATE covid SET cases = cases - 1
-  WHERE state = 'Texas' AND county = 'Harris' AND date = '2020-12-31';
-```
-
-A **materialized view** does store the answer, like a table. Reading it is fast, but it does not see later changes until you refresh it:
-
-```sql
-CREATE VIEW daily AS
-  SELECT date, sum(cases) AS cases
-    FROM covid
-    GROUP BY date;
-CREATE MATERIALIZED VIEW daily_m AS
-  SELECT date, sum(cases) AS cases
-    FROM covid
-    GROUP BY date;
-\timing on
-SELECT max(cases)
-  FROM daily;                                               -- 20024801, about 70 ms: the GROUP BY runs again
-SELECT max(cases)
-  FROM daily_m;                                             -- 20024801, under 1 ms: it only reads the 346 saved rows
--- after an UPDATE to covid, daily is current at once, but daily_m is out of date until
-REFRESH MATERIALIZED VIEW daily_m;                          -- runs the query again and saves the new answer
-\timing off
-```
-
-Views are used everywhere in practice:
-
-* **Data warehouses and analytics teams.** The most popular modern tool for analytics pipelines, **dbt**, is largely a system for writing `SELECT` statements that it saves as views or tables. Analysts at many companies spend their days building views on top of views: raw data, then cleaned, then business-ready.
-* **Dashboards and BI tools.** Tableau, Power BI, Looker and Metabase are usually pointed at views, not raw tables, so the logic sits in one place in the database instead of being copied into every report.
-* **A stable name to hand to others.** R, Python or a colleague can query `dec31` without knowing how it is built.
-* **Security.** "Analysts may see these columns, or only their region's rows" is very often enforced by giving people access to a view instead of the table, for example `CREATE VIEW patients_public AS SELECT visit_date, age FROM patients`, which leaves out `name` (Lab 3, scenario (b)). Giving the access itself is done with `GRANT`, for a later lecture.
-* **Keeping old code working.** When a table is restructured, a view with the old name and shape lets existing queries keep running.
-* **Materialized views** are the standard fix when a dashboard query is too slow to run on every page load.
-
-They also have their usual problems:
-
-* **Hidden cost.** A view looks like a cheap table, but every query re-runs it. Views built on views built on views can hide a slow query several layers down.
-* **They lock the tables underneath.** You often cannot change a column while a view uses it:
-
-```sql
-ALTER TABLE covid ALTER COLUMN cases TYPE bigint;
--- ERROR:  cannot alter type of a column used by a view or rule
--- DETAIL:  rule _RETURN on view dec31 depends on column "cases"
-```
-
-The shell has no real equivalent. The closest to a view is a saved script (or a shell function), which runs the whole pipeline again every time you call it and so is always current. A file you wrote once, such as `awk -F, '$1=="2020-12-31"' covid.csv > dec31.csv`, is like a materialized view: fast to read, but stale as soon as `covid.csv` changes.
-
-```bash
-# the dec31 "materialized view": a file written once
-awk -F, '$1=="2020-12-31"' covid.csv > dec31.csv
-wc -l < dec31.csv                                                                     # 3245
-awk -F, -v OFS=, '$3=="Texas" {print $2, $5}' dec31.csv | sort -t, -k2,2nr | head -n 1   # Harris,237727
-# the dec31 "view": a function that runs the awk again every time it is used
-dec31() { awk -F, '$1=="2020-12-31"' covid.csv; }
-dec31 | wc -l                                                                         # 3245
-# max(cases) FROM daily: the national total per day, then its max
-awk -F, 'NR>1 {d[$1] += $5} END {for (k in d) if (d[k] > m) m = d[k]; print m}' covid.csv   # 20024801
-rm dec31.csv
-```
-
-Clean up:
-
-```sql
-DROP VIEW dec31;
-DROP VIEW daily;
-DROP MATERIALIZED VIEW daily_m;
-```
-
-
-
-
-
-## Why is the table bigger than the CSV?
-
-The `covid` table alone is 57 MB, bigger than the CSV and far bigger than the Parquet file of Lecture 3. Postgres stores each row in a way built for *changing* it, while Parquet is built for *storing* it compactly:
-
-+----------------+----------+----------------+
-| Format         | Size     | Per row        |
-+================+==========+================+
-| CSV            | 35.9 MB  | about 40 bytes |
-+----------------+----------+----------------+
-| Parquet (zstd) | ~3.3 MB  | about 4 bytes  |
-+----------------+----------+----------------+
-| Postgres table | 57 MB    | about 67 bytes |
-+----------------+----------+----------------+
-
-Postgres is bigger than the CSV because of overhead that every row pays:
-
-* **A row header of about 24 bytes.** It holds the ID of the transaction that created the row and of the one that deleted it (`xmin` and `xmax`), plus some flags. That is how Postgres lets many people read and write at once, and how it undoes a failed transaction: each reader checks those IDs to decide whether it should see the row.
-* **A 4-byte pointer to each row**, stored at the top of its page.
-* **Padding.** Values are aligned to 4- or 8-byte boundaries, so some bytes between columns sit empty.
-
-That is about 28 bytes per row before any data, or roughly 25 MB of the 57. The data itself is actually *smaller* than in the CSV: a date takes 4 bytes instead of 10 characters, and `cases` takes 4 bytes instead of up to 6 digits. The overhead outweighs that saving.
-
-Parquet is so much smaller for three reasons:
-
-* **Columns, not rows.** All 884,737 states sit next to each other, so dictionary encoding stores "Texas" once plus a small code per row (Lecture 3).
-* **Compression.** zstd squeezes the already-encoded columns further. Postgres does not compress ordinary rows at all; it only compresses single values larger than about 2 KB. If it used compression, its querying would be much slower.
-* **No per-row overhead.** No header, no pointer, no padding.
-
-So the 57 MB is the price of the database's features. The row header is what lets `UPDATE` change one row without rewriting the file, and what lets a transaction happen fully or not at all. Parquet has none of that, which is exactly the pain you felt in Lab 3, Part 5: adding one row rewrites the whole file.
-
-
-

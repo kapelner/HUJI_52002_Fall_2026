@@ -18,9 +18,6 @@ execute:
 * Leave the "#TODO text [question text] text" line and start a new line underneath and write your answers on that new line
 :::
 
-# Part 1: Databases
+# Part 1: More SQL Queries
 
-**A little history.** The table under "A short history" in the section "Databases!" of Lecture 3 (`lectures/lec03_git_parquet_databases.qmd`) has what you need.
 
-#TODO [what was the main idea of Codd's 1970 paper, and how did people work with databases before it? <1pts>]
-#TODO [what are SQLite and DuckDB, in one sentence each, and what do they have in common that PostgreSQL does not have? <2pts>]
