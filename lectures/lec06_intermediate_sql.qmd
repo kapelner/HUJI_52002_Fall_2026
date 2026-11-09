@@ -245,17 +245,89 @@ After you graduate you may never see Slurm again, unless you work in academia, a
 ## Using postgres on moriah for this class
 
 ```bash
-cd /sci/courses/2026/52002/kapelner #my class home directory (not ~)
-#there's a job that we can use to run postgres
-less ../shared/pg_job.sh
-KEEP_ALIVE=1 sbatch ../shared/pg_job.sh #this starts the postgres server for you inside the compute cluster
-squeue -u $USER
-export pg_job_id=46637714 #save the job_id
-#now we can `srun` inside a running job
+#let's navigate to my class home directory (not ~)
+cd /sci/courses/2026/52002/$USER
+pwd
+#there's a job that we can use to run postgres located in our class's shared directory
+less /sci/courses/2026/52002/shared/pg_job.sh
+KEEP_ALIVE=1 sbatch --time=02:00:00 ../shared/pg_job.sh #this starts the postgres server for you inside the compute cluster
+squeue -u $USER #ensure it's working
+export pg_job_id=46639943 #save the job_id for convenience as we'll reference it later
+```
+
+This job (which the HURCS people wrote for us) starts the postgres server in the cluster. By default it lives for two hours. Data persists in our local directories, so if it expires and kicks you out, your data survives. You can make it longer if you care by using ` --time=04:00:00`. The maximum time is 7 days. But you will be billing the class if it's idle. So just keep it on the default two hours.
+
+The server is running, how do we connect to it? We can use `srun` to connect a terminal inside a running job:
+
+```bash
 srun --jobid=${pg_job_id} --overlap --pty psql -h /tmp/pg_${USER}_${pg_job_id} classdb
 ```
 
-It is here you will be doing some database work on the homework.
+Now we're inside postgres running on the cluster. It is here you will be doing some database work on the homework. We are using a database called `classdb` because we called `psql classdb`. Let's see how we're set up:
+
+```sql
+\conninfo
+-- expected
+\l
+-- the usual defaults + classdb
+\dt
+-- no tables yet
+\timing on
+--let's build a throwaway table
+CREATE TABLE students (
+  id       integer,
+  name     text,
+  born     date,
+  height   double precision,
+  enrolled boolean
+);
+--and add a few rows
+INSERT INTO students VALUES
+  (1, 'Noa',   '2003-04-17', 1.68, true),
+  (2, 'Amir',  '2002-11-02', 1.81, true),
+  (3, 'Yael',  '2004-01-29', 1.62, false),
+  (4, 'Omer',  '2003-08-09', NULL, true);
+--check they are there
+SELECT * FROM students;
+\dt
+-- now students is listed
+\q
+```
+
+We left postgres. Is our data gone? No... it's actually saved to our class home directory
+
+```bash
+ls -alh pgdata/
+```
+
+Where is it exactly? The postgres file system is beyond the scope of the course. But it's there.
+
+Our postgres job started with `sbatch` is still running so we can reconnect into the job within our two hour limit:
+
+```bash
+srun --jobid=${pg_job_id} --overlap --pty psql -h /tmp/pg_${USER}_${pg_job_id} classdb
+```
+
+And now let's make sure our data is still there:
+
+```sql
+SELECT * from students;
+```
+
+This verifies the database data persists on our filesystem. Let's now clean it up since it was just a demo:
+
+```sql
+DROP TABLE students;
+\dt
+\q
+```
+
+Once your're done with your work session, be *considerate* to everyone else in the class (and everyone else on the cluster) and shutdown your postgres server. Do that don't downwith `scancel`:
+
+```bash
+scancel ${pg_job_id} 
+```
+
 
 # Subqueries (continued)
 

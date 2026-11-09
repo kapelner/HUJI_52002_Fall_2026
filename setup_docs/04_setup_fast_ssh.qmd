@@ -98,8 +98,12 @@ Host bava.cs.huji.ac.il
     ControlMaster auto
     ControlPath ~/.ssh/cm-%r@%h-%p
     ControlPersist 4h
+    ServerAliveInterval 30
+    ServerAliveCountMax 3
 EOF
 ```
+
+`ControlMaster` keeps one connection to `bava` open, and every later `ssh moriah` (and `scp`, `rsync`) reuses it through the socket file named by `ControlPath`, so no new OTP is needed. `ServerAlive...` makes `ssh` check every 30 seconds that the connection is still alive and close it after 3 missed answers, instead of leaving behind a dead connection (see the troubleshooting section below).
 
 and let's enter the OTP once
 
@@ -116,3 +120,28 @@ ssh moriah
 
 And voila! No OTP and no password required!!!
 
+# Troubleshooting: `ssh moriah` hangs
+
+Sometimes `ssh moriah` just sits there and prints nothing. Usually Moriah is fine, and the problem is on your own computer. To see where it gets stuck, run it with `-v` (verbose):
+
+```bash
+ssh -v moriah
+```
+
+If the last line is
+
+```
+debug1: auto-mux: Trying existing master at '/home/kapelner/.ssh/cm-kapelner@bava.cs.huji.ac.il-22'
+```
+
+then the shared connection to `bava` has died (typically your laptop slept, or your Wi-Fi or VPN changed), but its socket file is still there, so `ssh` waits for an answer that never comes. Close it and delete the socket, then log in again (with a fresh OTP):
+
+```bash
+ssh -O exit bava.cs.huji.ac.il
+rm -f ~/.ssh/cm-*@bava.cs.huji.ac.il-22
+ssh moriah
+```
+
+The `ServerAliveInterval` and `ServerAliveCountMax` lines above make this rare, because `ssh` then notices a dead connection within about 90 seconds and cleans it up by itself.
+
+If instead `-v` stops at `Connecting to bava.cs.huji.ac.il`, the problem is the network: check your internet connection (and the university VPN if you are off campus) and try again in a few minutes.

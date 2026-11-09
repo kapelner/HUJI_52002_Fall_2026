@@ -52,6 +52,7 @@ _minted*/
 # Quarto render caches and temporary notebooks
 .quarto/
 *.quarto_ipynb
+labs/.gitignore
 
 #### standard R files to be ignored
 

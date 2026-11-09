@@ -1,6 +1,6 @@
 \documentclass[12pt]{article}
 
-\usepackage[margin=0.85in]{geometry}
+\usepackage[margin=1in]{geometry}
 \input{../../syllabi/preamble}
 
 \newcommand{\professorname}{Adam Kapelner}
@@ -22,7 +22,8 @@ Eynat Sela  / see \coursewebpagelink
 \newcommand{\coursewebpagelink}{\href{\coursewebpageurl}{course homepage}}
 \newcommand{\discordurl}{https://discord.com/channels/1556341692754567288}
 \newcommand{\discordlink}{\href{\discordurl}{discord}}
-\newcommand{\numtheoryhws}{3 or 4}
+\newcommand{\numtheoryhws}{1--4}
+\newcommand{\numlabs}{9--12}
 \newcommand{\extrahwzero}{\item provide a link to your public repository on github (this means you need to sign up for github first)}
 \newcommand{\lastdatetimetohandinhomeworks}{Jan 11}
 
@@ -58,7 +59,7 @@ Big Data Algorithms / Data Mining 3 cr. Prereq.: 52571
 \end{itemize}
 
 
-We will cover these topics using both R and Python. I plan to use quarto. R is the better language for statistics but Python is the better language for infrastructure. A true data scientist / engineer should be fluent in both. They are not substitutes but different tools. SQL is the substrate for both so we will cover the basics but I don't consider it a "third language". Same as bash scripting - not a "third language" but necessary to become fluent in. As for Julia, scala, Java, Go, SAS, Matlab, etc - some industries use them but they are not widely adopted by data scientists in practice and thus, beyond the scope of the course.
+We will cover these topics using both R and Python. I plan to use quarto (qmd files) within Positron which allows for text, R, Python, bash, SQL to be interweaved seamlessly and allow code written in any of those languages to be run below in a terminal/console. R is the better language for statistics but Python is the better language for infrastructure. A true data scientist / engineer should be fluent in both. They are not substitutes but different tools. SQL is the substrate for both so we will cover it well (but I don't consider it a "third language"). Same as *nix with bash scripting - not a "third language" but necessary to become fluent in. As for Julia, scala, Java, Go, SAS, Matlab, etc - some industries use them but they are not widely adopted by data scientists in practice and thus, beyond the scope of the course.
 
 You should be familiar with the following before entering the class:
 
@@ -113,8 +114,9 @@ We will be concentrating on the computer language \texttt{R} which is a free, op
 
 \input{../../syllabi/_use_of_discord}
 
+\subsection*{Use of Moodle}
 
-I will not be using Moodle.
+I will not be using Moodle except for administrative announcements.
 
 \section*{Class Meetings}
 
@@ -168,6 +170,10 @@ Homework will be split into \textit{theory} and \textit{practice} (called \qu{la
 %\input{../../syllabi/_hw_0}
 
 \input{../../syllabi/_chatgpt_ai_policy}
+
+\subsection*{Homework Grading Policy}
+
+The first three assignments will be graded 0-100. Any assignments beyond that point (lab or theory) will be graded 0 \textit{or} 100 (AKA pass/fail) handed in on time (see late policy above for assignments submitted late). You will receive 100 if you answer more than 50\% of points. You will not be graded on correctness (only on if an answer is present). If you have questions about the homework, ask them in the beginning/end of lecture, in office hours, or preferably on discord so all students can benefit from seeing the answer.
 
 \section*{Examinations}
 

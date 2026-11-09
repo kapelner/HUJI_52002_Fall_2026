@@ -220,7 +220,7 @@ Review of history from last lecture: SQL was standardized in 1986 by ANSI, the A
 
 Thus, SQL is like the "English" of data (the default communication protocol) of which there are a few dialects with very little differences e.g. British "clever" = American "smart", British "trousers" = American "pants".
 
-Note: each dialect adds its own extensions. So the postgres backslash commands such as \timing and \copy are not SQL at all.
+Note: each dialect adds its own extensions. So the postgres backslash commands such as `\timing` and `\copy` are not SQL at all.
 
 Notice that you gave neither a username nor a password. The username is easy: when you do not give one (with `-U`), `psql` uses your Linux username. If you do not name a database, it also connects to the one with your username. Why no password? Your setup created a database user (Postgres calls it a **role**) with the same name as your Linux user. When `psql` connects to a server on the *same* machine, it does not go over the network. It uses a special file called a **socket**, and through a socket the server can ask the operating system which Linux user is on the other end. You already proved who you are when you logged in to the computer, so the server takes the operating system's word for it and lets you in as the role with your name. This is called **peer authentication**, and it is set by a rule in the server's configuration file `pg_hba.conf` ("host-based authentication").
 
