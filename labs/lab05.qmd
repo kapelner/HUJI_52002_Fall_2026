@@ -44,13 +44,15 @@ psql lab04
 ```
 
 ```sql
+-- turn on timing so you can see how long queries take
 \timing on
+-- convenience for display so everything goes to console (rather than opening in `less`)
 \pset pager off
 --- let's make sure the data is still there
 SELECT count(*) FROM covid;
 ```
 
-If that errored or didn't give the correct number of rows 884,737, you'll have to set up the database again (see beginning of lab 4).
+If that last line errored or didn't give the correct number of rows 884,737, you'll have to set up the database again (see beginning of lab 4).
 
 # Part 1: `count(*)` vs `count(column)`
 
@@ -84,7 +86,7 @@ If that errored or didn't give the correct number of rows 884,737, you'll have t
 #TODO [Why did you get 0? <1pts>]
 
 ```sql
-#TODO [fix it with ::float and name the column death_rate <1pts>]
+#TODO [fix the previous query get the actual rate and name the column death_rate <1pts>]
 #TODO [the same as a percentage rounded to 2 decimals, named death_rate_pct (you should get 2.10) <1pts>]
 #TODO [on 2020-12-31: the county, state and death_rate_pct of the 5 counties with at least 10000 cases that have the highest death rate (leave out the missing deaths) <2pts>]
 ```
@@ -158,18 +160,6 @@ SELECT state, county, count(*)
 #TODO [on 2020-12-31: the states with more than 150 counties, and how many each (you should get 2) <1pts>]
 ```
 
-Now run this query, which tries to use the alias inside `HAVING`:
-
-```sql
-SELECT state, count(*) AS num
-  FROM covid
-  WHERE date = '2020-12-31'
-  GROUP BY state
-  HAVING num > 150;
-```
-
-#TODO [Why does it fail? List the order in which Postgres processes FROM, WHERE, GROUP BY, HAVING, SELECT and ORDER BY <2pts>]
-
 # Part 10: Dates
 
 ```sql
@@ -188,16 +178,29 @@ First check that your `lab04` database has no index yet (you made one only in th
 
 ```sql
 \di
-#TODO [run EXPLAIN ANALYZE on the query "the largest cases of Miami-Dade, Florida over the whole year". Write the plan's scan type and the execution time <1pts>]
-#TODO [create an index on (state, county), then run the same EXPLAIN ANALYZE again. Write the new scan type and the execution time <1pts>]
-#TODO [the size of the table alone, of its indexes alone and of both together <1pts>]
+```
+If you already have an index on `covid`, delete it with `DROP INDEX` and the name that `\di` shows, e.g. for the lecture's index:
+
+```sql
+DROP INDEX covid_state_county_idx;
+\di
 ```
 
+Now do these exercises:
+
+```sql
+#TODO [run EXPLAIN ANALYZE on the query "the largest cases of Miami-Dade, Florida over the whole year". Write the plan's scan type and the execution time <1pts>]
+#TODO [create an index on (state, county) <1pts>
+#TODO [then run the same EXPLAIN ANALYZE again. <1pts>]
+#TODO [Use a query to determine the size of the table alone, of its indexes alone and of both together <1pts>]
+```
+#TODO [After the index was created, what is the new scan type and the execution time? <1pts>]
 #TODO [Miami-Dade has 296 rows out of 884,737. In big-O, how much work is the sequential scan and how much is the index lookup? <1pts>]
 #TODO [What is the downside of having an index? <1pts>]
 
 ```sql
-#TODO [delete the index (find its name with \di) <1pts>]
+\di
+#TODO [delete the index <1pts>]
 ```
 
 # Part 12: B-trees
@@ -217,6 +220,8 @@ First check that your `lab04` database has no index yet (you made one only in th
 #TODO [the date, county, state and deaths of the row(s) with the most deaths in the whole table, using a scalar subquery <1pts>]
 #TODO [the date, county and cases of the row(s) with the most cases in Florida <1pts>]
 #TODO [on 2020-12-31: how many Texas counties had more cases than the average Texas county on that day? (you should get 35 of the 254) <2pts>]
+#TODO [the date, county, state and cases of the row(s) on the first date in the table, using a scalar subquery with min(date) (you should get one row) <1pts>]
+#TODO [on 2020-12-31: the county, state and deaths of the counties with more deaths than Cook County, Illinois on that day, where the subquery finds Cook's deaths (you should get 2) <1pts>]
 \q
 ```
 

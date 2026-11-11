@@ -16,8 +16,8 @@ None released yet
 * [Lab 9, due Oct 17 23:59](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/labs/lab09.qmd) pushed to your github repo
 * [Lab 8, due Oct 17 23:59](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/labs/lab08.qmd) pushed to your github repo
 * [Lab 7, due Oct 17 23:59](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/labs/lab07.qmd) pushed to your github repo
-* [Lab 6, due Oct 17 23:59](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/labs/lab06.qmd) pushed to your github repo
-* [Lab 5, due Oct 17 23:59](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/labs/lab05.qmd) pushed to your github repo-->
+* [Lab 6, due Oct 17 23:59](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/labs/lab06.qmd) pushed to your github repo-->
+* [Lab 5, due Nov 22 23:59](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/labs/lab05.qmd) pushed to your github repo
 * [Lab 4, due Nov 13 15:59](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/labs/lab04.qmd) pushed to your github repo
 * [Lab 3, due Nov 6  15:59](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/labs/lab03.qmd) pushed to your github repo
 * [Lab 2, due Oct 30 16:59](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/labs/lab02.qmd) pushed to your github repo
