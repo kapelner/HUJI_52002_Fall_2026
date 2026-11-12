@@ -41,17 +41,17 @@ With the environment active, install the Python packages we use in the course, s
 
 ```bash
 pip install numpy pandas polars duckdb pyarrow scikit-learn lightgbm \
-  ipykernel "psycopg[binary]" "ibis-framework[postgres]" \
+  statsmodels requests ipykernel "psycopg[binary]" "ibis-framework[postgres]" \
   "xgboost-cpu; sys_platform == 'linux'" \
   "xgboost; sys_platform == 'darwin'"
 ```
 
-`psycopg` is the PostgreSQL driver for Python (the `[binary]` part, quotes included, selects a ready-built version so nothing needs compiling). `ibis` writes the SQL for you from Python code, and its `[postgres]` part adds what it needs to talk to PostgreSQL. The last two entries, quotes included, are two versions of the same package, and `pip` picks the one for your system. On Ubuntu it installs `xgboost-cpu`, a build without GPU support; the regular build pulls in several hundred megabytes of NVIDIA libraries that only matter when training on multiple GPUs. On a Mac, where no such build exists or is needed, it installs the regular `xgboost`. Either way the package is used as `xgboost` in your code. Near the start of its output, `pip` prints a line beginning with `Ignoring` about the version it did not install, which is expected.
+`psycopg` is the PostgreSQL driver for Python (the `[binary]` part, quotes included, selects a ready-built version so nothing needs compiling). `ibis` writes the SQL for you from Python code, and its `[postgres]` part adds what it needs to talk to PostgreSQL. `statsmodels` fits classical statistical models (regressions with standard errors and p-values), and `requests` downloads data from web pages and APIs. The last two entries, quotes included, are two versions of the same package, and `pip` picks the one for your system. On Ubuntu it installs `xgboost-cpu`, a build without GPU support; the regular build pulls in several hundred megabytes of NVIDIA libraries that only matter when training on multiple GPUs. On a Mac, where no such build exists or is needed, it installs the regular `xgboost`. Either way the package is used as `xgboost` in your code. Near the start of its output, `pip` prints a line beginning with `Ignoring` about the version it did not install, which is expected.
 
 This downloads a couple of hundred megabytes, so it can take several minutes. Check that the packages load:
 
 ```bash
-python -c "import numpy, pandas, polars, duckdb, pyarrow, psycopg, ibis; print('ok')"
+python -c "import numpy, pandas, polars, duckdb, pyarrow, psycopg, ibis, statsmodels, requests; print('ok')"
 python -c "import sklearn, xgboost, lightgbm; print('ok')"
 ```
 

@@ -1,0 +1,541 @@
+---
+title: "Lecture 7: Slurm, Database Drivers and Abstraction"
+subtitle: "Big Data Algorithms"
+format:
+  html:
+    toc: true
+    toc-depth: 2
+    number-sections: true
+    code-copy: true
+    embed-resources: true
+---
+
+# Crash course in Slurm and scheduling jobs on a shared supercomputer
+
+This topic will not be tested. But you will need to know something about this topic to do your lab assignment.
+
+In Lecture 4 we saw that `moriah-gw` is only the **login node**, the compute which serves as a small vestibule opening into the grand hall. And the login node caps you at 30% of one core. The real work happens in the grand hall, the **compute nodes**, which you never `ssh` into directly. Instead you ask the **scheduler** for resources and it gives you a piece of the grand hall letting you run your work there when the space if available. 
+
+On Moriah the scheduler is **Slurm**, and so is it on most university and national clusters in the world. **Slurm** ("Simple Linux Utility for Resource Management") is free, open-source software that manages a cluster's shared compute nodes. Its code is on GitHub at <https://github.com/SchedMD/slurm>, under the **GPL v2** ("version 2 or any later version"), the same copyleft license as the Linux kernel and `git` (Lecture 2). 
+
+Slurm keeps a **queue** of the jobs everyone has submitted, decides which job runs on which node and when, gives each job the cores, memory and time it asked for and no more, and stops the job when its time runs out. The idea is that of a restaurant with a waiting list. You tell the host how many seats you need (cores), how much table space (memory), and how long you'll stay (time). The host puts you in the queue and seats you when a table that big opens up. You don't pick the table. If you overstay your time, you are thrown out.
+
+A few words:
+
+* A **job** is one request for resources plus the commands to run with them. Every job gets a number, the **job ID**.
+* A **node** is one computer in the cluster. A job runs on one (or more) nodes.
+* A **partition** is a named group of nodes with its own limits (e.g. a short queue, a GPU queue). If you don't name one, you get the default.
+* The **queue** is the list of all jobs that are waiting or running.
+
+We will use three commands:
+
+* `sbatch`: submit a script to run *later*, in the background. You get your prompt back immediately. This is how you run real work.
+* `srun`: run a command on a compute node *now* and wait for it, with its output in your terminal. Good for quick tests and interactive sessions.
+* `squeue`: look at the queue to see your jobs and their state.
+
+And one more to clean up: `scancel` kills a job.
+
+## Look around first
+
+```bash
+ssh moriah
+hostname
+sinfo -s #gives detailed information about the cluster
+```
+
+The output of `sinfo` will be something like this:
+
+```
+PARTITION  AVAIL  TIMELIMIT   NODES(A/I/O/T) NODELIST
+catfish-k     up 7-00:00:00          5/0/0/5 catfish-[01-05]
+catfish       up 7-00:00:00          5/0/0/5 catfish-[01-05]
+salmon-k      up 7-00:00:00         9/0/1/10 salmon-[01-10]
+salmon        up 7-00:00:00         9/0/1/10 salmon-[01-10]
+goldfish-k    up 7-00:00:00          1/0/0/1 goldfish-01
+goldfish      up 7-00:00:00          1/0/0/1 goldfish-01
+dogfish-k     up 7-00:00:00          0/0/2/2 dogfish-[01-02]
+dogfish       up 7-00:00:00          0/0/2/2 dogfish-[01-02]
+glacier-k     up 7-00:00:00        37/0/1/38 glacier-[01-38]
+glacier*      up 7-00:00:00        37/0/1/38 glacier-[01-38]
+```
+
+Let's explain these columns
+
+* PARTITION is a named queue with its own rules, pointing at a set of nodes. The rules cover things like the maximum time, who may submit, priority, and whether jobs can be preempted. Because it's a rule set and not the hardware itself, two partitions can point at the same machines:
+- salmon and salmon-k are the same 10 physical machines with two different sets of rules.
+- glacier and glacier-k are both the same 38 machines.
+* AVAIL whether the queue is available (up = yes, down = no, drain = no, inact = no)
+* TIMELIMIT is the timelimit e.g. 7-00:00:00 denoted 7 days, 0 hours, the longest time a job may ask for in this partition using the "--time" specificiation
+* NODES(A/I/O/T) is the availability status about the machines in the queue e.g. 37/0/1/38.
+  - Allocated: 37 nodes are running at least one job.
+  - Idle: 0 nodes are completely unused.
+  - Other: 1 node is unavailable, usually down, drained for maintenance, or failed.
+  - Total: 38 nodes.
+* NODELIST is the names of the actual machines e.g. glacier-01 through glacier-38.
+
+```bash
+squeue | head -n 5      # info for the first five jobs running on moriah
+squeue | wc -l          # how many jobs are in the whole queue right now
+squeue -u $USER         # just mine (none yet)
+```
+
+`squeue` columns are mostly self explanatory: `JOBID`, `PARTITION`, `NAME` (the name the user gave to their job), `USER` (name of the user), `ST` (current state of the job), `TIME` (how long it has been running), `NODES` and `NODELIST(REASON)`. The states you will see the most are `PD` (pending, waiting in line) and `R` (running). When a job is pending, the last column says the reason why, e.g. `(Resources)` means it is waiting for a free spot and `(Priority)` means others are ahead of you.
+
+## `srun`: execute one bash command on a compute node right now
+
+```bash
+srun hostname                          # not moriah-gw! A compute node ran it
+```
+
+You'll see something like:
+
+```
+srun: job 46637257 queued and waiting for resources
+srun: job 46637257 has been allocated resources
+glacier-14
+```
+
+That job "46637257" is the job_id given to our command. The "glacier-14" is the output of `hostname`. This means we successfully queued our first supercomputer job and all it did was tell use which computer it got allocated to.
+
+We can ask for any number of cores and memory we wish. Let's check it actually gives us what we request: 
+
+```bash
+srun --cpus-per-task=4 nproc           # 4: you get the number of cores you asked for
+srun --cpus-per-task=8 nproc           # 8: you get the number of cores you asked for
+srun --mem=2G --time=00:05:00 bash -c 'numfmt --to=iec < /sys/fs/cgroup/memory$(grep :memory: /proc/self/cgroup | cut -d: -f3 | sed "s|/step.*||")/memory.limit_in_bytes'  #2.0GB: you get the amount of memory you asked for
+srun --mem=7G --time=00:05:00 bash -c 'numfmt --to=iec < /sys/fs/cgroup/memory$(grep :memory: /proc/self/cgroup | cut -d: -f3 | sed "s|/step.*||")/memory.limit_in_bytes'  #7.0GB: you get the amount of memory you asked for
+```
+
+Let's redo the experiment testing how long it takes to add the numbers 1 + 2 + ... + 10,000,000 together on both the gateway node and the compute cluster
+
+```bash
+time python3 -c "sum(range(10**7))"         # on the login node, metered to 30% of a core
+srun bash -c 'time python3 -c "sum(range(10**7))"'    # on a compute node, a full core
+```
+
+The real time for gateway is ~3s and on compute it's ~0.2s.
+
+To get an interactive shell on a compute node (to poke around, test code, etc.) ask for a pseudo-terminal with `--pty`:
+
+```bash
+srun --cpus-per-task=2 --mem=4G --time=00:30:00 --pty bash
+hostname       # we are on a compute node now
+nproc          # 2
+exit           # give the resources back! The job ends when the shell ends
+```
+
+Always `exit` when you are done. While the shell is open you hold those cores and nobody else can use them, even if you are off getting coffee.
+
+## `sbatch`: submit a job script
+
+For anything that takes a while, you don't want to sit and wait. You write a **job script**: a regular bash script which specifies a job that runs in the background (think like runnning something on tmux). After the standard shebang line, the top lines of the bash script starting with `#SBATCH` are the resource request. Bash ignores them (they start with `#` so they are comments). But they are not comments to `sbatch` who reads them carefully.
+
+```bash
+mkdir -p ~/slurm_demo
+cd ~/slurm_demo
+cat > hello_job.sh << 'EOF'
+#!/bin/bash
+#SBATCH --job-name=hello
+#SBATCH --time=00:05:00
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=1G
+#SBATCH --output=hello_%j.out
+
+echo "Job $SLURM_JOB_ID started on $(hostname) at $(date)"
+echo "I was given $SLURM_CPUS_PER_TASK cores"
+sleep 60
+python3 -c "print(sum(range(10**8)))"
+echo "Done at $(date)"
+EOF
+bash -n hello_job.sh #ensure it parses
+ls -alh
+```
+Note: no need to `chmod` the script for execution as `sbatch` doesn't run your file in place. It reads its contents and sends the contents to Slurm, and Slurm writes that copy out on the compute node with its own permissions and runs it there. The execute bit on your original file never comes into play.
+
+The request lines:
+
+* `--job-name`: a name so you recognize it in `squeue`.
+* `--time`: the wall clock limit, `HH:MM:SS` (or `D-HH:MM:SS`). When it runs out, Slurm kills the job, finished or not. Ask for a bit more than you need: asking for less gets you scheduled sooner but asking for too little loses all the work.
+* `--cpus-per-task`: how many cores.
+* `--mem`: how much memory. Go over it and the job is killed with an "out of memory" (`OOM`) error.
+* `--output`: where the job's stdout and stderr go, since there is no terminal to print to. `%j` is replaced by the job ID so each run gets its own file.
+
+Slurm hands the script information through environment variables that all start with `SLURM_`, e.g. `$SLURM_JOB_ID` and `$SLURM_CPUS_PER_TASK`.
+
+Now submit it:
+
+```bash
+sbatch hello_job.sh
+# Submitted batch job 46637001       <- your job ID
+squeue -u $USER                      # PD then R
+squeue -u $USER                      # run it again a few times... or:
+watch -n 1 squeue -u $USER           # refreshes every second, Ctrl+C to stop watching (not the job!)
+ls                                   # hello_<jobid>.out appears once it starts
+tail -f hello_*.out                  # follow the output live, Ctrl+C to stop
+squeue -u $USER                      # should be done now
+```
+
+You can log out right after `sbatch` and the job keeps going: it doesn't belong to your terminal at all. This is the real answer to the "how do I keep a long job running after I log out" question from Lecture 5 (`tmux` / `nohup` are for the login node; on a cluster, long jobs go to the scheduler).
+
+You can also pass your own settings into the script through environment variables put before `sbatch` (they get copied into the job). This is how `KEEP_ALIVE=1 sbatch pg_job.sh` works below.
+
+## `scancel`: kill a job
+
+```bash
+sbatch hello_job.sh
+squeue -u $USER          # note the JOBID
+scancel 46637002         # use your job ID
+scancel -u $USER         # careful: cancels ALL your jobs
+```
+
+## After the job: what happened?
+
+```bash
+cat hello_*.out
+sacct -u $USER --starttime today --format=JobID,JobName,State,Elapsed,MaxRSS,ExitCode
+```
+
+`sacct` is the history of your jobs (`squeue` only shows jobs that are still pending or running). `State` is `COMPLETED`, `FAILED`, `CANCELLED`, `TIMEOUT` or `OUT_OF_MEMORY`. `MaxRSS` is the most memory the job actually used, which is how you learn what to put in `--mem` next time.
+
+## Slurm job arrays: one script, many tasks
+
+Much of the work in this course is the same computation repeated many times on different pieces: one bootstrap replicate per random seed, one model per setting of its tuning parameters, one simulation per scenario, one file per state. The pieces never need anything from each other. This is called **embarrassingly parallel** work, and for it Slurm has **job arrays**. A **Slurm job array** is one `sbatch` of one job script that Slurm runs as many separate **tasks**, each a normal job with its own node, cores and output file. The tasks differ only by one number: Slurm gives each task its **task ID** in `$SLURM_ARRAY_TASK_ID`, and the script uses it to choose its piece of the work.
+
+Here each task estimates $\pi$ from a million random points in the unit square (the share that falls inside the quarter circle is about $\pi/4$), using its task ID as the random seed so that every task draws different points:
+
+```bash
+cd ~/slurm_demo
+cat > pi_job.sh << 'EOF'
+#!/bin/bash
+#SBATCH --job-name=pi
+#SBATCH --array=1-10%5
+#SBATCH --time=00:05:00
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=1G
+#SBATCH --output=pi_%A_%a.out
+
+python3 -c "
+import random
+random.seed($SLURM_ARRAY_TASK_ID)
+n = 10**6
+hits = sum(random.random()**2 + random.random()**2 < 1 for _ in range(n))
+print($SLURM_ARRAY_TASK_ID, hits, n)
+"
+## `srun` inside a running job
+
+One last trick that we need for postgres: `srun --jobid=<id>` runs a new command *inside a job that is already running*, on its node, with its resources. Normally Slurm would wait until the job's cores are free, so we add `--overlap` to share them with what is already running there.
+
+```bash
+sbatch hello_job.sh                                    # sleeps for 60 sec
+squeue -u $USER                                        # wait until it says R
+srun --jobid=46637687 --overlap hostname               # the same node the job is on
+srun --jobid=46637687 --overlap --pty bash             # a shell inside the job
+ps -u $USER                                            # you can see the job's sleep
+exit
+```
+
+## Our course's limits on moriah
+
+All of us share one Slurm account, `course-52002-26`. Its limits apply to **everyone's running jobs added together, at the same moment**:
+
+* at most **647 cores**
+* at most **15 GPUs** (we won't be using these)
+* at most **~6,250 GB of memory**
+
+Each of us, separately:
+
+* at most **2 interactive jobs** open at once (`srun --pty bash`, and every `srun --jobid=... --overlap --pty psql` counts too). A third one waits until you `exit` one.
+* up to 20,000 jobs submitted at once, and at most 7 days per job (the partition limit).
+
+There is **no budget** of CPU hours to run out of. Using a lot only lowers your priority for a while (`sshare -U` shows your `FairShare`, from 0 to 1, where higher is better). There is also no per-person cap, so a few greedy requests can use up the class's 647 cores and leave everyone else in `PD` with reason `(AssocGrpCpuLimit)` or `(AssocGrpMemLimit)`. Ask for modest resources (≤ 4 cores and ≤ 8G is plenty for this course).
+
+Check them yourself:
+
+```bash
+sshare -U
+sacctmgr show assoc account=course-52002-26 user=$USER format=Account%20,User%12,GrpTRES%60,MaxSubmit
+```
+
+The summary of the rules:
+
+1. Never run heavy work on the login node.
+2. Quick test or interactive work: `srun` (with `--pty bash` for a shell, and `exit` when done).
+3. Real work: write a job script and `sbatch` it.
+4. Check on it with `squeue -u $USER`, kill it with `scancel`, look back with `sacct`.
+5. Ask for what you need (`--time`, `--cpus-per-task`, `--mem`), a bit more to be safe, but not much more: big requests wait longer and keep others out.
+
+## Slurm under other names: AWS, Kubernetes and friends
+
+After you graduate you may never see Slurm again, unless you work in academia, a national lab or a pharma / biotech company running its own cluster. In industry the compute usually lives in the cloud: **AWS Batch** (Amazon), **Google Cloud Batch**, **Azure Batch**, **Kubernetes**, **Databricks** jobs, etc. The good news is that they are all schedulers solving the same problem, and the ideas you just learned carry over.
+
+## Using postgres on moriah for this class
+
+```bash
+#let's navigate to my class home directory (not ~)
+cd /sci/courses/2026/52002/$USER
+pwd
+#there's a job that we can use to run postgres located in our class's shared directory
+less /sci/courses/2026/52002/shared/pg_job.sh
+KEEP_ALIVE=1 sbatch --time=02:00:00 ../shared/pg_job.sh #this starts the postgres server for you inside the compute cluster
+squeue -u $USER #ensure it's working
+export pg_job_id=46639943 #save the job_id for convenience as we'll reference it later
+```
+
+This job (which the HURCS people wrote for us) starts the postgres server in the cluster. By default it lives for two hours. Data persists in our local directories, so if it expires and kicks you out, your data survives. You can make it longer if you care by using ` --time=04:00:00`. The maximum time is 7 days. But you will be billing the class if it's idle. So just keep it on the default two hours.
+
+The server is running, how do we connect to it? We can use `srun` to connect a terminal inside a running job:
+
+```bash
+srun --jobid=${pg_job_id} --overlap --pty psql -h /tmp/pg_${USER}_${pg_job_id} classdb
+```
+
+Now we're inside postgres running on the cluster. It is here you will be doing some database work on the homework. We are using a database called `classdb` because we called `psql classdb`. Let's see how we're set up:
+
+```sql
+\conninfo
+-- expected
+\l
+-- the usual defaults + classdb
+\dt
+-- no tables yet
+\timing on
+--let's build a throwaway table
+CREATE TABLE students (
+  id       integer,
+  name     text,
+  born     date,
+  height   double precision,
+  enrolled boolean
+);
+--and add a few rows
+INSERT INTO students VALUES
+  (1, 'Noa',   '2003-04-17', 1.68, true),
+  (2, 'Amir',  '2002-11-02', 1.81, true),
+  (3, 'Yael',  '2004-01-29', 1.62, false),
+  (4, 'Omer',  '2003-08-09', NULL, true);
+--check they are there
+SELECT * FROM students;
+\dt
+-- now students is listed
+\q
+```
+
+We left postgres. Is our data gone? No... it's actually saved to our class home directory
+
+```bash
+ls -alh pgdata/
+```
+
+Where is it exactly? The postgres file system is beyond the scope of the course. But it's there.
+
+Our postgres job started with `sbatch` is still running so we can reconnect into the job within our two hour limit:
+
+```bash
+srun --jobid=${pg_job_id} --overlap --pty psql -h /tmp/pg_${USER}_${pg_job_id} classdb
+```
+
+And now let's make sure our data is still there:
+
+```sql
+SELECT * from students;
+```
+
+This verifies the database data persists on our filesystem. Let's now clean it up since it was just a demo:
+
+```sql
+DROP TABLE students;
+\dt
+\q
+```
+
+Once your're done with your work session, be *considerate* to everyone else in the class (and everyone else on the cluster) and shutdown your postgres server. Do that don't downwith `scancel`:
+
+```bash
+scancel ${pg_job_id} 
+```
+
+# Database Drivers (Adapters, Clients) and Database Abstraction
+
+Before we venture into more advanced SQL with multiple tables, let's talk about how the real world interacts with postgres. Generally speaking, not all work is done inside the postgres prompt. Other programs connect to postgres directly and they write "embedded SQL" or abstract away the SQL using a database model. We will see it now in both Python and R. Of course similar connections exist for Java, C++, etc, about every modern language has this ability.
+
+Every language does it the same way. A library called a **driver** (or **adapter**, or **client library**) opens a connection to the Postgres server, sends it the text of an SQL statement, and turns the rows that come back into the language's own data types, e.g. a data frame in R and a list of tuples in Python (which you can turn into a `pandas` DataFrame). Each language also has a standard **database API** that all its drivers follow, so the code looks the same whatever the database: **DB-API 2.0** in Python and **DBI** in R. You already installed both drivers in `setup_docs/03_software_setup_common.qmd`: `psycopg` for Python (in the `pip install` line of your `bigdata` environment) and `RPostgres` for R, which also brings `DBI` (and `dplyr` and `dbplyr` come with the `tidyverse`). If `import psycopg` or `library(RPostgres)` fails, go back to that document and rerun its install commands. The Postgres server must be running, as it is whenever `psql` works.
+
+## Embedded SQL
+
+In the first style the program holds the SQL as text, sends it, and gets rows back. You write exactly the SQL you would type in `psql`.
+
+### Python: the postgres adapter `psycopg`
+
+`psycopg.connect` takes the same connection information as `psql`. On your laptop the database name is enough, because it connects through the same local socket with your user name:
+
+```{python}
+import psycopg
+conn = psycopg.connect("dbname=lec04")
+print(conn.info.dbname, conn.info.user, conn.info.host)      # lec04 kapelner /var/run/postgresql (like \conninfo)
+```
+
+`execute` sends one SQL statement and returns a **cursor**, a pointer into the answer, from which you fetch the rows:
+
+```{python}
+cur = conn.execute("SELECT count(*) FROM covid")
+cur.fetchone()                                               # (884737,): one row, as a tuple
+cur = conn.execute("""
+    SELECT state, sum(cases) AS total_cases
+      FROM covid
+      WHERE date = '2020-12-31'
+      GROUP BY state
+      ORDER BY total_cases DESC
+      LIMIT 3
+""")
+rows = cur.fetchall()                                        # a list of tuples, one per row
+rows                                                         # [('California', 2307860), ('Texas', 1770527), ('Florida', 1323307)]
+```
+
+The SQL is just a string in the Python program: this is the "embedded SQL". To get a `pandas` data frame, take the column names from `cur.description`:
+
+```{python}
+import pandas as pd
+df = pd.DataFrame(rows, columns=[col.name for col in cur.description])
+df
+```
+
+#### Parameters, and why you never paste values into the SQL
+
+Programs usually fill in part of a query from a variable, such as the state a user picked. Do **not** build the string yourself with an f-string. Write a placeholder `%s` and give the values separately, and the driver sends them to Postgres apart from the SQL text:
+
+```{python}
+state = "Texas"
+conn.execute(
+    "SELECT county, cases FROM covid WHERE date = %s AND state = %s ORDER BY cases DESC LIMIT 3",
+    ("2020-12-31", state)
+).fetchall()                                                 # [('Harris', 237727), ('Dallas', 193318), ('Tarrant', 150004)]
+```
+
+Here is why. Suppose the "state" comes from a web form, and someone types `Texas' OR '1'='1`:
+
+```{python}
+state = "Texas' OR '1'='1"
+# pasted in: the quote in the input ends the string, and the rest becomes SQL, so every row matches
+conn.execute(f"SELECT count(*) FROM covid WHERE state = '{state}'").fetchone()   # (884737,)
+# as a parameter: the whole input is one value, a (strange) state name that matches nothing
+conn.execute("SELECT count(*) FROM covid WHERE state = %s", (state,)).fetchone()  # (0,)
+```
+
+This is **SQL injection**, for decades one of the most common ways websites are broken into: the attacker's input becomes part of your SQL, and with `'; DROP TABLE covid; --` it can do much worse than count rows. Parameters make it impossible.
+
+#### Let the database do the work
+
+The rule from the whole database unit applies here too: send the *question* to the database, and bring back only the *answer*. Bringing the table into Python and grouping it there gives the same result, much more slowly:
+
+```{python}
+import time
+start = time.time()
+cur = conn.execute("SELECT * FROM covid")                    # all 884,737 rows travel to Python
+df_all = pd.DataFrame(cur.fetchall(), columns=[col.name for col in cur.description])
+print(time.time() - start)                                   # about 1.5 s, before any computing
+start = time.time()
+conn.execute("""
+    SELECT state, sum(cases)
+      FROM covid
+      WHERE date = '2020-12-31'
+      GROUP BY state
+""").fetchall()                                              # 55 rows travel to Python
+print(time.time() - start)                                   # about 0.03 s
+```
+
+On a table of billions of rows the first version would not fit in your laptop's memory at all, while the second one still returns 55 rows. Note also that `df_all.dtypes` shows `deaths` as `float64`: `pandas` stores the `NULL`s as `NaN`, which only exists for decimal numbers.
+
+We can close the postgres connection via:
+
+```{python}
+conn.close() # done with the first connection
+```
+
+### R: `DBI` and `RPostgres`
+
+In R, `DBI` is the interface and `RPostgres` the driver. `dbGetQuery` sends a query and returns a data frame directly:
+
+```{r}
+library(DBI)
+con <- dbConnect(RPostgres::Postgres(), dbname = "lec04")
+dbListTables(con)                                            # "covid"           (like \dt)
+dbListFields(con, "covid")                                   # its 6 columns     (like \d covid)
+df <- dbGetQuery(con, "
+  SELECT state, sum(cases) AS total_cases
+    FROM covid
+    WHERE date = '2020-12-31'
+    GROUP BY state
+    ORDER BY total_cases DESC
+    LIMIT 3")
+df                                                           # California 2307860, Texas 1770527, Florida 1323307
+str(df)                                                      # total_cases is integer64: sum() of integers is a bigint in Postgres
+```
+
+Parameters are written `$1`, `$2`, ... and given as a list, for the same reason as in Python:
+
+```{r}
+dbGetQuery(con,
+  "SELECT county, cases FROM covid WHERE date = $1 AND state = $2 ORDER BY cases DESC LIMIT 3",
+  params = list("2020-12-31", "Texas"))                      # Harris 237727, Dallas 193318, Tarrant 150004
+```
+
+
+## SQL Database Abstraction
+
+The second style is to not write SQL at all. With the `dbplyr` package (part of the `tidyverse`), `tbl(con, "covid")` stands for the table in the database, and ordinary `dplyr` verbs on it are translated into SQL. Nothing is computed in R:
+
+```{r}
+library(dplyr)                                             # SQL translation:
+q <- tbl(con, "covid") |>                                  # FROM covid
+  filter(date == as.Date("2020-12-31")) |>                 # WHERE date = '2020-12-31'
+  group_by(state) |>                                       # GROUP BY state
+  summarise(total_cases = sum(cases, na.rm = TRUE)) |>     # SELECT state, sum(cases) AS total_cases
+  arrange(desc(total_cases)) |>                            # ORDER BY total_cases DESC
+  head(3)                                                  # LIMIT 3
+show_query(q) # the SQL that dbplyr wrote
+collect(q) # only now is it run in Postgres, and the 3 rows come back to R as a dply data frame (tbl) object
+```
+
+`show_query` prints almost exactly the query we would write by hand, and `collect` runs it in the database and brings back only the answer, so the "let the database do the work" rule holds automatically. 
+
+You can close the R postgres connection with 
+
+```{r}
+dbDisconnect(con)
+```
+
+In Python, `ibis` does the same. It was mistakenly left out of the setup guide when you installed your packages, so install it now, in a terminal with your course environment active:
+
+```bash
+source ~/.venvs/bigdata/bin/activate
+pip install "ibis-framework[postgres]"     # the quotes are needed, as for psycopg[binary]
+python -c "import ibis; print('ok')"
+```
+
+(The `pip install` line in `setup_docs/03_software_setup_common.qmd` now includes it.) `con.table("covid")` stands for the table in the database, the methods build up a query, and `ibis.to_sql` shows the SQL it wrote: `con.table("covid")` stands for the table in the database, the methods build up a query, and `ibis.to_sql` shows the SQL it wrote:
+
+```{python}
+import datetime
+import ibis
+con = ibis.postgres.connect(database="lec04")
+covid = con.table("covid")                                 # SQL translation:
+q = (covid                                                 # FROM covid
+     .filter(covid.date == datetime.date(2020, 12, 31))    # WHERE date = '2020-12-31'
+     .group_by("state")                                    # GROUP BY state
+     .aggregate(total_cases=covid.cases.sum())             # SELECT state, sum(cases) AS total_cases
+     .order_by(ibis.desc("total_cases"))                   # ORDER BY total_cases DESC
+     .limit(3))                                            # LIMIT 3
+print(ibis.to_sql(q))  # nested derived tables, named t0, t1 and t2, then ORDER BY ... DESC NULLS LAST LIMIT 3
+q.to_pandas()          # only now is it run in Postgres: California 2307860, Texas 1770527, Florida 1323307
+con.disconnect()
+```
+
+The SQL `ibis` writes is uglier than ours, a derived table inside a derived table with the throwaway aliases `t0`, `t1` and `t2`, but Postgres's planner turns it into the same plan.
+
+A third style is the **ORM** ("object-relational mapper"), such as SQLAlchemy and Django in Python (and ActiveRecord in Ruby on Rails). An ORM maps each *table* to a *class* and each *row* to an *object* of that class: you write a `County` class once, and `counties` rows come back as `County` objects whose attributes are the columns, `county.name` and `county.fips`. Foreign keys become attributes too. Declare that `counties.state_id` points at `states` (Lecture 6), and `county.state.name` follows it to the right `states` row for you: the ORM writes the join behind the scenes. Saving works the same way in reverse: change `county.name` and save it (`county.save()` in Django, `session.commit()` in SQLAlchemy), and the ORM writes the `UPDATE`. The difference from `dbplyr` and `ibis` is the goal. Those build a *query* and hand you back a data frame for analysis, while an ORM gives *application code* (a web site, say) objects to work with one at a time, which is why it is what most web applications use.
+
+The convenience of all three has a price: when a query is slow you have to read the SQL they generated (`show_query` in `dbplyr`, `ibis.to_sql` in `ibis`, the query log in an ORM) to see why, so you still need to know SQL. ORMs in particular make it easy to write a loop such as "for each county, print `county.state.name`", which quietly sends one query per county, the same row-by-row pattern as the correlated subquery in Lecture 6.
+
+## Big picture plan
+
+We will be returning to database adapters in the end of the course when we "put it all together" - from databases -> cleaning -> predictive modeling / inferential modeling using R and/or Python. That's when we'll dip into knowledge from all your other statistics and machine learning courses.

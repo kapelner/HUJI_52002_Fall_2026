@@ -10,336 +10,9 @@ format:
     embed-resources: true
 ---
 
-# Crash course in slurm
-
-This topic will not be tested. The next testable topic is when we continue with SQL.
-
-In Lecture 4 we saw that `moriah-gw` is only the **login node**, the front door, and that it caps you at 30% of one core. The real work happens on the **compute nodes**, which you never `ssh` into. Instead you ask the **scheduler** for resources and it runs your work there when they are free. On Moriah the scheduler is **Slurm**, and so is it on most university and national clusters in the world.
-
-The idea is that of a restaurant with a waiting list. You tell the host how many seats you need (cores), how much table space (memory), and how long you'll stay (time). The host puts you in the queue and seats you when a table that big opens up. You don't pick the table. If you overstay your time, you are thrown out.
-
-A few words:
-
-* A **job** is one request for resources plus the commands to run with them. Every job gets a number, the **job ID**.
-* A **node** is one computer in the cluster. A job runs on one (or more) nodes.
-* A **partition** is a named group of nodes with its own limits (e.g. a short queue, a GPU queue). If you don't name one, you get the default.
-* The **queue** is the list of all jobs that are waiting or running.
-
-We will use three commands:
-
-* `sbatch`: submit a script to run *later*, in the background. You get your prompt back immediately. This is how you run real work.
-* `srun`: run a command on a compute node *now* and wait for it, with its output in your terminal. Good for quick tests and interactive sessions.
-* `squeue`: look at the queue to see your jobs and their state.
-
-And one more to clean up: `scancel` kills a job.
-
-## Look around first
-
-```bash
-ssh moriah
-hostname
-sinfo -s #gives detailed information about the cluster
-```
-
-The output of `sinfo` will be something like this:
-
-```
-PARTITION  AVAIL  TIMELIMIT   NODES(A/I/O/T) NODELIST
-catfish-k     up 7-00:00:00          5/0/0/5 catfish-[01-05]
-catfish       up 7-00:00:00          5/0/0/5 catfish-[01-05]
-salmon-k      up 7-00:00:00         9/0/1/10 salmon-[01-10]
-salmon        up 7-00:00:00         9/0/1/10 salmon-[01-10]
-goldfish-k    up 7-00:00:00          1/0/0/1 goldfish-01
-goldfish      up 7-00:00:00          1/0/0/1 goldfish-01
-dogfish-k     up 7-00:00:00          0/0/2/2 dogfish-[01-02]
-dogfish       up 7-00:00:00          0/0/2/2 dogfish-[01-02]
-glacier-k     up 7-00:00:00        37/0/1/38 glacier-[01-38]
-glacier*      up 7-00:00:00        37/0/1/38 glacier-[01-38]
-```
-
-Let's explain these columns
-
-* PARTITION is a named queue with its own rules, pointing at a set of nodes. The rules cover things like the maximum time, who may submit, priority, and whether jobs can be preempted. Because it's a rule set and not the hardware itself, two partitions can point at the same machines:
-- salmon and salmon-k are the same 10 physical machines with two different sets of rules.
-- glacier and glacier-k are both the same 38 machines.
-* AVAIL whether the queue is available (up = yes, down = no, drain = no, inact = no)
-* TIMELIMIT is the timelimit e.g. 7-00:00:00 denoted 7 days, 0 hours, the longest time a job may ask for in this partition using the "--time" specificiation
-* NODES(A/I/O/T) is the availability status about the machines in the queue e.g. 37/0/1/38.
-  - Allocated: 37 nodes are running at least one job.
-  - Idle: 0 nodes are completely unused.
-  - Other: 1 node is unavailable, usually down, drained for maintenance, or failed.
-  - Total: 38 nodes.
-* NODELIST is the names of the actual machines e.g. glacier-01 through glacier-38.
-
-```bash
-squeue | head -n 5      # info for the first five jobs running on moriah
-squeue | wc -l          # how many jobs are in the whole queue right now
-squeue -u $USER         # just mine (none yet)
-```
-
-`squeue` columns are mostly self explanatory: `JOBID`, `PARTITION`, `NAME` (the name the user gave to their job), `USER` (name of the user), `ST` (current state of the job), `TIME` (how long it has been running), `NODES` and `NODELIST(REASON)`. The states you will see the most are `PD` (pending, waiting in line) and `R` (running). When a job is pending, the last column says the reason why, e.g. `(Resources)` means it is waiting for a free spot and `(Priority)` means others are ahead of you.
-
-## `srun`: execute one bash command on a compute node right now
-
-```bash
-srun hostname                          # not moriah-gw! A compute node ran it
-```
-
-You'll see something like:
-
-```
-srun: job 46637257 queued and waiting for resources
-srun: job 46637257 has been allocated resources
-glacier-14
-```
-
-That job "46637257" is the job_id given to our command. The "glacier-14" is the output of `hostname`. This means we successfully queued our first supercomputer job and all it did was tell use which computer it got allocated to.
-
-We can ask for any number of cores and memory we wish. Let's check it actually gives us what we request: 
-
-```bash
-srun --cpus-per-task=4 nproc           # 4: you get the number of cores you asked for
-srun --cpus-per-task=8 nproc           # 8: you get the number of cores you asked for
-srun --mem=2G --time=00:05:00 bash -c 'numfmt --to=iec < /sys/fs/cgroup/memory$(grep :memory: /proc/self/cgroup | cut -d: -f3 | sed "s|/step.*||")/memory.limit_in_bytes'  #2.0GB: you get the amount of memory you asked for
-srun --mem=7G --time=00:05:00 bash -c 'numfmt --to=iec < /sys/fs/cgroup/memory$(grep :memory: /proc/self/cgroup | cut -d: -f3 | sed "s|/step.*||")/memory.limit_in_bytes'  #7.0GB: you get the amount of memory you asked for
-```
-
-Let's redo the experiment testing how long it takes to add the numbers 1 + 2 + ... + 10,000,000 together on both the gateway node and the compute cluster
-
-```bash
-time python3 -c "sum(range(10**7))"         # on the login node, metered to 30% of a core
-srun bash -c 'time python3 -c "sum(range(10**7))"'    # on a compute node, a full core
-```
-
-The real time for gateway is ~3s and on compute it's ~0.2s.
-
-To get an interactive shell on a compute node (to poke around, test code, etc.) ask for a pseudo-terminal with `--pty`:
-
-```bash
-srun --cpus-per-task=2 --mem=4G --time=00:30:00 --pty bash
-hostname       # we are on a compute node now
-nproc          # 2
-exit           # give the resources back! The job ends when the shell ends
-```
-
-Always `exit` when you are done. While the shell is open you hold those cores and nobody else can use them, even if you are off getting coffee.
-
-## `sbatch`: submit a job script
-
-For anything that takes a while, you don't want to sit and wait. You write a **job script**: a regular bash script which specifies a job that runs in the background (think like runnning something on tmux). After the standard shebang line, the top lines of the bash script starting with `#SBATCH` are the resource request. Bash ignores them (they start with `#` so they are comments). But they are not comments to `sbatch` who reads them carefully.
-
-```bash
-mkdir -p ~/slurm_demo
-cd ~/slurm_demo
-cat > hello_job.sh << 'EOF'
-#!/bin/bash
-#SBATCH --job-name=hello
-#SBATCH --time=00:05:00
-#SBATCH --cpus-per-task=1
-#SBATCH --mem=1G
-#SBATCH --output=hello_%j.out
-
-echo "Job $SLURM_JOB_ID started on $(hostname) at $(date)"
-echo "I was given $SLURM_CPUS_PER_TASK cores"
-sleep 60
-python3 -c "print(sum(range(10**8)))"
-echo "Done at $(date)"
-EOF
-bash -n hello_job.sh #ensure it parses
-ls -alh
-```
-Note: no need to `chmod` the script for execution as `sbatch` doesn't run your file in place. It reads its contents and sends the contents to Slurm, and Slurm writes that copy out on the compute node with its own permissions and runs it there. The execute bit on your original file never comes into play.
-
-The request lines:
-
-* `--job-name`: a name so you recognize it in `squeue`.
-* `--time`: the wall clock limit, `HH:MM:SS` (or `D-HH:MM:SS`). When it runs out, Slurm kills the job, finished or not. Ask for a bit more than you need: asking for less gets you scheduled sooner but asking for too little loses all the work.
-* `--cpus-per-task`: how many cores.
-* `--mem`: how much memory. Go over it and the job is killed with an "out of memory" (`OOM`) error.
-* `--output`: where the job's stdout and stderr go, since there is no terminal to print to. `%j` is replaced by the job ID so each run gets its own file.
-
-Slurm hands the script information through environment variables that all start with `SLURM_`, e.g. `$SLURM_JOB_ID` and `$SLURM_CPUS_PER_TASK`.
-
-Now submit it:
-
-```bash
-sbatch hello_job.sh
-# Submitted batch job 46637001       <- your job ID
-squeue -u $USER                      # PD then R
-squeue -u $USER                      # run it again a few times... or:
-watch -n 1 squeue -u $USER           # refreshes every second, Ctrl+C to stop watching (not the job!)
-ls                                   # hello_<jobid>.out appears once it starts
-tail -f hello_*.out                  # follow the output live, Ctrl+C to stop
-squeue -u $USER                      # should be done now
-```
-
-You can log out right after `sbatch` and the job keeps going: it doesn't belong to your terminal at all. This is the real answer to the "how do I keep a long job running after I log out" question from Lecture 5 (`tmux` / `nohup` are for the login node; on a cluster, long jobs go to the scheduler).
-
-You can also pass your own settings into the script through environment variables put before `sbatch` (they get copied into the job). This is how `KEEP_ALIVE=1 sbatch pg_job.sh` works below.
-
-## `scancel`: kill a job
-
-```bash
-sbatch hello_job.sh
-squeue -u $USER          # note the JOBID
-scancel 46637002         # use your job ID
-scancel -u $USER         # careful: cancels ALL your jobs
-```
-
-## After the job: what happened?
-
-```bash
-cat hello_*.out
-sacct -u $USER --starttime today --format=JobID,JobName,State,Elapsed,MaxRSS,ExitCode
-```
-
-`sacct` is the history of your jobs (`squeue` only shows jobs that are still pending or running). `State` is `COMPLETED`, `FAILED`, `CANCELLED`, `TIMEOUT` or `OUT_OF_MEMORY`. `MaxRSS` is the most memory the job actually used, which is how you learn what to put in `--mem` next time.
-
-## `srun` inside a running job
-
-One last trick that we need for postgres: `srun --jobid=<id>` runs a new command *inside a job that is already running*, on its node, with its resources. Normally Slurm would wait until the job's cores are free, so we add `--overlap` to share them with what is already running there.
-
-```bash
-sbatch hello_job.sh                                    # sleeps for 60 sec
-squeue -u $USER                                        # wait until it says R
-srun --jobid=46637687 --overlap hostname               # the same node the job is on
-srun --jobid=46637687 --overlap --pty bash             # a shell inside the job
-ps -u $USER                                            # you can see the job's sleep
-exit
-```
-
-## Our course's limits on moriah
-
-All of us share one Slurm account, `course-52002-26`. Its limits apply to **everyone's running jobs added together, at the same moment**:
-
-* at most **647 cores**
-* at most **15 GPUs** (we won't be using these)
-* at most **~6,250 GB of memory**
-
-Each of us, separately:
-
-* at most **2 interactive jobs** open at once (`srun --pty bash`, and every `srun --jobid=... --overlap --pty psql` counts too). A third one waits until you `exit` one.
-* up to 20,000 jobs submitted at once, and at most 7 days per job (the partition limit).
-
-There is **no budget** of CPU hours to run out of. Using a lot only lowers your priority for a while (`sshare -U` shows your `FairShare`, from 0 to 1, where higher is better). There is also no per-person cap, so a few greedy requests can use up the class's 647 cores and leave everyone else in `PD` with reason `(AssocGrpCpuLimit)` or `(AssocGrpMemLimit)`. Ask for modest resources (≤ 4 cores and ≤ 8G is plenty for this course).
-
-Check them yourself:
-
-```bash
-sshare -U
-sacctmgr show assoc account=course-52002-26 user=$USER format=Account%20,User%12,GrpTRES%60,MaxSubmit
-```
-
-The summary of the rules:
-
-1. Never run heavy work on the login node.
-2. Quick test or interactive work: `srun` (with `--pty bash` for a shell, and `exit` when done).
-3. Real work: write a job script and `sbatch` it.
-4. Check on it with `squeue -u $USER`, kill it with `scancel`, look back with `sacct`.
-5. Ask for what you need (`--time`, `--cpus-per-task`, `--mem`), a bit more to be safe, but not much more: big requests wait longer and keep others out.
-
-## Slurm under other names: AWS, Kubernetes and friends
-
-After you graduate you may never see Slurm again, unless you work in academia, a national lab or a pharma / biotech company running its own cluster. In industry the compute usually lives in the cloud: **AWS Batch** (Amazon), **Google Cloud Batch**, **Azure Batch**, **Kubernetes**, **Databricks** jobs, etc. The good news is that they are all schedulers solving the same problem, and the ideas you just learned carry over.
-
-## Using postgres on moriah for this class
-
-```bash
-#let's navigate to my class home directory (not ~)
-cd /sci/courses/2026/52002/$USER
-pwd
-#there's a job that we can use to run postgres located in our class's shared directory
-less /sci/courses/2026/52002/shared/pg_job.sh
-KEEP_ALIVE=1 sbatch --time=02:00:00 ../shared/pg_job.sh #this starts the postgres server for you inside the compute cluster
-squeue -u $USER #ensure it's working
-export pg_job_id=46639943 #save the job_id for convenience as we'll reference it later
-```
-
-This job (which the HURCS people wrote for us) starts the postgres server in the cluster. By default it lives for two hours. Data persists in our local directories, so if it expires and kicks you out, your data survives. You can make it longer if you care by using ` --time=04:00:00`. The maximum time is 7 days. But you will be billing the class if it's idle. So just keep it on the default two hours.
-
-The server is running, how do we connect to it? We can use `srun` to connect a terminal inside a running job:
-
-```bash
-srun --jobid=${pg_job_id} --overlap --pty psql -h /tmp/pg_${USER}_${pg_job_id} classdb
-```
-
-Now we're inside postgres running on the cluster. It is here you will be doing some database work on the homework. We are using a database called `classdb` because we called `psql classdb`. Let's see how we're set up:
-
-```sql
-\conninfo
--- expected
-\l
--- the usual defaults + classdb
-\dt
--- no tables yet
-\timing on
---let's build a throwaway table
-CREATE TABLE students (
-  id       integer,
-  name     text,
-  born     date,
-  height   double precision,
-  enrolled boolean
-);
---and add a few rows
-INSERT INTO students VALUES
-  (1, 'Noa',   '2003-04-17', 1.68, true),
-  (2, 'Amir',  '2002-11-02', 1.81, true),
-  (3, 'Yael',  '2004-01-29', 1.62, false),
-  (4, 'Omer',  '2003-08-09', NULL, true);
---check they are there
-SELECT * FROM students;
-\dt
--- now students is listed
-\q
-```
-
-We left postgres. Is our data gone? No... it's actually saved to our class home directory
-
-```bash
-ls -alh pgdata/
-```
-
-Where is it exactly? The postgres file system is beyond the scope of the course. But it's there.
-
-Our postgres job started with `sbatch` is still running so we can reconnect into the job within our two hour limit:
-
-```bash
-srun --jobid=${pg_job_id} --overlap --pty psql -h /tmp/pg_${USER}_${pg_job_id} classdb
-```
-
-And now let's make sure our data is still there:
-
-```sql
-SELECT * from students;
-```
-
-This verifies the database data persists on our filesystem. Let's now clean it up since it was just a demo:
-
-```sql
-DROP TABLE students;
-\dt
-\q
-```
-
-Once your're done with your work session, be *considerate* to everyone else in the class (and everyone else on the cluster) and shutdown your postgres server. Do that don't downwith `scancel`:
-
-```bash
-scancel ${pg_job_id} 
-```
-
-
 # Subqueries (continued)
 
-Make a scratch folder for this lecture and bring the data along (we use it again in the database unit):
-
-```bash
-mkdir -p ~/workspace/HUJI_52002_Fall_2026/scratch/lec06
-cd ~/workspace/HUJI_52002_Fall_2026/scratch/lec06
-cp ../lec01/covid.csv .
-ls -alh
-```
-Now open the database:
+Open the database:
 
 ```bash
 psql lec04
@@ -351,8 +24,6 @@ Let's set a convenience setting so results always print to screen and not to `le
 ```sql
 \pset pager off
 ```
-
-
 
 Any aggregate works for scalar subqueries e.g. the counties above the national mean (6171) at the end of 2020
 
@@ -370,7 +41,7 @@ SELECT count(*)
 A subquery can also sit in the `SELECT`, as one more column. Which counties alone had more than 1% of all the cases in the country at the end of 2020, and what share did each have?
 
 ```sql
--- the same subquery twice: once to filter the rows, once to compute each county's share
+-- the same subquery twice
 SELECT county, state, cases,
        round(100.0 * cases / (
          SELECT sum(cases)
@@ -393,7 +64,7 @@ SELECT county, state, cases,
 -- Harris        | Texas      | 237727 | 1.2
 ```
 
-Only 6 of the 3,245 counties, and together they had 12.3% of all the cases in the US. Why `100.0` and not `100`? `cases` and `sum(cases)` are whole numbers, and dividing two whole numbers in SQL throws away the remainder, so the shares would come out as 3, 2, 1, 1, 1, 1.
+Only 6 of the 3,245 counties, and together they had 12.3% of all the cases in the US. Why `100.0` and not `100`? Same issue we saw previously: `cases` and `sum(cases)` are whole numbers, and dividing two whole numbers in SQL throws away the remainder, so the shares would come out as 3, 2, 1, 1, 1, 1.
 
 The subquery must return what its place in the outer query expects. After `=`, `<` or `>` it stands for a **single value**, so it must return exactly one row and one column, of a type that can be compared with the other side. Aggregates without `GROUP BY` always return one row, which is why they are the usual inner query. Get the shape or the type wrong and Postgres refuses. 
 
@@ -431,7 +102,6 @@ SELECT county
 We can use multiple-value vector subqueries when they're appropriate. For example, after `IN`, the subquery stands for a **list of values** instead, so it may return many rows, but still only one column:
 
 ```sql
--- all counties in the states that have at least one county above 200,000 cases
 SELECT count(*)
   FROM covid
   WHERE date = '2020-12-31'
@@ -442,7 +112,7 @@ SELECT count(*)
     );                                                      -- 555
 ```
 
-Up until now the subqueries were all used as stand-ins for values within the `WHERE`. We will now look at subqueries as `FROM`. A subquery in `FROM` is called a **derived table**. Postgres treats its answer as a temporary table and needs a name to refer to it, e.g. `SELECT t.state ... FROM ( ... ) AS t`. The `t` is the common "throwaway" name and it is nothing but an arbitrary alias just like for a column `AS <my_new_col_name>`. In those below nothing refers to `t`, because `count(*)` and `sum(deaths)` need no table name, and since version 16 Postgres lets you leave the alias out. We will write the alias in anyway: older Postgres versions refuse the query with `ERROR: subquery in FROM must have an alias`, and so do other SQL dialects such as MySQL and SQL Server. The `AS` is also optional here.
+Up until now the subqueries were all used as stand-ins for values within the `WHERE`. We will now look at subqueries as `FROM`. A subquery in `FROM` is called a **derived table**. SQL treats its answer as a temporary table and needs a name to refer to it, e.g. `SELECT t.state ... FROM ( ... ) AS t`. The `t` is the common "throwaway" name and it is nothing but an arbitrary alias just like for a column `AS <my_new_col_name>`. In those below nothing refers to `t`, because `count(*)` and `sum(deaths)` need no table name. Note in our version of postgres: you don't need the throwaway name. Advice: keep it as older Postgres versions refuse the query with `ERROR: subquery in FROM must have an alias`, and so do other SQL dialects such as MySQL and SQL Server. The `AS` is also optional here but you should keep it too as it reminds you what you're doing.
 
 
 ```sql
@@ -473,9 +143,7 @@ SELECT count(*)
   ) AS covid_state_county_subset;  -- 1104
 ```
 
-You don't need the `AS covid_state_county_subset` (in postgres) it's purely as a comment.
-
-Let's review `UNION` vs `UNION ALL`:
+Let's review when `UNION` is wrong but `UNION ALL` is correct:
 
 ```sql                                                   
 SELECT sum(deaths)                                                      
@@ -503,7 +171,6 @@ SELECT sum(deaths)
 One more place an ordinary subquery can go: `HAVING`, to compare each group with a number computed from all the groups. The average state total is the national total divided by the number of states, which one subquery can compute:
 
 ```sql
--- the states whose total cases are above the average state total (364087, over 55 states and territories)
 SELECT state, sum(cases) AS total_cases
   FROM covid
   WHERE date = '2020-12-31'
@@ -521,14 +188,15 @@ Only 18 of the 55 are above the average: a few huge states pull it up, just as t
 
 ## Correlated subqueries
 
-Every subquery so far was **uncorrelated**: the inner query does not depend on the outer one, so Postgres runs it **once**, puts its answer in its place, and then runs the outer query. A **correlated** subquery uses a value from the *outer* row, so its answer is different for every outer row, and you read it as a loop: "for each outer row, ask the inner query".
+Every subquery so far was **uncorrelated**: the inner query does not depend on the outer one, so Postgres runs it **once**, puts its answer in its place, and then runs the outer query. 
 
-The classic case is `EXISTS ( ... )`, which checks for at least one row: it is true if the inner query returns one or more rows, and `NOT EXISTS ( ... )` is true if it returns none. What the rows contain does not matter, so selecting anything works. You will often see `SELECT 1` instead as this just returns one column with a one in it, which means the same thing as selecting anything at all. It's a style choice to say "the specific data per row returned doesn't matter". 
+A **correlated** subquery uses a value from the *outer* row, so its answer is different for every outer row, and you read it as a loop: "for each outer row, ask the inner query". These are confusing.
+
+The classic case is `EXISTS ( ... )`, which checks for at least one row: it is true if the inner query returns one or more rows, and `NOT EXISTS ( ... )` is true if it returns none. What the rows contain does not matter, so selecting anything works. You will often see `SELECT 1` instead as this just returns one column with a one in it, which means the same thing as selecting anything at all. It's a style choice to say "the specific columns per row returned doesn't matter". 
 
 To use the outer row's state inside the inner query, the outer table needs a name: both queries read `covid`, and inside the inner query a bare `state` always means the *inner* `covid.state` (the nearest `FROM` wins). So the outer `covid` gets the alias `c`, as we named derived tables above, and the inner query writes `c.state`.
 
 ```sql
--- the states where no county reached 20000 cumulative cases by the end of 2020
 SELECT DISTINCT state
   FROM covid AS c
   WHERE date = '2020-12-31'
@@ -541,10 +209,10 @@ SELECT DISTINCT state
 -- Guam, Hawaii, Maine, Mississippi, Montana, New Hampshire, North Dakota, Northern Mariana Islands,
 -- Puerto Rico, Vermont, Virgin Islands, West Virginia, Wyoming (13 rows; EXISTS instead gives the other 42)
 ```
+
 You can also alias the inner table instead. Then the plain name `covid` can only mean the outer table, so the outer row's state is `covid.state`. Careful: a bare `state` would still mean the *inner* table's `state` (the nearest `FROM` wins, alias or not), so `c.state = state` is always true and the query returns 0 rows:
 
 ```sql
--- the states where no county reached 20000 cases by the end of 2020
 SELECT DISTINCT state
   FROM covid
   WHERE date = '2020-12-31'
@@ -558,7 +226,7 @@ SELECT DISTINCT state
 -- Puerto Rico, Vermont, Virgin Islands, West Virginia, Wyoming (13 rows; EXISTS instead gives the other 42)
 ```
 
-Postgres does *not* run the inner query once per outer row, though. Its planner recognizes the pattern and rewrites it: `EXPLAIN` shows a `Hash Anti Join`, which reads the inner rows once into a hash table of the states that have a big county, then reads the outer rows once and keeps those whose state is not in it. That is two passes, exactly what the `awk` version below does with its array `big[$3]`. So a correlated subquery is the *meaning* ("for each outer row, ask the inner query"), and the database is free to find a faster plan with the same answer. It usually does for `EXISTS` and `IN`, but not always (we will see a correlated subquery it runs row by row in the window functions section), so check with `EXPLAIN` when a query is slow. Nested loops versus hash tables is *the* efficiency question of joins, which we will cover later.
+Postgres does *not* always run the inner query once per outer row, though. Its planner recognizes the pattern and optimizes it. It will rewrite it automatically: `EXPLAIN` shows a `Hash Anti Join`, which reads the inner rows once into a hash table of the states that have a big county, then reads the outer rows once and keeps those whose state is not in it. That is two passes, exactly what the `awk` version below does with its array `big[$3]`. So a correlated subquery is the *meaning* ("for each outer row, ask the inner query"), and the database is free to find a faster plan with the same answer. It usually does for `EXISTS` and `IN`, but not always (we will see a correlated subquery it runs row by row in the window functions section), so check with `EXPLAIN` when a query is slow. Nested loops versus hash tables is *the* efficiency question of joins, which we will cover later.
 
 In `awk` a subquery is a **second pass** over the file. Giving `awk` the same file twice, `covid.csv covid.csv`, reads it twice. `NR==FNR` is true only during the first file (`NR` counts all lines read so far, `FNR` only those of the current file), so the first block computes the inner answer and `next` skips the rest; the pattern after it runs on the second pass:
 
@@ -671,7 +339,7 @@ SELECT county, cases
 -- if one command fails, the whole transaction fails: the first UPDATE is undone too
 BEGIN;
 UPDATE texas SET cases = cases + 100
-  WHERE county = 'Harris' AND date = '2020-12-31';          -- UPDATE 1
+  WHERE county = 'Harris' AND date = '2020-12-31';          -- UPDATE 1 (valid update)
 UPDATE texas SET cases = 'N/A'
   WHERE county = 'Dallas' AND date = '2020-12-31';          -- ERROR:  invalid input syntax for type integer: "N/A"
 SELECT count(*)
@@ -696,12 +364,12 @@ INSERT INTO covid VALUES ('2021-01-01', 'Harris', 'Texas', '48201', 'N/A', 0);
 -- ERROR:  invalid input syntax for type integer: "N/A"
 ```
 
-A CSV would have accepted that line without complaint, and the problem would have appeared much later, in the middle of an analysis. A database refuses bad data at the door. Types are the simplest of its guarantees. Later you can add rules such as `NOT NULL`, `UNIQUE` and `CHECK`.
+A CSV would have accepted that line without complaint, and the problem would have appeared much later, in the middle of an analysis. A database refuses bad data at the door. Types are the simplest of its guarantees. You can add more rules, such as `NOT NULL` and `UNIQUE`, with `ALTER TABLE` (next).
 
 ### Changing the table itself: `ALTER TABLE`
 
 
-`INSERT`, `UPDATE` and `DELETE` change the rows. `ALTER TABLE` changes the *table*: its columns, their names and their types. Again on a copy, here of the whole table:
+`INSERT`, `UPDATE` and `DELETE` change the rows. `ALTER TABLE` changes the *table*: its columns, their names, their types and the rules its rows must follow. Again on a copy, here of the whole table:
 
 ```sql
 CREATE TABLE covid_copy AS (
@@ -737,6 +405,19 @@ ALTER TABLE covid_copy ALTER COLUMN fips TYPE integer;
 ALTER TABLE covid_copy ALTER COLUMN fips TYPE integer USING fips::integer;   -- about 0.4 s
 SELECT * FROM covid_copy WHERE fips < 10000 LIMIT 3;
 -- the text->integer conversion dropped the leading zero which messes up the fips code (which is why it should stay text)
+-- SET NOT NULL: from now on the column may never be empty. Postgres first checks the rows already there
+ALTER TABLE covid_copy ALTER COLUMN deaths SET NOT NULL;
+-- ERROR:  column "deaths" of relation "covid_copy" contains null values
+ALTER TABLE covid_copy ALTER COLUMN state SET NOT NULL;                   -- about 0.2 s: no state is empty
+INSERT INTO covid_copy (date, county, cases) VALUES ('2021-01-01', 'Harris', 239000);
+-- ERROR:  null value in column "state" of relation "covid_copy" violates not-null constraint
+-- ADD UNIQUE: no two rows may have the same value (or, for several columns, the same combination)
+ALTER TABLE covid_copy ADD UNIQUE (state);
+-- ERROR:  could not create unique index "covid_copy_state_key", then DETAIL: Key (state)=(...) is duplicated.
+ALTER TABLE covid_copy ADD UNIQUE (date, state, county);                  -- about 1.3 s: one row per county per day, so it works
+\d covid_copy                                                              -- under Indexes: covid_copy_date_state_county_key, built automatically
+INSERT INTO covid_copy (date, county, state, cases) VALUES ('2020-12-31', 'Harris', 'Texas', 237727);
+-- ERROR:  duplicate key value violates unique constraint "covid_copy_date_state_county_key"
 -- RENAME TO renames the table itself
 ALTER TABLE covid_copy RENAME TO covid_scratch;
 \d covid_scratch
@@ -744,9 +425,65 @@ DROP TABLE covid_scratch;
 \dt
 ```
 
-Adding, renaming or dropping a column takes a few milliseconds whatever the size of the table, because Postgres only changes its description of the table (what `\d` prints). It does not touch the rows. A dropped column is just hidden, and its space is reclaimed later as the rows are rewritten. Changing a column's type is different: every value must be converted, so the whole table is rewritten, and it takes about as long as the `UPDATE` does.
+Adding, renaming or dropping a column takes a few milliseconds whatever the size of the table, because Postgres only changes its description of the table (what `\d` prints). It does not touch the rows. A dropped column is just hidden, and its space is reclaimed later as the rows are rewritten. Changing a column's type is different: every value must be converted, so the whole table is rewritten, and it takes about as long as the `UPDATE` does. Adding a rule is in between: Postgres reads every row once to check that the rule already holds, and after that it checks only the rows each `INSERT` or `UPDATE` touches.
 
 Compare this with Parquet. A Parquet file stores each column separately, but its metadata and row groups are written once, so even adding a column means writing a new file. With a table split over thousands of Parquet files, adding one column means rewriting every one of them.
+
+Columns with `UNIQUE` have an index by default: Postgres builds one automatically (the same B-tree as `CREATE INDEX` in Lecture 5), because that is how it finds a duplicate fast on every `INSERT`. So you never need a separate `CREATE INDEX` on columns that are already `UNIQUE`, and queries that search them are fast too: `WHERE date = '2020-12-31' AND state = 'Texas' AND county = 'Harris'` on `covid_copy` now uses that index.
+
+### Upsert: `INSERT ... ON CONFLICT`
+
+::: {.callout-note}
+## Not covered on the exam
+This subsection is FYI only: it will not be tested.
+:::
+
+`UNIQUE` makes a very common data-engineering job safe. A pipeline loads a new file into a table every day. Sometimes the same file is loaded twice (the job crashed and was rerun), and sometimes the new file also re-sends yesterday's rows, corrected: `covid`'s cumulative counts were revised all the time, which is why 15,144 of its day-to-day changes go *down*. The load must add the new rows, replace the corrected ones, and never store a county-day twice. With a `UNIQUE` rule on the county-day, a plain `INSERT` refuses the file, and `INSERT ... ON CONFLICT` says what to do instead. "Insert, or update if it is already there" is called an **upsert**:
+
+```sql
+CREATE TABLE texas_load AS (
+  SELECT *
+    FROM covid
+    WHERE state = 'Texas' AND county IN ('Harris', 'Dallas') AND date >= '2020-12-30'
+  );                                                        -- SELECT 4
+ALTER TABLE texas_load ADD UNIQUE (date, state, county);
+-- the next day's (imagined) file: a corrected 2020-12-31 for Harris, and a new day
+INSERT INTO texas_load VALUES
+  ('2020-12-31', 'Harris', 'Texas', '48201', 237800, 3405),
+  ('2021-01-01', 'Harris', 'Texas', '48201', 239000, 3500);
+-- ERROR:  duplicate key value violates unique constraint "texas_load_date_state_county_key"
+-- the whole statement failed, so the new day was not added either: still 4 rows
+-- DO NOTHING: skip the rows that clash, insert the rest
+INSERT INTO texas_load VALUES
+  ('2020-12-31', 'Harris', 'Texas', '48201', 237800, 3405),
+  ('2021-01-01', 'Harris', 'Texas', '48201', 239000, 3500)
+  ON CONFLICT (date, state, county) DO NOTHING;             -- INSERT 0 1: the new day only, the correction is ignored
+-- DO UPDATE: for a row that clashes, update the row already there instead.
+-- EXCLUDED is the row that was refused, so EXCLUDED.cases is the new value
+INSERT INTO texas_load VALUES
+  ('2020-12-31', 'Harris', 'Texas', '48201', 237800, 3405),
+  ('2021-01-01', 'Harris', 'Texas', '48201', 239000, 3500)
+  ON CONFLICT (date, state, county) DO UPDATE
+    SET cases = EXCLUDED.cases, deaths = EXCLUDED.deaths;  -- INSERT 0 2: both rows inserted or updated
+SELECT *
+  FROM texas_load
+  ORDER BY county, date;                                    -- 5 rows, Harris 2020-12-31 now 237800 | 3405
+DROP TABLE texas_load;
+```
+
+Run the last `INSERT` again and nothing changes: same 5 rows, same values. A load you can safely run twice is called **idempotent**, and it is what makes a pipeline safe to rerun after a crash. `ON CONFLICT` needs a `UNIQUE` (or primary key) rule on the columns it names: that index is how Postgres finds the clashing row, so without the rule there is nothing to conflict with, and the plain `INSERT` would have quietly stored Harris 2020-12-31 twice.
+
+In `awk`, an upsert is an array keyed on the unique columns: read the old rows, then the new file, and a later line with the same key overwrites the earlier one. `DO NOTHING` is the same with a test, keeping the first line of each key:
+
+```bash
+awk -F, '$3=="Texas" && ($2=="Harris" || $2=="Dallas") && $1>="2020-12-30"' covid.csv > texas_load.csv
+printf '2020-12-31,Harris,Texas,48201,237800,3405\n2021-01-01,Harris,Texas,48201,239000,3500\n' > new_day.csv
+# DO UPDATE: the last line of each (date, state, county) wins
+awk -F, '{row[$1 FS $3 FS $2] = $0} END {for (k in row) print row[k]}' texas_load.csv new_day.csv | sort -t, -k2,2 -k1,1   # 5 lines, Harris 2020-12-31 now 237800,3405
+# DO NOTHING: only the first line of each key is kept
+awk -F, '!(($1 FS $3 FS $2) in row) {row[$1 FS $3 FS $2] = $0} END {for (k in row) print row[k]}' texas_load.csv new_day.csv | sort -t, -k2,2 -k1,1   # 5 lines, Harris 2020-12-31 still 237727,3402
+rm texas_load.csv new_day.csv
+```
 
 ## Window functions
 
@@ -791,40 +528,25 @@ If you wrote this yourself as a `for` loop, you would never do that. You would r
 awk -F, -v OFS=, '$1=="2020-12-31" && $5 > m[$3] {m[$3] = $5; top[$3] = $2} END {for (s in m) print s, top[s], m[s]}' covid.csv | sort | head -n 3   # Alabama,Jefferson,52339 ..., about 0.4 s
 ```
 
-Standard SQL has no aggregate for "the county *where* cases is the biggest" (some databases do: DuckDB's `arg_max(county, cases)` and Spark's `max_by(county, cases)` are exactly that loop). In Postgres the efficient version is **uncorrelated**, with the tuples from Lecture 5: first one `GROUP BY` finds every state's maximum, then the outer query keeps the rows whose (state, cases) pair is in that list. Two passes, no matter how many states:
+Standard SQL has no aggregate for "the county *where* cases is the biggest" (some databases do: DuckDB's `arg_max(county, cases)` and Spark's `max_by(county, cases)` are exactly that loop). In Postgres the efficient version uses window functions.
 
-```sql
-SELECT state, county, cases
-  FROM covid
-  WHERE date = '2020-12-31'
-    AND (state, cases) IN (
-      SELECT state, max(cases)
-        FROM covid
-        WHERE date = '2020-12-31'
-        GROUP BY state
-    )
-  ORDER BY state;                                                  -- Alabama Jefferson 52339, Alaska Anchorage 22820, Arizona Maricopa 322449
-```
-
-but much faster!
-
-### Window functions do it in one sort
+### Window functions instead of GROUP BY
 
 An aggregate with `GROUP BY` boils each group down to one row. A **window function** computes the same kind of per-group answer but *keeps every row*, and writes the answer next to it. The group is called the **window** and is given after `OVER`: `PARTITION BY` says which rows belong together (like `GROUP BY`), and `ORDER BY` says in which order to go through them. Window functions are standard SQL and work in almost every database (Postgres, MySQL, SQLite, DuckDB, BigQuery, Spark).
 
-The classic use is the **top row per group** from above, such as each state's biggest county. `row_number()` numbers the rows of each state from 1, biggest first, and then we keep the 1s:
+The classic use is the sorting then row numbering, e.g. the state's biggest county gets 1, the next biggest gets 2, etc. `row_number()` numbers the rows:
 
 ```sql
 -- the top 3 per state is just r <= 3, which GROUP BY can't do at all
-SELECT county, cases, r
+SELECT state, county, cases, r
   FROM (
     SELECT state, county, cases,
-           row_number() OVER (PARTITION BY state ORDER BY cases DESC) AS r
+           row_number() OVER (PARTITION BY state ORDER BY cases DESC) AS r --think of this as GROUP BY state but without aggregation
       FROM covid
       WHERE date = '2020-12-31'
   ) AS t
-  WHERE state = 'Texas' AND r <= 3
-  ORDER BY r;                                               -- Harris 237727 1, Dallas 193318 2, Tarrant 150004 3
+  WHERE state IN ('Texas', 'California') AND r <= 3
+  ORDER BY state, r;                                               
 -- the window function can't go in WHERE (WHERE runs before it is computed), so it goes in a subquery in FROM
 SELECT state, county, cases
   FROM (
@@ -836,22 +558,48 @@ SELECT state, county, cases
   WHERE r = 1
   ORDER BY state
   LIMIT 10;                                                  -- Alabama Jefferson 52339, Alaska Anchorage 22820, Arizona Maricopa 322449
--- rank() gives tied rows the same number, then skips: here 1, 1, 3, 3 (row_number would give 1, 2, 3, 4)
--- with no PARTITION BY the window is the whole answer
-SELECT state, county, cases, rank() OVER (ORDER BY cases) AS r
+```
+
+Notice how the last query solved the correlated subquery issue from above and it runs ~200x faster.
+
+For the above, row # sometimes isn't the best because there are ties. The `rank()` function fixes this:
+
+```sql
+SELECT state, county, cases, rank() OVER (ORDER BY cases) AS rank
   FROM covid
   WHERE date = '2020-12-31'
   ORDER BY cases
   LIMIT 4;                                                  -- Kansas/Maryland Unknown 0 1, Hawaii Kalawao 1 3, Maine Unknown 1 3
+```
+
+This was an example of a baby aggregate. Below is the full window example:
+
+```sql
+SELECT state, county, cases, rank
+  FROM (
+    SELECT state, county, cases,
+           rank() OVER (PARTITION BY state ORDER BY cases DESC) AS rank --think of this as GROUP BY state but without aggregation
+      FROM covid
+      WHERE date = '2020-12-31'
+  ) AS t
+  WHERE state IN ('Texas', 'California') AND rank <= 3
+  ORDER BY state, rank;   
+```
+
+Same as the row number output from above (because there were no ties in the top three).
+
+Now let's see custom functions using `OVER`:
+
+```sql
 -- an aggregate with OVER: each county next to the total of its state, and its share of it
 SELECT county, cases,
-       round(100.0 * cases / sum(cases) OVER (PARTITION BY state), 1) AS pct_of_state
+       round(100.0 * cases / sum(cases) OVER (PARTITION BY state), 1) AS pct_cases_in_state
   FROM covid
   WHERE date = '2020-12-31' AND state = 'Texas'
-  ORDER BY cases DESC
+  ORDER BY pct_cases_in_state DESC
   LIMIT 3;                                                  -- Harris 13.4%, Dallas 10.9%, Tarrant 8.5%
 -- lag() looks at the previous row of the window. cases is a running total, so today minus yesterday = the new cases
-SELECT date, cases, cases - lag(cases) OVER (ORDER BY date) AS new_cases
+SELECT date, cases, cases - lag(cases) OVER (ORDER BY date) AS new_daily_cases --the "rolling window"
   FROM covid
   WHERE state = 'Texas' AND county = 'Harris'
   ORDER BY date DESC
@@ -869,7 +617,33 @@ SELECT county, state, new_cases
   ORDER BY new_cases DESC NULLS LAST
   LIMIT 3;                                                  -- Los Angeles 14503, Maricopa 5181, New York City 4584
 ```
-They have a cost. A window function must **sort** the rows of each window, which is $O(n \log n)$. For one day (3,245 rows) that is cheap, about 26 ms here. For the latest row of every county over the whole table (884,737 rows) it took about 1.5 s, while a `GROUP BY` version (`max(date)` per county, then an `IN` subquery to find those rows) took about 0.3 s, because a `GROUP BY` can use a hash table, which needs no sort.
+
+They have a cost. A window function must sort the rows: by the PARTITION BY columns so each group's rows sit together, and within each group by the ORDER BY columns. Postgres does this as one sort of all $n$ rows, which is $O(n \log n)$. 
+
+If you just want the maximum per group, it is better to use `GROUP BY`. Why? See comparison below:
+
+```sql
+-- the latest row of every county, with a window function: sorts all 884,737 rows
+SELECT state, county, date, cases
+  FROM (
+    SELECT state, county, date, cases,
+           row_number() OVER (PARTITION BY state, county ORDER BY date DESC) AS r
+      FROM covid
+  ) AS t
+  WHERE r = 1
+  order by state, county;                                              -- 3273 rows, about 1.7 s
+-- the same with GROUP BY: max(date) per county, then the rows with that (state, county, date)
+SELECT state, county, date, cases
+  FROM covid
+  WHERE (state, county, date) IN (
+    SELECT state, county, max(date)
+      FROM covid
+      GROUP BY state, county
+  )
+  order by state, county;                                                        -- 3273 rows, about 0.65 s
+```
+
+Because a `GROUP BY` can use a hash table, which needs no sort.
 
 In `awk` a window is "sort by the group, then walk down the lines remembering the previous one". The `sort` does what `PARTITION BY ... ORDER BY` does:
 
@@ -886,6 +660,8 @@ awk -F, 'NR==FNR {if ($1=="2020-12-31" && $3=="Texas") s += $5; next} $1=="2020-
 awk -F, -v OFS=, '$3=="Texas" && $2=="Harris" {print $1, $5}' covid.csv | sort | awk -F, -v OFS=, '{print $1, $2, (NR > 1 ? $2 - prev : ""); prev = $2}' | tail -n 3   # 2020-12-29,234736,1406 2020-12-30,236673,1937 2020-12-31,237727,1054
 # lag() with PARTITION BY: also remember the previous line's county, and only subtract within the same one
 awk -F, -v OFS=, 'NR>1 {print $3, $2, $1, $5}' covid.csv | sort -t, -k1,1 -k2,2 -k3,3 | awk -F, -v OFS=, '{k = $1 "," $2; if (k == pk && $3 == "2020-12-31") print $2, $1, $4 - prev; pk = k; prev = $4}' | sort -t, -k3,3nr | head -n 3   # Los Angeles,California,14503 Maricopa,Arizona,5181 New York City,New York,4584
+# the latest row of every county: covid.csv is sorted by date, so in one pass each county's last line overwrites the earlier ones, no sort needed (like GROUP BY's hash table)
+awk -F, -v OFS=, 'NR>1 {last[$3 OFS $2] = $1 OFS $5} END {for (k in last) print k, last[k]}' covid.csv | wc -l   # 3273, about 3 s
 ```
 
 
@@ -911,7 +687,7 @@ WITH dec31 AS (
   SELECT *
     FROM covid
     WHERE date = '2020-12-31'
-)
+  )
 SELECT count(*)
   FROM dec31
   WHERE cases > (
@@ -923,11 +699,11 @@ WITH daily AS (
   SELECT date, sum(cases) AS cases
     FROM covid
     GROUP BY date
-),
-new AS (
-  SELECT date, cases - lag(cases) OVER (ORDER BY date) AS new_cases
-    FROM daily
-)
+  ),
+  new AS (
+    SELECT date, cases - lag(cases) OVER (ORDER BY date) AS new_cases
+      FROM daily
+  )
 SELECT date, new_cases
   FROM new
   ORDER BY new_cases DESC NULLS LAST
@@ -937,11 +713,11 @@ WITH daily AS (
   SELECT date, sum(cases) AS cases
     FROM covid
     GROUP BY date
-),
-new AS (
-  SELECT date, cases - lag(cases) OVER (ORDER BY date) AS new_cases
-    FROM daily
-)
+  ),
+  new AS (
+    SELECT date, cases - lag(cases) OVER (ORDER BY date) AS new_cases
+      FROM daily
+  )
 SELECT date, new_cases,
        round(avg(new_cases) OVER (ORDER BY date ROWS BETWEEN 6 PRECEDING AND CURRENT ROW)) AS week_avg
   FROM new
@@ -951,7 +727,7 @@ SELECT date, new_cases,
 
 The third query needs `NULLS LAST` for the same reason as in the window functions section: `lag()` has no previous row on the first day, so that day's `new_cases` is `NULL`, and `DESC` would sort it first. In the same way, `sum(new_cases) OVER (ORDER BY date)` (no `ROWS ...`) is a **running total**: the sum of all rows up to the current one.
 
-In the shell, the closest thing to a CTE is saving an intermediate result to a file, for example `awk -F, '$1=="2020-12-31"' covid.csv > dec31.csv`, and then using `dec31.csv` in the next commands. Pipes play the role of names that build on each other. (The first two `WITH` queries, `ranked` and `dec31`, give the same answers as queries already mirrored above: the `row_number() = 1` pipeline in the window functions section and the above-the-mean two-pass `awk` in the subquery section.)
+In the shell, pipes play the role of names that build on each other. (The first two `WITH` queries, `ranked` and `dec31`, give the same answers as queries already mirrored above: the `row_number() = 1` pipeline in the window functions section and the above-the-mean two-pass `awk` in the subquery section.)
 
 ```bash
 # daily: national totals per day; then new: the change from the previous day (lag)
@@ -965,7 +741,9 @@ awk -F, 'NR>1 {d[$1] += $5} END {for (k in d) print k "," d[k]}' covid.csv | sor
 
 ## Views: naming a query for good
 
-A CTE's name lasts for one query. A **view** is a named query *saved in the database*: every later query, in any session, from `psql`, R or Python, can use it like a table, until you remove it. But it's not a table since it doesn't persist the data so you don't have ot worry about it going stale when you `INSERT`, `UPDATE`, `DELETE` rows from the table it references.
+A CTE's name lasts for one query then vanishes (it exists only inside the one statement that starts with `WITH`). Wouldn't it be nice to not have to repeat yourself if you want to use it again?
+
+A **view** is a named query *saved in the database* so every later query, in any session, from `psql`, R or Python, can use it like a table, until you remove it. But it's not a table since it doesn't "persist" the data so you don't have to worry about the rows going stale when you `INSERT`, `UPDATE`, `DELETE` rows from the table it references (but it won't update columns that change with `ALTER`). Data is generated on-the-fly from the actual data tables when the view is invoked.
 
 ```sql
 -- the dec31 CTE from above, saved once
@@ -984,7 +762,7 @@ SELECT county, cases
 \d+ dec31
 ```
 
-A view stores **no data**. It is only the saved `SELECT`, and every query against the view runs it again. So the view is always current. Change a row of `covid` with `UPDATE` and the view shows the change at once:
+Change a row of the view's underlying table with `UPDATE` and the view shows the change:
 
 ```sql
 UPDATE covid SET cases = cases + 1
@@ -999,35 +777,13 @@ UPDATE covid SET cases = cases - 1
   WHERE state = 'Texas' AND county = 'Harris' AND date = '2020-12-31';
 ```
 
-A **materialized view** does store the answer, like a table. Reading it is fast, but it does not see later changes until you refresh it:
-
-```sql
-CREATE VIEW daily AS
-  SELECT date, sum(cases) AS cases
-    FROM covid
-    GROUP BY date;
-CREATE MATERIALIZED VIEW daily_m AS
-  SELECT date, sum(cases) AS cases
-    FROM covid
-    GROUP BY date;
-\timing on
-SELECT max(cases)
-  FROM daily;                                               -- 20024801, about 70 ms: the GROUP BY runs again
-SELECT max(cases)
-  FROM daily_m;                                             -- 20024801, under 1 ms: it only reads the 346 saved rows
--- after an UPDATE to covid, daily is current at once, but daily_m is out of date until
-REFRESH MATERIALIZED VIEW daily_m;                          -- runs the query again and saves the new answer
-\timing off
-```
-
 Views are used everywhere in practice:
 
 * **Data warehouses and analytics teams.** The most popular modern tool for analytics pipelines, **dbt**, is largely a system for writing `SELECT` statements that it saves as views or tables. Analysts at many companies spend their days building views on top of views: raw data, then cleaned, then business-ready.
 * **Dashboards and BI tools.** Tableau, Power BI, Looker and Metabase are usually pointed at views, not raw tables, so the logic sits in one place in the database instead of being copied into every report.
-* **A stable name to hand to others.** R, Python or a colleague can query `dec31` without knowing how it is built.
-* **Security.** "Analysts may see these columns, or only their region's rows" is very often enforced by giving people access to a view instead of the table, for example `CREATE VIEW patients_public AS SELECT visit_date, age FROM patients`, which leaves out `name` (Lab 3, scenario (b)). Giving the access itself is done with `GRANT`, for a later lecture.
+* **A stable name to hand to others.** R, Python (via a database adapter, Lecture 7) or a colleague can query `dec31` without knowing how it is built.
+* **Security.** "Analysts may see these columns, or only their region's rows" is very often enforced by giving people access to a view instead of the table, for example `CREATE VIEW patients_public AS SELECT visit_date, age FROM patients`, which leaves out `name` (Lab 3, scenario (b)). 
 * **Keeping old code working.** When a table is restructured, a view with the old name and shape lets existing queries keep running.
-* **Materialized views** are the standard fix when a dashboard query is too slow to run on every page load.
 
 They also have their usual problems:
 
@@ -1040,14 +796,12 @@ ALTER TABLE covid ALTER COLUMN cases TYPE bigint;
 -- DETAIL:  rule _RETURN on view dec31 depends on column "cases"
 ```
 
-The `awk` function + bash friends has no real equivalent. The closest to a view is a saved script (or a shell function), which runs the whole pipeline again every time you call it and so is always current. A file you wrote once, such as `awk -F, '$1=="2020-12-31"' covid.csv > dec31.csv`, is like a materialized view: fast to read, but stale as soon as `covid.csv` changes.
+The `awk` function + bash friends has no real equivalent. The closest to a view is a saved script (or a shell function), which runs the whole pipeline again every time you call it and so is always current.
 
-Clean up:
+You can clean up views simply by
 
 ```sql
 DROP VIEW dec31;
-DROP VIEW daily;
-DROP MATERIALIZED VIEW daily_m;
 ```
 
 ## Why is the table bigger than the CSV?
@@ -1082,206 +836,292 @@ So the 57 MB is the price of the database's features. The row header is what let
 
 We're finally done with one postgres table!!!
 
-# Database Drivers / Adapters / Clients
+# Relational Databases with Multiple Tables
 
-Before we venture into more advanced SQL with multiple tables, let's talk about how the real world interacts with postgres. Generally speaking, not all work is done inside the postgres prompt. Other programs connect to postgres directly and they write "embedded SQL" or abstract away the SQL using a database model. We will see it now in both Python and R. Of course similar connections exist for Java, C++, etc, about every modern language has this ability.
+Look at what `covid` repeats. It has 884,737 rows but only 3,273 counties and 55 states, so the text "Texas" is stored 67,002 times, and each county's name and fips code are stored once for every day it reported. The only facts that are new on each row are `date`, `cases` and `deaths`. Repeating the rest wastes space, but worse, it invites mistakes: rename a county and you must change hundreds of rows, and if you miss one the table now disagrees with itself.
 
-Every language does it the same way. A library called a **driver** (or **adapter**, or **client library**) opens a connection to the Postgres server, sends it the text of an SQL statement, and turns the rows that come back into the language's own data types, e.g. a data frame in R and a list of tuples in Python (which you can turn into a `pandas` DataFrame). Each language also has a standard **database API** that all its drivers follow, so the code looks the same whatever the database: **DB-API 2.0** in Python and **DBI** in R. You already installed both drivers in `setup_docs/03_software_setup_common.qmd`: `psycopg` for Python (in the `pip install` line of your `bigdata` environment) and `RPostgres` for R, which also brings `DBI` (and `dplyr` and `dbplyr` come with the `tidyverse`). If `import psycopg` or `library(RPostgres)` fails, go back to that document and rerun its install commands. The Postgres server must be running, as it is whenever `psql` works.
+A **relational database** stores each kind of thing in its own table, once, and connects the tables with **keys**:
 
-## Embedded SQL
+* A **primary key** is a column (or a few columns together) whose value is different on every row, so it names exactly one row. Usually it is an integer **id** that the database hands out (1, 2, 3, ...). Thus id is a column that is not "real" data and its value means nothing on its own. A real-world code such as fips could serve too (a *natural* key), but real-world codes have gaps: New York City and the "Unknown" counties in `covid` have no fips at all. A postgres hard-coded invented id never has that problem.
+* A **foreign key** is a column that holds another table's primary key, e.g. `state_id` in the counties table holds an id from the states table. It is a pointer: "this county's state is the row with id 47 over there".
 
-In the first style the program holds the SQL as text, sends it, and gets rows back. You write exactly the SQL you would type in `psql`.
+Here is `covid` split into three tables (a few rows of each, with the ids that the SQL below hands out):
 
-### Python: the postgres adapter `psycopg`
+| `states` |              |
+|---------:|:-------------|
+| **id**   | **name**     |
+| 5        | California   |
+| 47       | Texas        |
 
-`psycopg.connect` takes the same connection information as `psql`. On your laptop the database name is enough, because it connects through the same local socket with your user name:
+| `counties` |              |                 |           |
+|-----------:|-------------:|:----------------|:----------|
+| **id**     | **state_id** | **name**        | **fips**  |
+| 206        | 5            | Los Angeles     | 06037     |
+| 2699       | 47           | Dallas          | 48113     |
+| 2704       | 47           | Denton          | 48121     |
+| 2743       | 47           | Harris          | 48201     |
 
-```{python}
-import psycopg
-conn = psycopg.connect("dbname=lec04")
-print(conn.info.dbname, conn.info.user, conn.info.host)      # lec04 kapelner /var/run/postgresql (like \conninfo)
-```
+| `daily_counts` |            |           |            |
+|---------------:|:-----------|----------:|-----------:|
+| **county_id**  | **date**   | **cases** | **deaths** |
+| 2743           | 2020-12-30 | 236673    | 3371       |
+| 2743           | 2020-12-31 | 237727    | 3402       |
+| 2699           | 2020-12-31 | 193318    | 2007       |
 
-`execute` sends one SQL statement and returns a **cursor**, a pointer into the answer, from which you fetch the rows:
+"Texas" is now stored once. `daily_counts` has no id of its own: its primary key is the pair (`county_id`, `date`), since a county has one count per day.
 
-```{python}
-cur = conn.execute("SELECT count(*) FROM covid")
-cur.fetchone()                                               # (884737,): one row, as a tuple
-cur = conn.execute("""
-    SELECT state, sum(cases) AS total_cases
-      FROM covid
-      WHERE date = '2020-12-31'
-      GROUP BY state
-      ORDER BY total_cases DESC
-      LIMIT 3
-""")
-rows = cur.fetchall()                                        # a list of tuples, one per row
-rows                                                         # [('California', 2307860), ('Texas', 1770527), ('Florida', 1323307)]
-```
+In practice you will often see an `id` column anyway. Many teams follow the convention "every table gets an `id`", and database abstraction software (next lecture) adds one to every table by default. `daily_counts` would then carry an `id` from 1 to 884,737 that no query ever uses, because everyone queries `daily_counts` rows up by county and date. It costs a column and an index of its own, and you would still need `UNIQUE (county_id, date)` to stop the same county and day from being stored twice.
 
-The SQL is just a string in the Python program: this is the "embedded SQL". To get a `pandas` data frame, take the column names from `cur.description`:
+Here is the SQL that builds the three tables from `covid`. It is beyond the scope of the course. It runs as one transaction (`BEGIN` ... `COMMIT`, from the transactions section). In Postgres even `CREATE TABLE` is part of a transaction, so if any step fails, `ROLLBACK` removes the tables too and you can simply run the whole thing again. FYI: three things in it are new. `GENERATED ALWAYS AS IDENTITY` makes Postgres hand out the ids 1, 2, 3, ... itself. `PRIMARY KEY` and `REFERENCES` declare the keys, and Postgres then refuses rows that break them: a repeated primary key, or a foreign key that points at no row. And `INSERT INTO ... SELECT` is the `INSERT` from above, but its rows come from a query instead of from `VALUES`:
 
-```{python}
-import pandas as pd
-df = pd.DataFrame(rows, columns=[col.name for col in cur.description])
-df
-```
-
-#### Parameters, and why you never paste values into the SQL
-
-Programs usually fill in part of a query from a variable, such as the state a user picked. Do **not** build the string yourself with an f-string. Write a placeholder `%s` and give the values separately, and the driver sends them to Postgres apart from the SQL text:
-
-```{python}
-state = "Texas"
-conn.execute(
-    "SELECT county, cases FROM covid WHERE date = %s AND state = %s ORDER BY cases DESC LIMIT 3",
-    ("2020-12-31", state)
-).fetchall()                                                 # [('Harris', 237727), ('Dallas', 193318), ('Tarrant', 150004)]
-```
-
-Here is why. Suppose the "state" comes from a web form, and someone types `Texas' OR '1'='1`:
-
-```{python}
-state = "Texas' OR '1'='1"
-# pasted in: the quote in the input ends the string, and the rest becomes SQL, so every row matches
-conn.execute(f"SELECT count(*) FROM covid WHERE state = '{state}'").fetchone()   # (884737,)
-# as a parameter: the whole input is one value, a (strange) state name that matches nothing
-conn.execute("SELECT count(*) FROM covid WHERE state = %s", (state,)).fetchone()  # (0,)
-```
-
-This is **SQL injection**, for decades one of the most common ways websites are broken into: the attacker's input becomes part of your SQL, and with `'; DROP TABLE covid; --` it can do much worse than count rows. Parameters make it impossible.
-
-#### Let the database do the work
-
-The rule from the whole database unit applies here too: send the *question* to the database, and bring back only the *answer*. Bringing the table into Python and grouping it there gives the same result, much more slowly:
-
-```{python}
-import time
-start = time.time()
-cur = conn.execute("SELECT * FROM covid")                    # all 884,737 rows travel to Python
-df_all = pd.DataFrame(cur.fetchall(), columns=[col.name for col in cur.description])
-print(time.time() - start)                                   # about 1.5 s, before any computing
-start = time.time()
-conn.execute("""
-    SELECT state, sum(cases)
-      FROM covid
-      WHERE date = '2020-12-31'
-      GROUP BY state
-""").fetchall()                                              # 55 rows travel to Python
-print(time.time() - start)                                   # about 0.03 s
-```
-
-On a table of billions of rows the first version would not fit in your laptop's memory at all, while the second one still returns 55 rows. Note also that `df_all.dtypes` shows `deaths` as `float64`: `pandas` stores the `NULL`s as `NaN`, which only exists for decimal numbers.
-
-We can close the postgres connection via:
-
-```{python}
-conn.close() # done with the first connection
-```
-
-### R: `DBI` and `RPostgres`
-
-In R, `DBI` is the interface and `RPostgres` the driver. `dbGetQuery` sends a query and returns a data frame directly:
-
-```{r}
-library(DBI)
-con <- dbConnect(RPostgres::Postgres(), dbname = "lec04")
-dbListTables(con)                                            # "covid"           (like \dt)
-dbListFields(con, "covid")                                   # its 6 columns     (like \d covid)
-df <- dbGetQuery(con, "
-  SELECT state, sum(cases) AS total_cases
+```sql
+-- one transaction: if any statement fails, none of the three tables is left behind half-built
+BEGIN;
+CREATE TABLE states (
+  id   integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,     -- primary key
+  name text NOT NULL UNIQUE                                  -- no two states with the same name
+);
+CREATE TABLE counties (
+  id       integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, -- primary key
+  state_id integer NOT NULL REFERENCES states (id),          -- the foreign key
+  name     text    NOT NULL,
+  fips     text,
+  UNIQUE (state_id, name)                                    -- one "Harris" per state; it also builds an index on these two columns
+);
+CREATE TABLE daily_counts (
+  county_id integer NOT NULL REFERENCES counties (id),       -- the foreign key
+  date      date    NOT NULL,
+  cases     integer,
+  deaths    integer,
+  PRIMARY KEY (county_id, date)                             -- a primary key made of two columns (makes the index)
+);
+----------------------
+----------------------
+-- Now populate the three tables:
+INSERT INTO states (name)
+  SELECT DISTINCT state
     FROM covid
-    WHERE date = '2020-12-31'
-    GROUP BY state
-    ORDER BY total_cases DESC
-    LIMIT 3")
-df                                                           # California 2307860, Texas 1770527, Florida 1323307
-str(df)                                                      # total_cases is integer64: sum() of integers is a bigint in Postgres
+    ORDER BY state;                                         -- INSERT 0 55: Alabama gets id 1, California 5, Texas 47
+-- the county's id comes from a correlated subquery, which the UNIQUE index above makes fast
+-- the state's id comes from a scalar subquery, one per distinct county
+INSERT INTO counties (state_id, name, fips)
+  SELECT (SELECT id FROM states WHERE name = t.state), t.county, t.fips
+    FROM (
+      SELECT DISTINCT state, county, fips
+        FROM covid
+    ) AS t
+    ORDER BY t.state, t.county;                             -- INSERT 0 3273: Los Angeles gets 206, Harris 2743
+INSERT INTO daily_counts (county_id, date, cases, deaths)
+  SELECT (SELECT c.id
+            FROM counties AS c
+            WHERE c.name = covid.county
+              AND c.state_id = (SELECT id FROM states WHERE name = covid.state)),
+         date, cases, deaths
+    FROM covid;                                             -- INSERT 0 884737, about 25-30 s
+COMMIT;
 ```
 
-Parameters are written `$1`, `$2`, ... and given as a list, for the same reason as in Python:
+The last `INSERT` is slow because, for every one of its 884,737 rows, Postgres also checks that the `county_id` exists in `counties` and adds the row to the primary key's index. For a big load it is faster to create `daily_counts` without the keys, load it, and add them afterwards with `ALTER TABLE daily_counts ADD PRIMARY KEY (county_id, date)` and `ALTER TABLE daily_counts ADD FOREIGN KEY (county_id) REFERENCES counties (id)`: about 9 s in all here. 
 
-```{r}
-dbGetQuery(con,
-  "SELECT county, cases FROM covid WHERE date = $1 AND state = $2 ORDER BY cases DESC LIMIT 3",
-  params = list("2020-12-31", "Texas"))                      # Harris 237727, Dallas 193318, Tarrant 150004
+Let's make sure it worked:
+
+```sql
+\dt
+SELECT *
+  FROM states
+  LIMIT 10;
+SELECT *
+  FROM counties
+  LIMIT 10;
+SELECT *
+  FROM daily_counts
+  LIMIT 10;
 ```
 
+## Relationships between tables
 
-## Abstracting the SQL away
+Before we discuss all the types of "relationships between tables", it would be convenient to imagine two more tables that don't exist in our database. 
 
-The second style is to not write SQL at all. With the `dbplyr` package (part of the `tidyverse`), `tbl(con, "covid")` stands for the table in the database, and ordinary `dplyr` verbs on it are translated into SQL. Nothing is computed in R:
+(1) Consider this `county_profiles` imaginary table which holds one row of extra facts per county if known (its population, the Census 2019 estimate, its county seat, its land area in square miles and the year it was founded), and its `county_id` is both its primary key and a foreign key into `counties`. 
 
-```{r}
-library(dplyr)                                             # SQL translation:
-q <- tbl(con, "covid") |>                                  # FROM covid
-  filter(date == as.Date("2020-12-31")) |>                 # WHERE date = '2020-12-31'
-  group_by(state) |>                                       # GROUP BY state
-  summarise(total_cases = sum(cases, na.rm = TRUE)) |>     # SELECT state, sum(cases) AS total_cases
-  arrange(desc(total_cases)) |>                            # ORDER BY total_cases DESC
-  head(3)                                                  # LIMIT 3
-show_query(q) # the SQL that dbplyr wrote
-collect(q) # only now is it run in Postgres, and the 3 rows come back to R as a dply data frame (tbl) object
-```
+| `county_profiles` |                |                 |                |             |
+|------------------:|---------------:|:----------------|---------------:|------------:|
+| **county_id**     | **population** | **county_seat** | **land_sq_mi** | **founded** |
+| 206               | 10039107       | Los Angeles     | 4058           | 1850        |
+| 2699              | 2635516        | Dallas          | 871            | 1846        |
+| 2704              | 887207         | Denton          | 878            | 1846        |
+| 2743              | 4713325        | Houston         | 1703           | 1836        |
 
-`show_query` prints almost exactly the query we would write by hand, and `collect` runs it in the database and brings back only the answer, so the "let the database do the work" rule holds automatically. 
+Before we talk about the relationship between this table and the original `counties` table, the obvious question is: why design the database this way? Why not just store all this extra metadata about counties in the counties table? Often you should: if every county has these facts and they are read together with its name, extra columns in `counties` are simpler. A separate table pays off when:
 
-You can close the R postgres connection with 
+* **Not every row has the extra facts.** Our imagined profiles exist for only some counties. In `counties` the other counties would carry a row of `NULL`s; in a separate table they simply have no row.
+* **The facts come from somewhere else.** Population comes from the Census, which publishes new estimates every year. A separate table can be replaced wholesale with each release without touching `counties`, which other tables point at.
+* **The profile data is rarely needed.** A table is stored in 8 KB pages, like the index pages of Lecture 5, so every extra column makes each row bigger and every scan of `counties` read more pages (thus run slower), even for queries that only want names. Long text, images or JSON documents are usually moved out for this reason.
+* **They are private.** Columns such as salaries or patients' details can live in their own table that most users are not allowed to read, while everyone can read the main one.
 
-```{r}
-dbDisconnect(con)
-```
+(2) Also consider this imaginary `county_zips` table which holds one row for each pair of a county and a ZIP code that lies (at least partly) in it:
 
-In Python, `ibis` does the same. It was mistakenly left out of the setup guide when you installed your packages, so install it now, in a terminal with your course environment active:
+| `county_zips` |         |
+|--------------:|:--------|
+| **county_id** | **zip** |
+| 2699          | 75019   |
+| 2699          | 75201   |
+| 2704          | 75019   |
+| 2704          | 76201   |
+| 2743          | 77002   |
+| 2743          | 77003   |
 
-```bash
-source ~/.venvs/bigdata/bin/activate
-pip install "ibis-framework[postgres]"     # the quotes are needed, as for psycopg[binary]
-python -c "import ibis; print('ok')"
-```
+In `county_zips` both columns repeat: 75019 appears twice because it crosses from Dallas County (2699) into Denton County (2704), and 2743 appears twice because Harris County has many ZIP codes. Only the *pair* never repeats, so the pair (`county_id`, `zip`) is the primary key.
 
-(The `pip install` line in `setup_docs/03_software_setup_common.qmd` now includes it.) `con.table("covid")` stands for the table in the database, the methods build up a query, and `ibis.to_sql` shows the SQL it wrote: `con.table("covid")` stands for the table in the database, the methods build up a query, and `ibis.to_sql` shows the SQL it wrote:
+Neither table has an `id` column, because neither needs one for the same reason `daily_counts` doesn't need one.
 
-```{python}
-import datetime
-import ibis
-con = ibis.postgres.connect(database="lec04")
-covid = con.table("covid")                                 # SQL translation:
-q = (covid                                                 # FROM covid
-     .filter(covid.date == datetime.date(2020, 12, 31))    # WHERE date = '2020-12-31'
-     .group_by("state")                                    # GROUP BY state
-     .aggregate(total_cases=covid.cases.sum())             # SELECT state, sum(cases) AS total_cases
-     .order_by(ibis.desc("total_cases"))                   # ORDER BY total_cases DESC
-     .limit(3))                                            # LIMIT 3
-print(ibis.to_sql(q))  # nested derived tables, named t0, t1 and t2, then ORDER BY ... DESC NULLS LAST LIMIT 3
-q.to_pandas()          # only now is it run in Postgres: California 2307860, Texas 1770527, Florida 1323307
-con.disconnect()
-```
+### Three kinds of relationships. 
 
-The SQL `ibis` writes is uglier than ours, a derived table inside a derived table with the throwaway aliases `t0`, `t1` and `t2`, but Postgres's planner turns it into the same plan. Python also has **ORMs** ("object-relational mappers") such as SQLAlchemy and Django, where database rows become Python objects; they are what most web applications use. The convenience has a price: when a query is slow you have to read the generated SQL (`show_query`) to see why, so you still need to know SQL.
+* **One-to-many.** A state has many counties, and each county belongs to one state. The foreign key always sits on the "many" side (`counties.state_id`), because one county has exactly one state to point at, while a state cannot hold a list of all its counties in one column. Likewise a county has many daily counts. This is by far the most common relationship.
+* **One-to-one.** Each row matches at most one row of the other table, e.g. a county has one row in `county_profiles`. It is a one-to-many whose foreign key may not repeat, and it is used to split off columns that are rarely needed, very large, or private.
+* **Many-to-many.** ZIP codes and counties: a county contains many ZIP codes, and a ZIP code can cross county lines (Coppell's 75019 lies partly in Dallas County and partly in Denton County). Neither side can hold a single foreign key, so a third **join table**, `county_zips`, holds one row per pair, two foreign keys and nothing else.
 
-## Big picture plan
+Two variations are also common in practice:
 
-We will be returning to database adapters in the end of the course when we "put it all together" - from databases -> cleaning -> predictive modeling / inferential modeling using R and/or Python. That's when we'll dip into knowledge from all your other statistics and machine learning courses.
+* **A join table with data of its own.** A join table can hold more than the two foreign keys. If `county_zips` also records what share of the ZIP code's addresses fall in that county, it is a real table in its own right, and the many-to-many relationship goes *through* it. Most many-to-many relationships end up this way, e.g. students and courses through enrollments, which hold the grade.
+* **Self-referential.** A foreign key can point back into its own table: in an `employees` table, `manager_id` holds another employee's id. One table then holds a whole tree (an org chart, a folder tree, replies to comments).
+
+Splitting the data does have a price: "the cases in Texas on 2020-12-31" now lives in three tables, so if you want all the columns, a query must put them back together by matching keys. That is a **join** query.
 
 # Table Joins
 
-Constraints and the primary key: NOT NULL, UNIQUE, CHECK (cases >= 0), DEFAULT and especially PRIMARY KEY. lec05's "The database checks your data" only names them. A primary key on (date, state, county) would show both refusing duplicate rows and getting an index for free. You'll also need it for joins later, since a foreign key points at a primary key
+A **join** puts rows of two related tables (or a table with itself) side by side wherever a condition between them holds, almost always "this table's foreign key equals that table's primary key". `FROM a JOIN b ON <condition>` gives one row for each pair of rows that matches, and every later clause (`WHERE`, `GROUP BY`, `SELECT`, ...) sees those combined rows as if they were one table. Here are the cases in Texas on 2020-12-31 again, put back together from the three tables:
 
-
-## What did you install?
-
-Postgres is a lot of software. Add it up, with `du` ("disk usage") for the program files and the database itself for your data:
-
-```bash
-du -ch /usr/lib/postgresql /usr/share/postgresql | tail -n 1   # the program
-psql -At -c "SELECT pg_size_pretty(sum(pg_database_size(datname)))
-             FROM pg_database"                          # all your data
+```sql
+-- d, c and s are table aliases, as for subqueries: both counties and states have a column "name" (and "id"),
+-- so every column must say which table it comes from
+SELECT s.name AS state, c.name AS county, d.cases
+  FROM daily_counts AS d
+  JOIN counties AS c ON c.id = d.county_id                  -- each daily count, next to its county's row
+  JOIN states AS s ON s.id = c.state_id                     -- ... and next to that county's state's row
+  WHERE s.name = 'Texas' AND d.date = '2020-12-31'
+  ORDER BY d.cases DESC
+  LIMIT 3;                                                  -- Texas Harris 237727, Texas Dallas 193318, Texas Tarrant 150004
 ```
 
-`du -c` adds a grand total at the end and `tail -n 1` keeps only that line. On Ubuntu the program is about 50 MB. (On a Mac with Homebrew, use `du -shL "$(brew --prefix postgresql@18)"`.) The `covid` table alone took about 63 MB with its index, almost twice the 35 MB CSV.
+Read it in processing order: `FROM` and its `JOIN`s first build the combined rows, then `WHERE` keeps Texas on 2020-12-31, then `ORDER BY` and `LIMIT`. How Postgres matches the rows is up to the planner, and `EXPLAIN` shows its choice. For this query it picks a **Nested Loop**: find Texas in `states`, then for each of its counties look up that day's count, every lookup through an index. These are the indexes that `PRIMARY KEY` and `UNIQUE` built for free, which is one more reason to declare keys. Ask for all 55 states on that day instead (`GROUP BY s.name`, `sum(d.cases)`) and it picks a **Hash Join**: it reads the small table (`counties`) into a hash table keyed by `id`, then streams the 3,245 daily counts past it, one lookup each. That is exactly what `awk` does with an array in a two-pass `NR==FNR` program.
 
-That is a lot of space for a program whose job is to store rows. But look at what it bought you in this unit:
+## `INNER JOIN` and `LEFT JOIN`
+
+`JOIN` is short for `INNER JOIN`: it keeps only the pairs that match, so a row with no partner in the other table silently disappears. A `LEFT JOIN` (short for `LEFT OUTER JOIN`) keeps every row of the table on its left, and where it has no partner it fills the right table's columns with `NULL`. These two cover almost every join you will write. Which counties reported on 2020-12-31?
+
+```sql
+SELECT count(*)
+  FROM counties;                                            -- 3273 counties
+-- INNER: only counties that have a count on that day
+SELECT count(*)
+  FROM counties AS c
+  JOIN daily_counts AS d ON d.county_id = c.id AND d.date = '2020-12-31';        -- 3245
+-- LEFT: every county, with NULL cases where it has no count on that day
+SELECT count(*)
+  FROM counties AS c
+  LEFT JOIN daily_counts AS d ON d.county_id = c.id AND d.date = '2020-12-31';   -- 3273
+```
+
+28 counties are in the left join but not in the inner one. To see them, keep the rows where the right side came back empty. This is called an **anti-join**:
+
+```sql
+SELECT s.name AS state, c.name AS county
+  FROM counties AS c
+  JOIN states AS s ON s.id = c.state_id
+  LEFT JOIN daily_counts AS d ON d.county_id = c.id AND d.date = '2020-12-31'
+  WHERE d.county_id IS NULL                                 -- no partner on that day
+  ORDER BY s.name
+  LIMIT 3;                                                  -- Arizona Unknown, California Unknown, Colorado Unknown (28 rows without the LIMIT)
+```
+
+All 28 are "Unknown" rows: cases a state could not yet assign to a county, which it stopped reporting once it had assigned them all. The same question with `NOT EXISTS` from the subqueries section, `SELECT count(*) FROM counties AS c WHERE NOT EXISTS (SELECT * FROM daily_counts AS d WHERE d.county_id = c.id AND d.date = '2020-12-31')`, also gives 28. `EXPLAIN` shows Postgres runs the `LEFT JOIN ... IS NULL` version as an **Anti Join**, the same family of plan as the `Hash Anti Join` it chose for `NOT EXISTS`. Both spellings are common; use the one that reads more clearly to you.
+
+## Pitfall 1: a condition in `WHERE` instead of `ON`
+
+In the `LEFT JOIN` above, the date sits in `ON`. Move it to `WHERE` and the answer changes:
+
+```sql
+SELECT count(*)
+  FROM counties AS c
+  LEFT JOIN daily_counts AS d ON d.county_id = c.id
+  WHERE d.date = '2020-12-31';                              -- 3245, not 3273: it became an inner join
+```
+
+`ON` decides which rows are partners, and the `LEFT JOIN` then keeps the unmatched counties with `NULL`s. `WHERE` runs after that (`FROM` comes first in the processing order) and keeps only the rows where `d.date = '2020-12-31'` is true, and for the 28 unmatched counties `d.date` is `NULL`, so they are thrown out again, without any error. The rule: **a condition on the right table of a `LEFT JOIN` goes in `ON`**; `WHERE` is for conditions that should remove rows from the final answer.
+
+## Pitfall 2: joins multiply rows
+
+A join along a one-to-many relationship repeats the "one" side once for each of its matches. That is what a join is supposed to do, but it is easy to forget when you add a table "just to have it":
+
+```sql
+-- how many counties does Texas have?
+SELECT count(*)
+  FROM states AS s
+  JOIN counties AS c ON c.state_id = s.id
+  WHERE s.name = 'Texas';                                   -- 255 (254 counties and "Unknown")
+-- the same, with daily_counts joined in as well
+SELECT count(*)
+  FROM states AS s
+  JOIN counties AS c ON c.state_id = s.id
+  JOIN daily_counts AS d ON d.county_id = c.id
+  WHERE s.name = 'Texas';                                   -- 67002: every county once per day it reported
+```
+
+The second query is not wrong SQL: it counts county-days. But if you meant counties, the answer is about 263 times too big, and nothing warns you. The same happens to `sum()`: any column of the "one" side, summed after the join, is added once per match. This is the most common bug in real-world joins. Two habits catch it: join only the tables the question needs, and check `count(*)` before and after adding a join. If the row count jumped, ask whether it should have. (Here `count(DISTINCT c.id)` would also repair the second query, giving 255 again, but the better fix is to leave `daily_counts` out.)
+
+## Other joins
+
+We will not be covering these in class, but you should know about them.
+
+* **`RIGHT JOIN`** keeps every row of the *right* table instead. It is a `LEFT JOIN` with the tables swapped, and almost nobody writes it: swap the tables and use `LEFT JOIN`.
+* **`FULL OUTER JOIN`** keeps the unmatched rows of *both* tables, with `NULL`s on whichever side is missing. It is the tool for reconciling two lists, e.g. two versions of a customer list: which entries are only in the old one, only in the new one, or in both.
+* **`CROSS JOIN`** has no `ON` at all: it pairs every row with every row, $n \times m$ rows. That sounds useless, but it builds a complete grid. Every county crossed with every day of December 2020 (`generate_series` makes the days) is 101,463 county-days, and a `LEFT JOIN` of `daily_counts` onto that grid shows that 860 of them were never reported.
+* A **self-join** joins a table to itself under two different aliases. It is how you follow a self-referential key (an employee's row next to their manager's row through `manager_id`), and it can also compare a row with its neighbor: `daily_counts AS d JOIN daily_counts AS p ON p.county_id = d.county_id AND p.date = d.date - 1` puts each day next to the day before, and `d.cases - p.cases` gives Harris 1054 new cases on 2020-12-31, the same as `lag()` in the window functions section.
+
+In the shell, imagine the three tables as three CSV files. Linux has a command for exactly this, `join`: it pairs the lines of two files whose join field is equal, like `JOIN ... ON`. It has one requirement: both files must be **sorted** on the join field, because it walks down the two files at once, line by line, like `comm` from Lecture 5. That is the third way of matching rows, a **merge join**, which Postgres also uses (the `Merge Anti Join` behind the anti-join above). Its options map onto SQL directly: no option is an inner join, `-a 1` also prints the unmatched lines of file 1 (a `LEFT JOIN`), `-v 1` prints *only* those (the anti-join), and `-a 1 -a 2` would be a `FULL OUTER JOIN`. `-1` and `-2` say which field of each file to join on (the first, if left out), `-o` which fields to print (`2.3` is field 3 of file 2), and `-` stands for the input from a pipe. Again, none of the following is covered in this course. It's just FYI because it shows that linux is highly developed and can do any query SQL can do.
+
+```bash
+# the three tables as three CSV files, without a header line (join would treat it like any other line)
+psql lec04 -c "\copy states TO 'states.csv' CSV"
+psql lec04 -c "\copy counties TO 'counties.csv' CSV"
+psql lec04 -c "\copy daily_counts TO 'daily_counts.csv' CSV"
+head -n 2 states.csv counties.csv daily_counts.csv          # 1,Alabama  1,1,Autauga,01001  and county_id,date,cases,deaths
+# join compares the fields as text, so sort and join must use the same rules: LC_ALL=C (plain byte order) for this whole session
+export LC_ALL=C
+sort -t, -k1,1 states.csv       > states_by_id.csv
+sort -t, -k1,1 counties.csv     > counties_by_id.csv
+sort -t, -k2,2 counties.csv     > counties_by_state.csv     # sorted on state_id, to join with states
+sort -t, -k1,1 daily_counts.csv > daily_by_county.csv
+awk -F, '$2=="2020-12-31"' daily_counts.csv | sort -t, -k1,1 > dec31_by_county.csv
+# the three-table join: counties with that day's counts (county name, state_id, cases), then with states
+join -t, -o 1.3,1.2,2.3 counties_by_id.csv dec31_by_county.csv | sort -t, -k2,2 |
+  join -t, -1 2 -2 1 -o 2.2,1.1,1.3 - states_by_id.csv | awk -F, '$1=="Texas"' | sort -t, -k3,3nr | head -n 3   # Texas,Harris,237727 Texas,Dallas,193318 Texas,Tarrant,150004
+# INNER JOIN: only counties with a line on 2020-12-31
+join -t, counties_by_id.csv dec31_by_county.csv | wc -l                            # 3245
+# LEFT JOIN: -a 1 also keeps the counties without one
+join -t, -a 1 counties_by_id.csv dec31_by_county.csv | wc -l                       # 3273
+# anti-join: -v 1 keeps only those, and field 3 is the county name
+join -t, -v 1 counties_by_id.csv dec31_by_county.csv | cut -d, -f3 | sort | uniq -c   # 28 Unknown
+# pitfall 1: LEFT JOIN with all the days, then the date test afterwards (like WHERE) loses the unmatched counties again
+join -t, -a 1 counties_by_id.csv daily_by_county.csv | awk -F, '$5=="2020-12-31"' | wc -l   # 3245
+# pitfall 2: Texas counties, then Texas counties joined with all their days
+join -t, -1 1 -2 2 -o 1.2,2.1 states_by_id.csv counties_by_state.csv | awk -F, '$1=="Texas"' | wc -l   # 255
+join -t, -1 1 -2 2 -o 1.2,2.1 states_by_id.csv counties_by_state.csv | awk -F, '$1=="Texas" {print $2}' | sort |
+  join -t, - daily_by_county.csv | wc -l                                           # 67002
+rm states*.csv counties*.csv daily*.csv dec31_by_county.csv
+```
+
+## Conclusion of Postgres
+
+How large is the postgres software package (not including any databases)? Add it up, with `du` ("disk usage") for the program files and the database itself for your data:
+
+```bash
+du -ch /usr/lib/postgresql /usr/share/postgresql | tail -n 1   # for linus users
+du -shL "$(brew --prefix postgresql@18)" #for macos users
+```
+
+That is a lot of space for a program whose job is to store rows in a table. But look at what it bought you in this unit:
 
 - **Speed:** the same question went from scanning every row (about 70 ms here, and growing with the table) to under 1 ms with an index, and that stays true as the table grows.
 - **Correctness:** typed columns refused `'N/A'` as a number, and rules such as `NOT NULL` and `UNIQUE` can refuse other nonsense when it arrives.
@@ -1289,4 +1129,4 @@ That is a lot of space for a program whose job is to store rows. But look at wha
 - **Many users at once:** many programs reading and writing the same tables at once without corrupting them.
 - **A query language** instead of one-off shell pipelines: SQL, with joins, grouping and sorting, and a planner that picks how to run each query.
 
-PostgreSQL grew out of research at Berkeley in the 1980s and has had decades of engineering since. Nobody would write all of that again for one analysis. That is why it is worth the space: you get it for free, and it is already installed.
+PostgreSQL grew out of research at Berkeley in the 1980s and has had decades of engineering since. Nobody would write all of that again for one analysis. It another "truly amazing" piece of software, a pinnacle of human achievement.
