@@ -780,6 +780,7 @@ UPDATE covid SET cases = cases - 1
 Views are used everywhere in practice:
 
 * **Data warehouses and analytics teams.** The most popular modern tool for analytics pipelines, **dbt**, is largely a system for writing `SELECT` statements that it saves as views or tables. Analysts at many companies spend their days building views on top of views: raw data, then cleaned, then business-ready.
+* **Cleaning and deduplicating without touching the raw data.** The table keeps exactly what the source sent, and the cleaning rules live in a view on top of it, e.g. `CREATE VIEW covid_clean AS SELECT DISTINCT * FROM covid WHERE county <> 'Unknown'`, which drops exact duplicate rows and the unassigned cases. Everyone queries `covid_clean`, but the pristine `covid` is never changed. If a cleaning rule turns out to be wrong (maybe you *did* need the "Unknown" rows for state totals), you fix the view with `CREATE OR REPLACE VIEW` and every query is right again. Had you run `DELETE` on the table instead, those rows would be gone for good. The cost is that the cleaning runs again on every query. When that gets too slow, teams save the result as a table that they rebuild from the raw data when it changes, and the raw table still stays untouched. We will have a whole unit on data cleaning and deduplication later in the course.
 * **Dashboards and BI tools.** Tableau, Power BI, Looker and Metabase are usually pointed at views, not raw tables, so the logic sits in one place in the database instead of being copied into every report.
 * **A stable name to hand to others.** R, Python (via a database adapter, Lecture 7) or a colleague can query `dec31` without knowing how it is built.
 * **Security.** "Analysts may see these columns, or only their region's rows" is very often enforced by giving people access to a view instead of the table, for example `CREATE VIEW patients_public AS SELECT visit_date, age FROM patients`, which leaves out `name` (Lab 3, scenario (b)). 
@@ -872,6 +873,15 @@ Here is `covid` split into three tables (a few rows of each, with the ids that t
 
 In practice you will often see an `id` column anyway. Many teams follow the convention "every table gets an `id`", and database abstraction software (next lecture) adds one to every table by default. `daily_counts` would then carry an `id` from 1 to 884,737 that no query ever uses, because everyone queries `daily_counts` rows up by county and date. It costs a column and an index of its own, and you would still need `UNIQUE (county_id, date)` to stop the same county and day from being stored twice.
 
+The three tables follow the rules of good relational design, which go by the name **normalization**. The central rule is **no duplicate data: every fact is stored in exactly one place**. Then a change is made once, and the database cannot disagree with itself. A few habits follow from it:
+
+* **One table per kind of thing.** States, counties and daily counts are different things, so each gets its own table. A good test is to say in words what one row of the table is: "one county", "one county on one day". If you can't, the table mixes two kinds of thing.
+* **Every column describes the row's own thing.** A state's name belongs in `states`, not in `counties`. The county row points to its state with `state_id` and gets the name through a join.
+* **Don't store what you can compute.** Daily new cases are the difference of two days of cumulative `cases`, and a state's total is a `SUM` over its counties. Stored copies of them go stale the moment someone corrects the numbers they came from.
+* **One value per cell, and store data *long*, not *wide*.** Don't put a list such as `"06037,48113"` in one cell, and don't make one column per month (`cases_jan`, `cases_feb`, ...). That is the *wide* format: one row per county with the months spread across the columns. The *long* format has one row per county per day, like `daily_counts`, so each new day is new rows rather than a new column and a changed table. We will return to long vs. wide when we get to visualization, where plotting software also wants the long format.
+
+Sometimes you break these rules on purpose. An analytics table or a Parquet file is often one wide, repetitive table, because it is written once and read many times. But again, that's not relevant to this topic which is about real databases.
+
 Here is the SQL that builds the three tables from `covid`. It is beyond the scope of the course. It runs as one transaction (`BEGIN` ... `COMMIT`, from the transactions section). In Postgres even `CREATE TABLE` is part of a transaction, so if any step fails, `ROLLBACK` removes the tables too and you can simply run the whole thing again. FYI: three things in it are new. `GENERATED ALWAYS AS IDENTITY` makes Postgres hand out the ids 1, 2, 3, ... itself. `PRIMARY KEY` and `REFERENCES` declare the keys, and Postgres then refuses rows that break them: a repeated primary key, or a foreign key that points at no row. And `INSERT INTO ... SELECT` is the `INSERT` from above, but its rows come from a query instead of from `VALUES`:
 
 ```sql
@@ -940,7 +950,7 @@ SELECT *
 
 ## Relationships between tables
 
-Before we discuss all the types of "relationships between tables", it would be convenient to imagine two more tables that don't exist in our database. 
+Before we discuss all the types of "relationships between tables", it would be convenient to imagine three more tables that don't exist in our database. 
 
 (1) Consider this `county_profiles` imaginary table which holds one row of extra facts per county if known (its population, the Census 2019 estimate, its county seat, its land area in square miles and the year it was founded), and its `county_id` is both its primary key and a foreign key into `counties`. 
 
@@ -959,34 +969,43 @@ Before we talk about the relationship between this table and the original `count
 * **The profile data is rarely needed.** A table is stored in 8 KB pages, like the index pages of Lecture 5, so every extra column makes each row bigger and every scan of `counties` read more pages (thus run slower), even for queries that only want names. Long text, images or JSON documents are usually moved out for this reason.
 * **They are private.** Columns such as salaries or patients' details can live in their own table that most users are not allowed to read, while everyone can read the main one.
 
-(2) Also consider this imaginary `county_zips` table which holds one row for each pair of a county and a ZIP code that lies (at least partly) in it:
+(2) Also consider two more imaginary tables. `zips` holds one row per ZIP code: its own invented `id`, the `code` itself (`text`, like `fips`, so leading zeros survive), its land area in square miles and `approx_population`, its population rounded to the nearest thousand. `post_office_city_name` is the city name the post office uses for the ZIP code, which is not always the city its addresses are legally in. `county_zip_bridge` holds one row for each pair of a county and a ZIP code that lies (at least partly) in it, and nothing else: two foreign keys, one into `counties` and one into `zips`.
 
-| `county_zips` |         |
-|--------------:|:--------|
-| **county_id** | **zip** |
-| 2699          | 75019   |
-| 2699          | 75201   |
-| 2704          | 75019   |
-| 2704          | 76201   |
-| 2743          | 77002   |
-| 2743          | 77003   |
+| `zips` |          |                           |                |                       |
+|-------:|:---------|:--------------------------|---------------:|----------------------:|
+| **id** | **code** | **post_office_city_name** | **land_sq_mi** | **approx_population** |
+| 1      | 75019    | Coppell                   | 15.6           | 42000                 |
+| 2      | 75201    | Dallas                    | 1.4            | 14000                 |
+| 3      | 76201    | Denton                    | 9.3            | 30000                 |
+| 4      | 77002    | Houston                   | 1.9            | 16000                 |
+| 5      | 77003    | Houston                   | 2.6            | 10000                 |
 
-In `county_zips` both columns repeat: 75019 appears twice because it crosses from Dallas County (2699) into Denton County (2704), and 2743 appears twice because Harris County has many ZIP codes. Only the *pair* never repeats, so the pair (`county_id`, `zip`) is the primary key.
+| `county_zip_bridge` |            |
+|--------------------:|-----------:|
+| **county_id**       | **zip_id** |
+| 2699                | 1          |
+| 2699                | 2          |
+| 2704                | 1          |
+| 2704                | 3          |
+| 2743                | 4          |
+| 2743                | 5          |
 
-Neither table has an `id` column, because neither needs one for the same reason `daily_counts` doesn't need one.
+Each ZIP code's facts (its code, post office city name, area and population) are stored once, in `zips`, just as each county's are stored once in `counties`. In `county_zip_bridge` both columns repeat: `zip_id` 1 (75019) appears twice because it crosses from Dallas County (2699) into Denton County (2704), and 2743 appears twice because Harris County has many ZIP codes. Only the *pair* never repeats, so the pair (`county_id`, `zip_id`) is the primary key.
+
+Neither `county_profiles` nor `county_zip_bridge` has an `id` column, because neither needs one for the same reason `daily_counts` doesn't need one.
 
 ### Three kinds of relationships. 
 
-* **One-to-many.** A state has many counties, and each county belongs to one state. The foreign key always sits on the "many" side (`counties.state_id`), because one county has exactly one state to point at, while a state cannot hold a list of all its counties in one column. Likewise a county has many daily counts. This is by far the most common relationship.
-* **One-to-one.** Each row matches at most one row of the other table, e.g. a county has one row in `county_profiles`. It is a one-to-many whose foreign key may not repeat, and it is used to split off columns that are rarely needed, very large, or private.
-* **Many-to-many.** ZIP codes and counties: a county contains many ZIP codes, and a ZIP code can cross county lines (Coppell's 75019 lies partly in Dallas County and partly in Denton County). Neither side can hold a single foreign key, so a third **join table**, `county_zips`, holds one row per pair, two foreign keys and nothing else.
+* **One-to-many.** A state "has many" counties, and each county "belongs to one" state. The foreign key always sits on the "many" side (`counties.state_id`), because one county has exactly one state to point at, while a state cannot hold a list of all its counties in one column. Likewise a county has many daily counts. This is by far the most common relationship.
+* **One-to-one.** Each row matches at most one row of the other table, e.g. a county "has one" row in `county_profiles` and a count_profile "belongs to one" county. It is a one-to-many whose foreign key may not repeat, and it is used to split off columns that are rarely needed, very large, or private.
+* **Many-to-many.** ZIP codes and counties: a county "has many" ZIP codes, and a ZIP code "has many" counties since zip codes can cross county lines (e.g., zip code 75019 lies partly in Dallas County and partly in Denton County). Thus, neither `counties` nor `zips` can hold a single foreign key to the other, so a third table, `county_zip_bridge`, holds one row per pair, two foreign keys and nothing else. Such a table goes by many names: a **bridge table**, **join table**, **junction table**, **link table**, **associative table** or **cross-reference table**. They all mean the same thing.
 
 Two variations are also common in practice:
 
-* **A join table with data of its own.** A join table can hold more than the two foreign keys. If `county_zips` also records what share of the ZIP code's addresses fall in that county, it is a real table in its own right, and the many-to-many relationship goes *through* it. Most many-to-many relationships end up this way, e.g. students and courses through enrollments, which hold the grade.
-* **Self-referential.** A foreign key can point back into its own table: in an `employees` table, `manager_id` holds another employee's id. One table then holds a whole tree (an org chart, a folder tree, replies to comments).
+* **A join table with data of its own.** A join table can hold more than the two foreign keys. If `county_zip_bridge` also records what share of the ZIP code's addresses fall in that county, it is a real table in its own right, and the many-to-many relationship goes *through* it. Most many-to-many relationships end up this way, e.g. students and courses through enrollments, which hold the grade.
+* **Self-referential.** A foreign key can point back into its own table: in an `employees` table, `manager_id` holds another employee's id. One table then holds a whole tree (an org chart, a folder tree, replies to comments, etc).
 
-Splitting the data does have a price: "the cases in Texas on 2020-12-31" now lives in three tables, so if you want all the columns, a query must put them back together by matching keys. That is a **join** query.
+Relational databases with multiple tables are an amazing technology. But splitting the data does have a price: "the cases in Texas on 2020-12-31" now lives in three tables, so if you want all the columns, a query must put humpty dumpty back together by matching keys. That is a **join** query.
 
 # Table Joins
 
@@ -1004,11 +1023,27 @@ SELECT s.name AS state, c.name AS county, d.cases
   LIMIT 3;                                                  -- Texas Harris 237727, Texas Dallas 193318, Texas Tarrant 150004
 ```
 
-Read it in processing order: `FROM` and its `JOIN`s first build the combined rows, then `WHERE` keeps Texas on 2020-12-31, then `ORDER BY` and `LIMIT`. How Postgres matches the rows is up to the planner, and `EXPLAIN` shows its choice. For this query it picks a **Nested Loop**: find Texas in `states`, then for each of its counties look up that day's count, every lookup through an index. These are the indexes that `PRIMARY KEY` and `UNIQUE` built for free, which is one more reason to declare keys. Ask for all 55 states on that day instead (`GROUP BY s.name`, `sum(d.cases)`) and it picks a **Hash Join**: it reads the small table (`counties`) into a hash table keyed by `id`, then streams the 3,245 daily counts past it, one lookup each. That is exactly what `awk` does with an array in a two-pass `NR==FNR` program.
+Read it in processing order: `FROM` and its `JOIN`s first build the combined rows, then `WHERE` keeps Texas on 2020-12-31, then `ORDER BY` and `LIMIT`. How Postgres matches the rows is up to the planner, and `EXPLAIN` shows its choice. 
+
+```sql
+EXPLAIN SELECT s.name AS state, c.name AS county, d.cases
+  FROM daily_counts AS d
+  JOIN counties AS c ON c.id = d.county_id                  -- each daily count, next to its county's row
+  JOIN states AS s ON s.id = c.state_id                     -- ... and next to that county's state's row
+  WHERE s.name = 'Texas' AND d.date = '2020-12-31'
+  ORDER BY d.cases DESC
+  LIMIT 3;                                                  -- Texas Harris 237727, Texas Dallas 193318, Texas Tarrant 150004
+```
+
+
+For this query it picks a **Nested Loop**: find Texas in `states`, then for each of its counties look up that day's count, every lookup through an index. These are the indexes that `PRIMARY KEY` and `UNIQUE` built for free, which is one more reason to declare keys. 
+
 
 ## `INNER JOIN` and `LEFT JOIN`
 
-`JOIN` is short for `INNER JOIN`: it keeps only the pairs that match, so a row with no partner in the other table silently disappears. A `LEFT JOIN` (short for `LEFT OUTER JOIN`) keeps every row of the table on its left, and where it has no partner it fills the right table's columns with `NULL`. These two cover almost every join you will write. Which counties reported on 2020-12-31?
+`JOIN` is short for `INNER JOIN`: it keeps only the pairs that match, so a row with no partner in the other table silently disappears. A `LEFT JOIN` (short for `LEFT OUTER JOIN`) keeps every row of the table on its left, and where it has no partner it fills the right table's columns with `NULL`. `INNER JOIN` and `LEFT JOIN` cover 99% of every join you will write. 
+
+E.g., which counties reported on 2020-12-31?
 
 ```sql
 SELECT count(*)
@@ -1023,25 +1058,31 @@ SELECT count(*)
   LEFT JOIN daily_counts AS d ON d.county_id = c.id AND d.date = '2020-12-31';   -- 3273
 ```
 
-28 counties are in the left join but not in the inner one. To see them, keep the rows where the right side came back empty. This is called an **anti-join**:
+28 counties are in the left join but not in the inner one. 
+
+To see them, run the same `LEFT JOIN` and sort the rows with no partner to the top. Their `d` columns came back `NULL`, and `NULLS FIRST` (from the window functions section) puts them first:
 
 ```sql
-SELECT s.name AS state, c.name AS county
+SELECT s.name AS state, c.name AS county, d.cases
   FROM counties AS c
   JOIN states AS s ON s.id = c.state_id
   LEFT JOIN daily_counts AS d ON d.county_id = c.id AND d.date = '2020-12-31'
-  WHERE d.county_id IS NULL                                 -- no partner on that day
-  ORDER BY s.name
-  LIMIT 3;                                                  -- Arizona Unknown, California Unknown, Colorado Unknown (28 rows without the LIMIT)
+  ORDER BY d.county_id NULLS FIRST, s.name                  -- d.county_id is NULL only where there is no partner on that day
+  LIMIT 33;                                                  -- Arizona Unknown NULL, California Unknown NULL, Colorado Unknown NULL
 ```
 
-All 28 are "Unknown" rows: cases a state could not yet assign to a county, which it stopped reporting once it had assigned them all. The same question with `NOT EXISTS` from the subqueries section, `SELECT count(*) FROM counties AS c WHERE NOT EXISTS (SELECT * FROM daily_counts AS d WHERE d.county_id = c.id AND d.date = '2020-12-31')`, also gives 28. `EXPLAIN` shows Postgres runs the `LEFT JOIN ... IS NULL` version as an **Anti Join**, the same family of plan as the `Hash Anti Join` it chose for `NOT EXISTS`. Both spellings are common; use the one that reads more clearly to you.
+All 28 are "Unknown" rows: cases a state could not yet assign to a county, which it stopped reporting once it had assigned them all. The same question with `NOT EXISTS` from the subqueries section, `SELECT count(*) FROM counties AS c WHERE NOT EXISTS (SELECT * FROM daily_counts AS d WHERE d.county_id = c.id AND d.date = '2020-12-31')`, also gives 28.
 
 ## Pitfall 1: a condition in `WHERE` instead of `ON`
 
 In the `LEFT JOIN` above, the date sits in `ON`. Move it to `WHERE` and the answer changes:
 
 ```sql
+-- right: the date test is in ON, so it only decides which rows are partners
+SELECT count(*)
+  FROM counties AS c
+  LEFT JOIN daily_counts AS d ON d.county_id = c.id AND d.date = '2020-12-31';   -- 3273: every county
+-- wrong: the date test is in WHERE, so it runs after the join and removes rows
 SELECT count(*)
   FROM counties AS c
   LEFT JOIN daily_counts AS d ON d.county_id = c.id
@@ -1060,15 +1101,30 @@ SELECT count(*)
   FROM states AS s
   JOIN counties AS c ON c.state_id = s.id
   WHERE s.name = 'Texas';                                   -- 255 (254 counties and "Unknown")
+-- the rows themselves: each county once
+SELECT s.name AS state, c.name AS county
+  FROM states AS s
+  JOIN counties AS c ON c.state_id = s.id
+  WHERE s.name = 'Texas'
+  ORDER BY c.name
+  LIMIT 3;                                                  -- Texas Anderson, Texas Andrews, Texas Angelina
 -- the same, with daily_counts joined in as well
 SELECT count(*)
   FROM states AS s
   JOIN counties AS c ON c.state_id = s.id
   JOIN daily_counts AS d ON d.county_id = c.id
   WHERE s.name = 'Texas';                                   -- 67002: every county once per day it reported
+-- the rows themselves: now each county repeats, once per day
+SELECT s.name AS state, c.name AS county, d.date
+  FROM states AS s
+  JOIN counties AS c ON c.state_id = s.id
+  JOIN daily_counts AS d ON d.county_id = c.id
+  WHERE s.name = 'Texas'
+  ORDER BY c.name, d.date
+  LIMIT 3;                                                  -- Texas Anderson three times, on its first three days
 ```
 
-The second query is not wrong SQL: it counts county-days. But if you meant counties, the answer is about 263 times too big, and nothing warns you. The same happens to `sum()`: any column of the "one" side, summed after the join, is added once per match. This is the most common bug in real-world joins. Two habits catch it: join only the tables the question needs, and check `count(*)` before and after adding a join. If the row count jumped, ask whether it should have. (Here `count(DISTINCT c.id)` would also repair the second query, giving 255 again, but the better fix is to leave `daily_counts` out.)
+The second query is not wrong SQL: it counts county-days. But if you meant to query counties individually (instead of days), the answer is about 263x too big, and nothing warns you. The same happens to `sum()`: any column of the "one" side, summed after the join, is added once per match. This is the most common bug in real-world joins. Two habits catch it: join only the tables the question needs, and check `count(*)` before and after adding a join. If the row count jumped, ask whether it should have. (Here `count(DISTINCT c.id)` would also repair the second query, giving 255 again, but the better fix is to leave `daily_counts` out.)
 
 ## Other joins
 
@@ -1077,9 +1133,8 @@ We will not be covering these in class, but you should know about them.
 * **`RIGHT JOIN`** keeps every row of the *right* table instead. It is a `LEFT JOIN` with the tables swapped, and almost nobody writes it: swap the tables and use `LEFT JOIN`.
 * **`FULL OUTER JOIN`** keeps the unmatched rows of *both* tables, with `NULL`s on whichever side is missing. It is the tool for reconciling two lists, e.g. two versions of a customer list: which entries are only in the old one, only in the new one, or in both.
 * **`CROSS JOIN`** has no `ON` at all: it pairs every row with every row, $n \times m$ rows. That sounds useless, but it builds a complete grid. Every county crossed with every day of December 2020 (`generate_series` makes the days) is 101,463 county-days, and a `LEFT JOIN` of `daily_counts` onto that grid shows that 860 of them were never reported.
-* A **self-join** joins a table to itself under two different aliases. It is how you follow a self-referential key (an employee's row next to their manager's row through `manager_id`), and it can also compare a row with its neighbor: `daily_counts AS d JOIN daily_counts AS p ON p.county_id = d.county_id AND p.date = d.date - 1` puts each day next to the day before, and `d.cases - p.cases` gives Harris 1054 new cases on 2020-12-31, the same as `lag()` in the window functions section.
 
-In the shell, imagine the three tables as three CSV files. Linux has a command for exactly this, `join`: it pairs the lines of two files whose join field is equal, like `JOIN ... ON`. It has one requirement: both files must be **sorted** on the join field, because it walks down the two files at once, line by line, like `comm` from Lecture 5. That is the third way of matching rows, a **merge join**, which Postgres also uses (the `Merge Anti Join` behind the anti-join above). Its options map onto SQL directly: no option is an inner join, `-a 1` also prints the unmatched lines of file 1 (a `LEFT JOIN`), `-v 1` prints *only* those (the anti-join), and `-a 1 -a 2` would be a `FULL OUTER JOIN`. `-1` and `-2` say which field of each file to join on (the first, if left out), `-o` which fields to print (`2.3` is field 3 of file 2), and `-` stands for the input from a pipe. Again, none of the following is covered in this course. It's just FYI because it shows that linux is highly developed and can do any query SQL can do.
+In the shell, imagine the three tables as three CSV files. Linux has a command for exactly this, `join`: it pairs the lines of two files whose join field is equal, like `JOIN ... ON`. It has one requirement: both files must be **sorted** on the join field, because it walks down the two files at once, line by line, like `comm` from Lecture 5. That is the third way of matching rows, a **merge join**, which Postgres also uses. Its options map onto SQL directly: no option is an inner join, `-a 1` also prints the unmatched lines of file 1 (a `LEFT JOIN`), `-v 1` prints *only* those (the 28 counties above), and `-a 1 -a 2` would be a `FULL OUTER JOIN`. `-1` and `-2` say which field of each file to join on (the first, if left out), `-o` which fields to print (`2.3` is field 3 of file 2), and `-` stands for the input from a pipe. Again, none of the following is covered in this course. It's just FYI because it shows that linux is highly developed and can do any query SQL can do.
 
 ```bash
 # the three tables as three CSV files, without a header line (join would treat it like any other line)
@@ -1101,7 +1156,7 @@ join -t, -o 1.3,1.2,2.3 counties_by_id.csv dec31_by_county.csv | sort -t, -k2,2 
 join -t, counties_by_id.csv dec31_by_county.csv | wc -l                            # 3245
 # LEFT JOIN: -a 1 also keeps the counties without one
 join -t, -a 1 counties_by_id.csv dec31_by_county.csv | wc -l                       # 3273
-# anti-join: -v 1 keeps only those, and field 3 is the county name
+# only the unmatched counties: -v 1 keeps only those, and field 3 is the county name
 join -t, -v 1 counties_by_id.csv dec31_by_county.csv | cut -d, -f3 | sort | uniq -c   # 28 Unknown
 # pitfall 1: LEFT JOIN with all the days, then the date test afterwards (like WHERE) loses the unmatched counties again
 join -t, -a 1 counties_by_id.csv daily_by_county.csv | awk -F, '$5=="2020-12-31"' | wc -l   # 3245
@@ -1112,7 +1167,7 @@ join -t, -1 1 -2 2 -o 1.2,2.1 states_by_id.csv counties_by_state.csv | awk -F, '
 rm states*.csv counties*.csv daily*.csv dec31_by_county.csv
 ```
 
-## Conclusion of Postgres
+## Conclusion of Postgres and the SQL unit as itself
 
 How large is the postgres software package (not including any databases)? Add it up, with `du` ("disk usage") for the program files and the database itself for your data:
 

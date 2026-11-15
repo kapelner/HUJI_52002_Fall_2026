@@ -360,6 +360,8 @@ Before we venture into more advanced SQL with multiple tables, let's talk about 
 
 Every language does it the same way. A library called a **driver** (or **adapter**, or **client library**) opens a connection to the Postgres server, sends it the text of an SQL statement, and turns the rows that come back into the language's own data types, e.g. a data frame in R and a list of tuples in Python (which you can turn into a `pandas` DataFrame). Each language also has a standard **database API** that all its drivers follow, so the code looks the same whatever the database: **DB-API 2.0** in Python and **DBI** in R. You already installed both drivers in `setup_docs/03_software_setup_common.qmd`: `psycopg` for Python (in the `pip install` line of your `bigdata` environment) and `RPostgres` for R, which also brings `DBI` (and `dplyr` and `dbplyr` come with the `tidyverse`). If `import psycopg` or `library(RPostgres)` fails, go back to that document and rerun its install commands. The Postgres server must be running, as it is whenever `psql` works.
 
+
+
 ## Embedded SQL
 
 In the first style the program holds the SQL as text, sends it, and gets rows back. You write exactly the SQL you would type in `psql`.
@@ -533,6 +535,61 @@ con.disconnect()
 The SQL `ibis` writes is uglier than ours, a derived table inside a derived table with the throwaway aliases `t0`, `t1` and `t2`, but Postgres's planner turns it into the same plan.
 
 A third style is the **ORM** ("object-relational mapper"), such as SQLAlchemy and Django in Python (and ActiveRecord in Ruby on Rails). An ORM maps each *table* to a *class* and each *row* to an *object* of that class: you write a `County` class once, and `counties` rows come back as `County` objects whose attributes are the columns, `county.name` and `county.fips`. Foreign keys become attributes too. Declare that `counties.state_id` points at `states` (Lecture 6), and `county.state.name` follows it to the right `states` row for you: the ORM writes the join behind the scenes. Saving works the same way in reverse: change `county.name` and save it (`county.save()` in Django, `session.commit()` in SQLAlchemy), and the ORM writes the `UPDATE`. The difference from `dbplyr` and `ibis` is the goal. Those build a *query* and hand you back a data frame for analysis, while an ORM gives *application code* (a web site, say) objects to work with one at a time, which is why it is what most web applications use.
+
+Here are all the pieces together, from your code down to the files on disk. Whichever of the three styles you pick, what reaches Postgres is always SQL text: the styles differ only in who writes that text and in what form the rows come back. `psql` is not an API but a program like yours, except that you type the SQL yourself. It skips the API layer and goes straight to **libpq**, the C library that `psycopg` and `RPostgres` are built on, so from libpq down everything is shared:
+
+```text
+ CLIENT SIDE: your program (on your laptop, or in a Moriah job)
+ +--------------------------------------------------------------------------+
+ | embedded SQL      dbplyr / ibis       ORM (SQLAlchemy,     psql          |
+ | you write the     you write dplyr /   Django): you write   you type the  |
+ | SQL               ibis code           classes, objects     SQL yourself  |
+ |      |                 |                    |                  |         |
+ |      |                 | translated         | translated       |         |
+ |      |                 | (show_query,       | (query log)      |         |
+ |      |                 |  to_sql)           |                  |         |
+ |      v                 v                    v                  |         |
+ | +------------------------------------------------------+       |         |
+ | |                      SQL text                        |       |         |
+ | +------------------------------------------------------+       |         |
+ |      |                                                         |         |
+ |      v                                                         |         |
+ | Standard database API                                          |         |
+ |   DB-API 2.0 (Python)  /  DBI (R)                              |         |
+ |      |                                                         |         |
+ |      v                                                         |         |
+ | Driver / adapter                                               |         |
+ |   psycopg (Python)  /  RPostgres (R)                           |         |
+ |   rows come back as tuples / data frames (collect()),          |         |
+ |   or as the ORM's objects (county.name)                        |         |
+ |      |                                                         |         |
+ |      v                                                         v         |
+ | libpq: Postgres's own C client library, used by all of the above         |
+ +--------------------------------------------------------------------------+
+                          |      ^
+                 SQL text |      | rows back
+                          v      |
+ +--------------------------------------------------------------------------+
+ | CONNECTION, speaking the Postgres wire protocol over                     |
+ |   a Unix socket (/var/run/postgresql, /tmp/pg_USER_JOBID)                |
+ |   or TCP (host:5432)                                                     |
+ +--------------------------------------------------------------------------+
+                          |      ^
+                          v      |
+ SERVER SIDE: the database
+ +--------------------------------------------------------------------------+
+ | Postgres server (postmaster)                                             |
+ |   listens, checks who you are, starts one backend per connection         |
+ |      |                                                                   |
+ |      v                                                                   |
+ | Backend process (one per connection)                                     |
+ |   parser  ->  planner (what EXPLAIN shows)  ->  executor                 |
+ |      |      ^                                                            |
+ |      v      |                                                            |
+ | Data directory (PGDATA) on disk                                          |
+ |   tables and indexes, stored as 8 kB pages                               |
+ +--------------------------------------------------------------------------+
+```
 
 The convenience of all three has a price: when a query is slow you have to read the SQL they generated (`show_query` in `dbplyr`, `ibis.to_sql` in `ibis`, the query log in an ORM) to see why, so you still need to know SQL. ORMs in particular make it easy to write a loop such as "for each county, print `county.state.name`", which quietly sends one query per county, the same row-by-row pattern as the correlated subquery in Lecture 6.
 
