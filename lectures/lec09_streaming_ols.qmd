@@ -1,0 +1,467 @@
+---
+title: "Lecture 8: Streaming Algorithms and OLS"
+subtitle: "Big Data Algorithms"
+format:
+  html:
+    toc: true
+    toc-depth: 2
+    number-sections: true
+    code-copy: true
+    embed-resources: true
+---
+
+So far we have learned Linux, the operating system that runs most servers and data systems; git, for keeping our code under version control; three ways to store data (CSV files, Parquet files and a database); and SQL, to query and change the data and to count, sum, group, join and reshape it. Last lecture, database adapters let R and Python talk to Postgres directly.
+
+Now we want to fit models, for the two main goals of statistics: inference and prediction, on a table too big for the memory of the computer doing the fitting. The usual way of fitting a model needs all of the data in memory at once. Last lecture's database adapters offer a way out: R can ask Postgres for the rows a chunk at a time, so it never holds the whole table. But that only helps if the model can be fit one chunk at a time. Such an algorithm is called a **streaming algorithm**, and in this lecture we see that ordinary least squares (OLS) regression is one.
+
+The plan:
+
+1. OLS with matrices, the way you learned it in your regression course.
+2. How long it takes, in terms of $n$ (rows) and $p$ (columns), and a simulation that measures it.
+3. Why adding a row does not mean starting over.
+4. Fitting OLS on a million rows streamed out of Postgres.
+
+# OLS regression with matrices
+
+We have $n$ observations. Each has a response $y_i$ and $p$ features $x_{i1}, \ldots, x_{ip}$. Add a first column as a constant 1 for the intercept. Stack them into the $n \times (p + 1)$ **design matrix** $X$ (row $i$ is the row vector $x_i^\top$) and the response vector $y$ of length $n$:
+
+$$
+X = \begin{bmatrix}
+1 & x_{12} & \cdots & x_{1p} \\
+1 & x_{22} & \cdots & x_{2p} \\
+\vdots & \vdots & \ddots & \vdots \\
+1 & x_{n2} & \cdots & x_{np}
+\end{bmatrix},
+\qquad
+y = \begin{bmatrix} y_1 \\ y_2 \\ \vdots \\ y_n \end{bmatrix}.
+$$
+
+OLS picks the coefficient vector $b$ that makes the sum of squared errors (SSE)
+
+$$\text{SSE}(b) = \lVert y - Xb \rVert^2$$ 
+
+as small as possible. Setting the vector derivative with respect to $b$ to the $p+1$-dim zero vector and solving gives the ordinary least squared (OLS) solution
+
+$$
+b = (X^\top X)^{-1} X^\top y.
+$$
+
+
+which exists as long as $X^\top X$ is invertible (no column of $X$ is a linear combination of the others). This also implies that you need more observations than the number of features + 1.
+
+Let's do it by hand in R on a small simulated data set, where we know the true coefficients are $(3, 2, -1, 0.5)$:
+
+```{r}
+set.seed(52002)
+n <- 1000
+x1 <- rnorm(n)
+x2 <- rnorm(n)
+x3 <- runif(n)
+y <- 3 + 2 * x1 - 1 * x2 + 0.5 * x3 + rnorm(n)
+
+X <- cbind(1, x1, x2, x3)       # the design matrix: n x p = 1000 x 4, with the column of 1s
+dim(X)
+
+XtX    <- t(X) %*% X            # p x p = 4 x 4
+Xty    <- t(X) %*% y            # p x 1 = 4 x 1
+XtXinv <- solve(XtX)            # solve(A) with one argument is the inverse of A
+b      <- XtXinv %*% Xty        # p x 1: the OLS coefficients
+b                               # close to 3, 2, -1, 0.5 (x3 is the least precise: it only ranges from 0 to 1)
+```
+
+or more compactly using convenience functions:
+
+```{r}
+solve(crossprod(X), crossprod(X, y)) 
+# crossprod(A, B) := t(A) %*% B 
+# solve(A, b)     := A^-1 b
+```
+
+And `lm` agrees:
+
+```{r}
+coef(lm(y ~ x1 + x2 + x3))
+```
+
+# How long does OLS take?
+
+Count the multiplications in each step. An entry of $X^\top X$ is the dot product of two columns of $X$, which is $n$ multiplications, and $X^\top X$ has $p \times p$ entries. Inverting (or solving with) a $p \times p$ matrix takes on the order of $p^3$ operations (Gaussian elimination).
+
++------------------------------+----------------------+-----------------+
+| Step                         | Result               | Work            |
++:=============================+:=====================+:================+
+| Multiply $X^\top$ by $X$     | $X^\top X$,          | $O(np^2)$       |
+|                              | dim: $p \times p$    |                 |
++------------------------------+----------------------+-----------------+
+| Multiply $X^\top$ by $y$     | $X^\top y$,          | $O(np)$         |
+|                              | dim: $p \times 1$    |                 |
++------------------------------+----------------------+-----------------+
+| Invert $X^\top X$            | $(X^\top X)^{-1}$,   | $O(p^3)$        |
+|                              | dim: $p \times p$    |                 |
++------------------------------+----------------------+-----------------+
+| Multiply $(X^\top X)^{-1}$   | $b$,                 | $O(p^2)$        |
+| by $X^\top y$ (both already  | dim: $p \times 1$    |                 |
+| computed)                    |                      |                 |
++------------------------------+----------------------+-----------------+
+| **Total**                    |                      | $O(np^2 + p^3)$ |
++------------------------------+----------------------+-----------------+
+
+Which of the two terms matters depends on how $n$ compares with $p$.
+
+* **When $n \gg p$**, the usual case in big data (millions of rows, tens or hundreds of columns), $p/n$ is tiny, so the $p^3$ of the inverse is negligible next to the $np^2$ of building $X^\top X$, and the time is $O(np^2)$. **linear in $n$** and **quadratic in $p$**: twice the rows take twice as long, twice the columns four times as long.
+* **When $n \approx p$**, the two terms are the same size, both about $p^3$, so the inverse is a big part of the work and the time is about $c_1 np^2 + c_2 p^3$, not a single power of $n$ times a single power of $p$. The total is still $O(np^2)$ as an upper bound.
+
+So conclusion: runtie is **linear in $n$** and **quadratic in $p$** From here on we assume $n \gg p$: the rows are what make the data big. This makes sense given our postgres unit: as you accumulate more datae you `INSERT` rows to the table, you don't `ALTER ... COLUMN` in the table.
+
+The memory is the bigger problem. The usual way needs all of $X$ in memory at once: $np$ numbers of 8 bytes each. A billion rows with 100 features is $10^9 \times 100 \times 8$ bytes $= 800$ GB, far more than any laptop (and most single servers) have.
+
+The second problem is convenience. Suppose $n$ is large, the model is already fit, and a few new rows arrive: today's sales, the latest day of COVID counts. Do we have to fit the whole thing again, another $O(np^2)$ on all $n + 3$ rows, just because 3 rows were added? Or can we take the previous estimate and only *update* it with the new data? Recomputing from scratch also needs all the old rows again, so it runs into the memory problem every time new data comes in. Keep both questions in mind for the next section.
+
+## Checking the order with a simulation
+
+If the time is $t \approx c n^{a} p^{b}$ for some constant $c$, then taking logs gives a linear model
+
+$$
+\log t = \log c + a \log n + b \log p,
+$$
+
+and the theory predicts $a = 1$ and $b = 2$. We can check this by timing OLS on a grid of $n$ and $p$ and running a regression of $\log t$ on $\log n$ and $\log p$ (a regression to check the runtime of regression). We include the interaction $\log n \times \log p$ too: if the time really is a product of a power of $n$ and a power of $p$, the interaction should be about 0. A nonzero interaction would mean the effect of doubling $n$ depends on $p$, which is not what our analysis showed.
+
+The grid goes up to $n = 80{,}000$ rows and $p = 1{,}600$ columns, always with $n \ge 6p$ so that we are in the $n \gg p$ case (if we let $n \approx p$, the $p^3$ term would bend the line and show up as an interaction). Larger $p$ gives a better estimate of the slope of $\log p$ (see below). To keep the demo short, we generate one big random matrix once and time the OLS on its top-left $n \times p$ corner; the values in $X$ don't matter for the timing. It takes about 20 seconds on my laptop:
+
+```{r}
+set.seed(52002)
+X_all <- matrix(runif(80000 * 1600), nrow = 80000)   # the biggest X we need, generated once (runif is faster than rnorm)
+y_all <- runif(80000)
+
+ols_seconds <- function(n, p, reps = 3) {
+  X <- X_all[1:n, 1:p]              # the first n rows and p columns
+  y <- y_all[1:n]
+  times <- replicate(reps, system.time({
+    XtX <- crossprod(X)
+    Xty <- crossprod(X, y)
+    b   <- solve(XtX, Xty)
+  })[["elapsed"]])
+  median(times)                     # the median of a few runs is less noisy than one run
+}
+
+sims <- expand.grid(
+  n = c(10000, 20000, 40000, 80000),
+  p = c(200, 400, 800, 1600)
+)   # all 16 combinations
+sims$seconds <- mapply(ols_seconds, sims$n, sims$p)
+xtabs(seconds ~ n + p, sims)        # the seconds as an n x p table
+```
+
+Before fitting, we center $\log n$ and $\log p$ (subtract their means). Otherwise, with an interaction in the model, the coefficient of $\log n$ is its slope at $\log p = 0$, i.e. $p = 1$, far outside our grid. After centering, it is the slope in the middle of the grid.
+
+```{r}
+sims$log_n <- log(sims$n) - mean(log(sims$n))
+sims$log_p <- log(sims$p) - mean(log(sims$p))
+fit <- lm(log(seconds) ~ log_n * log_p, data = sims)
+round(summary(fit)$coefficients[, 1:2], 3)
+```
+
+On my laptop this printed:
+
+```
+            Estimate Std. Error
+(Intercept)   -2.021      0.051
+log_n          0.990      0.066
+log_p          1.664      0.066
+log_n:log_p   -0.050      0.085
+```
+
+* The slope of $\log n$ is 0.99: linear in $n$, as predicted.
+* The interaction is -0.05, within one standard error of 0: the time really is (a power of $n$) times (a power of $p$).
+* Timings are noisy. Running it again on the same laptop gave slopes of $\log n$ between 0.88 and 0.99, slopes of $\log p$ between 1.60 and 1.89, and interactions between -0.09 and 0.19 (at most about 2 standard errors from 0). The fastest cells of the grid take only a few hundredths of a second, and other programs on the computer get in the way too.
+* The slope of $\log p$ is 1.66, *less* than the predicted 2. Your number will be different, and so may your time.
+
+Why less than 2? Big-O counts **operations**, but we measured **seconds**, and the seconds per operation are not constant. R hands matrix products to a library called **BLAS** (Basic Linear Algebra Subprograms), and an optimized BLAS (Intel MKL on my laptop; OpenBLAS or Apple's Accelerate on others) does more operations per second on larger matrices: it reuses numbers while they are in the CPU's fast cache, uses the CPU's vector instructions, and spreads the work over several cores, all of which pays off better as $p$ grows. On top of that, the $O(np)$ parts (generating and reading $X$, computing $X^\top y$) are not negligible at small $p$. As $p$ grows, the slope creeps up towards 2: between $p = 200$ and $p = 400$ the time only about doubles, but between $p = 800$ and $p = 1{,}600$ it about quadruples. This is why the grid goes up to $p = 1{,}600$: with $p$ only up to 800, the slope came out at about 1.4. With R's plain built-in BLAS, which does one operation at a time, the slope is close to 2, but the whole grid then takes minutes instead of seconds (drop $n = 80{,}000$ to speed it up). You can see which BLAS your R uses with:
+
+```{r}
+sessionInfo()$BLAS
+```
+
+The lesson: big-O tells you how the time *grows*, and the simulation confirms the shape (linear in $n$, polynomial in $p$, no interaction). The exact exponent you measure depends on the hardware and the libraries.
+
+# Adding a row: OLS as a streaming algorithm
+
+Suppose a new observation $(x_{n+1}, y_{n+1})$ arrives. Do we have to recompute everything, $O(np^2)$ work, again? No, because of what $X^\top X$ and $X^\top y$ actually are. Multiply out the matrix product row by row:
+
+$$
+X^\top X = \begin{bmatrix} x_1 & x_2 & \cdots & x_n \end{bmatrix}
+\begin{bmatrix} x_1^\top \\ x_2^\top \\ \vdots \\ x_n^\top \end{bmatrix}
+= \sum_{i=1}^{n} x_i x_i^\top,
+\qquad
+X^\top y = \sum_{i=1}^{n} x_i \, y_i.
+$$
+
+Each $x_i x_i^\top$ is a $p \times p$ matrix (an "outer product") built from row $i$ alone. So $X^\top X$ is just a **sum over the rows**, the same way `sum(cases)` is a sum over the rows in SQL, and so is $X^\top y$. Adding a row adds one term to each sum:
+
+$$
+X_{\text{new}}^\top X_{\text{new}} = X^\top X + x_{n+1} x_{n+1}^\top,
+\qquad
+X_{\text{new}}^\top y_{\text{new}} = X^\top y + x_{n+1} \, y_{n+1}.
+$$
+
+That is $O(p^2)$ work for the new row, no matter how big $n$ already is, and we never need the old rows again. To get the coefficients we solve with the $p \times p$ matrix, $O(p^3)$, but only when we actually want $b$, not after every row.
+
+Let's check it on our small data: start from zeros, add the rows one at a time, and compare with the batch answer:
+
+```{r}
+p <- ncol(X)
+XtX_stream <- matrix(0, p, p)       # the running sums: p x p and p x 1, no matter how many rows
+Xty_stream <- matrix(0, p, 1)
+for (i in 1:nrow(X)) {
+  x_i <- X[i, ]                     # one row, a vector of length p
+  XtX_stream <- XtX_stream + x_i %*% t(x_i)   # the outer product x_i x_i^T: p x p
+  Xty_stream <- Xty_stream + x_i * y[i]
+}
+all.equal(XtX_stream, crossprod(X), check.attributes = FALSE)    # TRUE
+solve(XtX_stream, Xty_stream)       # the same b as before
+```
+
+This is what makes OLS a **streaming algorithm**: it reads each row once, in any order, and it keeps only a summary whose size does not depend on $n$ (here the $p \times p$ matrix and the $p \times 1$ vector, the **sufficient statistics** of OLS).
+
++------------------+----------------------+------------------------+
+|                  | Batch OLS            | Streaming OLS          |
++:=================+:=====================+:=======================+
+| Memory           | $O(np)$: all of $X$  | $O(p^2)$: $X^\top X$   |
+|                  |                      | and $X^\top y$         |
++------------------+----------------------+------------------------+
+| Total time       | $O(np^2 + p^3)$      | $O(np^2 + p^3)$, the   |
+|                  |                      | same                   |
++------------------+----------------------+------------------------+
+| A new row costs  | $O(np^2 + p^3)$:     | $O(p^2)$, plus         |
+|                  | start over           | $O(p^3)$ when you want |
+|                  |                      | $b$                    |
++------------------+----------------------+------------------------+
+| Passes over data | 1, but all of it in  | 1, one row (or chunk)  |
+|                  | memory               | at a time              |
++------------------+----------------------+------------------------+
+
+: Batch vs streaming OLS
+
+Streaming does not save time; it saves **memory**. A billion rows with $p = 100$ need 800 GB for $X$, but only $100 \times 100 \times 8$ bytes $= 80$ KB for $X^\top X$.
+
+## Rows in chunks, and chunks in parallel
+
+One row at a time is slow in R (the `for` loop above), but nothing forces us to add single rows. Cut $X$ into chunks of rows $X_1, X_2, \ldots, X_K$ (with the matching pieces $y_1, \ldots, y_K$ of $y$). The sums split the same way:
+
+$$
+X^\top X = \sum_{k=1}^{K} X_k^\top X_k,
+\qquad
+X^\top y = \sum_{k=1}^{K} X_k^\top y_k,
+$$
+
+and each chunk's `crossprod` is fast BLAS work. Two consequences:
+
+* A chunk needs only as much memory as its own rows, so we can choose the chunk size to fit in memory.
+* The order of the chunks does not matter, and they don't need each other. Different machines can each compute $X_k^\top X_k$ and $X_k^\top y_k$ for their own chunks at the same time, and at the end we add up $K$ small $p \times p$ matrices. This is "embarrassingly parallel" work, exactly what Slurm job arrays (Lecture 9) and MapReduce are for.
+
+## Updating the inverse: the Sherman-Morrison formula
+
+If you need the coefficients after *every* new row (say, a model that updates live as data arrives), even the $O(p^3)$ solve per row is too much. There is a shortcut for updating the inverse directly. For an invertible matrix $A$ and a vector $x$,
+
+$$
+(A + x x^\top)^{-1} = A^{-1} - \frac{A^{-1} x \, x^\top A^{-1}}{1 + x^\top A^{-1} x}.
+$$
+
+With $A = X^\top X$, the right side needs only matrix-vector products with the old inverse, $O(p^2)$ work, so the coefficients can be kept up to date at $O(p^2)$ per row. This is the idea behind **recursive least squares**, used in signal processing and online forecasting. Let's check that it matches inverting from scratch:
+
+```{r}
+x_new <- c(1, 0.3, -1.2, 0.8)      # a new row (with the 1 for the intercept)
+A_inv <- solve(XtX)
+
+Ax <- A_inv %*% x_new              # p x 1, O(p^2)
+A_inv_new <- A_inv - (Ax %*% t(Ax)) / c(1 + t(x_new) %*% Ax)   # A^-1 is symmetric, so x^T A^-1 = (A^-1 x)^T
+
+max(abs(A_inv_new - solve(XtX + x_new %*% t(x_new))))   # about 1e-18: the same up to rounding
+```
+
+# Streaming OLS out of Postgres
+
+Now we put the pieces together. The data lives in Postgres, and R streams it out in chunks through the `DBI` adapter, keeping only $X^\top X$ and $X^\top y$.
+
+First we need a big table. We simulate a million rows with the same true coefficients as before and write them into Postgres with `dbWriteTable`. `temporary = TRUE` makes it a **temporary table**: it exists only for this connection and is deleted automatically when we disconnect, so we don't clutter the `lec04` database.
+
+```{r}
+library(DBI)
+con <- dbConnect(RPostgres::Postgres(), dbname = "lec04")
+
+set.seed(52002)
+n <- 1e6
+sim <- data.frame(x1 = rnorm(n), x2 = rnorm(n), x3 = runif(n))
+sim$y <- 3 + 2 * sim$x1 - 1 * sim$x2 + 0.5 * sim$x3 + rnorm(n)
+dbWriteTable(con, "sim", sim, temporary = TRUE)      # about 10 seconds
+dbGetQuery(con, "SELECT count(*) FROM sim")          # 1000000
+```
+
+In real life the table would already be there (and be far too big to have ever been a data frame in R). Last lecture we used `dbGetQuery`, which brings back the whole answer at once. To stream, we split it in two: `dbSendQuery` starts the query and returns a **result set**, and `dbFetch(res, n = ...)` brings back the next `n` rows of it each time we call it, until `dbHasCompleted` says there are no more:
+
+```{r}
+p <- 4
+XtX <- matrix(0, p, p)
+Xty <- matrix(0, p, 1)
+n_seen <- 0
+
+res <- dbSendQuery(con, "SELECT x1, x2, x3, y FROM sim")
+while (!dbHasCompleted(res)) {
+  chunk <- dbFetch(res, n = 100000)                       # the next 100,000 rows, as a data frame
+  X_k <- cbind(1, as.matrix(chunk[, c("x1", "x2", "x3")]))
+  XtX <- XtX + crossprod(X_k)                             # add this chunk's X_k^T X_k
+  Xty <- Xty + crossprod(X_k, chunk$y)                    # and its X_k^T y_k
+  n_seen <- n_seen + nrow(chunk)
+}
+dbClearResult(res)                                        # free the result set on the server
+n_seen                                                    # 1e+06: every row was used once
+
+b_stream <- solve(XtX, Xty)
+cbind(stream = b_stream[, 1], lm = coef(lm(y ~ x1 + x2 + x3, data = sim)))
+```
+
+The two columns agree to every printed digit (3.0004, 2.0013, -1.0015, 0.5003), yet R never held more than 100,000 rows of the table at a time. With 10 billion rows the loop would run longer, but its memory would stay the same: one chunk plus a $4 \times 4$ matrix. (Here `lm` could check us only because the million rows also sit in the data frame `sim`.)
+
+## Let the database do the work
+
+Last lecture's rule was to let the database do the work and bring back only the answer. Every entry of $X^\top X$ and $X^\top y$ is a sum over the rows, and summing over rows is what SQL aggregates do. So Postgres can compute the sufficient statistics itself and send back just $p^2 + p$ numbers instead of a million rows. For simple regression ($y$ on an intercept and $x_1$), $X^\top X$ and $X^\top y$ are
+
+$$
+X^\top X = \begin{bmatrix} n & \sum x_{i1} \\ \sum x_{i1} & \sum x_{i1}^2 \end{bmatrix},
+\qquad
+X^\top y = \begin{bmatrix} \sum y_i \\ \sum x_{i1} y_i \end{bmatrix},
+$$
+
+and one query gets all five numbers:
+
+```{r}
+s <- dbGetQuery(con, "
+  SELECT count(*)::float AS n, sum(x1) AS sum_x, sum(x1 * x1) AS sum_xx,
+         sum(y) AS sum_y, sum(x1 * y) AS sum_xy
+    FROM sim")
+XtX_sql <- matrix(c(s$n, s$sum_x, s$sum_x, s$sum_xx), 2, 2)   # count(*) is a bigint, which R gets as integer64: hence ::float
+Xty_sql <- c(s$sum_y, s$sum_xy)
+solve(XtX_sql, Xty_sql)            # the intercept and slope of y on x1 alone (about 3.25 and 2.00)
+```
+
+Postgres even has simple regression built in, as aggregate functions: `regr_slope(y, x)` and `regr_intercept(y, x)` compute exactly this, in one pass over the table:
+
+```{r}
+dbGetQuery(con, "SELECT regr_intercept(y, x1), regr_slope(y, x1) FROM sim")
+dbDisconnect(con)                  # the temporary table sim is deleted now
+```
+
+For $p$ features the same query just needs all the $p(p+1)/2$ distinct sums $\sum x_{ij} x_{ik}$ (the matrix is symmetric), which a short loop in R can write as SQL text.
+
+# Caveats
+
+* **Rounding.** Forming $X^\top X$ squares the **condition number** of the problem (roughly, how much rounding errors get magnified), so the normal equations lose about twice as many digits as `lm`'s QR method. For well-behaved features like ours it doesn't matter. When features are on very different scales or nearly collinear, center and scale them first; there are also streaming versions of QR.
+* **Not everything streams this nicely.** OLS streams because its sufficient statistics are sums. The mean ($\sum y_i$ and $n$) and the variance ($\sum y_i$, $\sum y_i^2$ and $n$) stream the same way. The median does not: no fixed-size summary gives the exact median of a stream, and one needs approximate algorithms instead. Methods without a closed form, like logistic regression, take several passes (one per iteration of the fitting algorithm), each of which streams. That is the next section.
+
+# Streaming logistic regression
+
+Logistic regression models a 0/1 response: $P(y_i = 1) = p_i = 1 / (1 + e^{-x_i^\top b})$. It has no formula like $b = (X^\top X)^{-1} X^\top y$. The coefficients maximize the log-likelihood
+
+$$
+\ell(b) = \sum_{i=1}^{n} \left[ y_i \, x_i^\top b - \log\left(1 + e^{x_i^\top b}\right) \right],
+$$
+
+and setting its derivative to zero gives equations with no closed-form solution. So `glm` solves them by **Newton's method**: start from a guess (say $b = 0$) and repeat
+
+$$
+b \leftarrow b + (X^\top W X)^{-1} X^\top (y - p),
+\qquad W = \text{diag}\big(p_i (1 - p_i)\big),
+$$
+
+where $p$ and $W$ are computed from the current $b$. $X^\top (y - p)$ is the gradient of $\ell$ and $X^\top W X$ is minus its second derivative. Each step solves a weighted least squares problem, which is why the method is also called **iteratively reweighted least squares (IRLS)**, and why `glm` prints "Number of Fisher Scoring iterations".
+
+The key observation is the same as for OLS. Multiply out the products row by row:
+
+$$
+X^\top W X = \sum_{i=1}^{n} p_i (1 - p_i) \, x_i x_i^\top,
+\qquad
+X^\top (y - p) = \sum_{i=1}^{n} x_i (y_i - p_i).
+$$
+
+For a fixed current $b$, both are **sums over the rows**, and each term needs only row $i$. So one Newton step is one streaming pass: read the chunks, add up a $p \times p$ matrix and a $p \times 1$ vector, then solve. The difference from OLS is that the sums depend on $b$, so they must be recomputed for every new $b$. Logistic regression streams with **one pass per iteration**, and Newton's method usually needs fewer than ten.
+
+Let's simulate a million rows with true coefficients $(-1, 2, -1, 0.5)$ and put them in Postgres:
+
+```{r}
+library(DBI)
+con <- dbConnect(RPostgres::Postgres(), dbname = "lec04")
+
+set.seed(52002)
+n <- 1e6
+sim <- data.frame(x1 = rnorm(n), x2 = rnorm(n), x3 = runif(n))
+eta <- -1 + 2 * sim$x1 - 1 * sim$x2 + 0.5 * sim$x3        # the linear predictor x_i^T b
+sim$y <- rbinom(n, 1, 1 / (1 + exp(-eta)))               # 0/1 responses, about 40% ones
+dbWriteTable(con, "sim_logit", sim, temporary = TRUE)
+```
+
+One pass over the table computes both sums for a given $b$. It is the streaming loop from before, with the weights $p_i(1 - p_i)$ added:
+
+```{r}
+p <- 4
+one_pass <- function(b) {
+  H <- matrix(0, p, p)                                    # will be X^T W X
+  g <- matrix(0, p, 1)                                    # will be X^T (y - p)
+  res <- dbSendQuery(con, "SELECT x1, x2, x3, y FROM sim_logit")
+  while (!dbHasCompleted(res)) {
+    chunk <- dbFetch(res, n = 100000)
+    X_k  <- cbind(1, as.matrix(chunk[, c("x1", "x2", "x3")]))
+    pr_k <- 1 / (1 + exp(-(X_k %*% b)))                   # p_i for this chunk's rows, at the current b
+    w_k  <- c(pr_k * (1 - pr_k))                          # the weights
+    H <- H + crossprod(X_k, X_k * w_k)                    # sum of w_i x_i x_i^T over the chunk
+    g <- g + crossprod(X_k, chunk$y - pr_k)               # sum of x_i (y_i - p_i) over the chunk
+  }
+  dbClearResult(res)
+  list(H = H, g = g)
+}
+```
+
+Newton's method then calls it once per iteration, until the step is tiny:
+
+```{r}
+b <- matrix(0, p, 1)                                      # start at b = 0
+for (iter in 1:25) {
+  s <- one_pass(b)                                        # one full pass over the table
+  step <- solve(s$H, s$g)
+  b <- b + step
+  cat("iteration", iter, "largest change", max(abs(step)), "\n")
+  if (max(abs(step)) < 1e-8) break                        # converged
+}
+# iteration 1 largest change 1.09 ... iteration 7 largest change 7e-14: seven passes over the data
+fit <- glm(y ~ x1 + x2 + x3, family = binomial, data = sim)
+cbind(stream = b[, 1], glm = coef(fit))                   # both -0.9973, 1.9995, -0.9966, 0.5009
+```
+
+The two agree to every printed digit, and R again never held more than 100,000 rows at a time. The changes shrink very fast toward the end (0.04, then 0.0009, then 4e-7), because near the answer Newton's method roughly doubles the number of correct digits at each iteration.
+
+The standard errors come almost for free. $(X^\top W X)^{-1}$ at the final $b$ is the estimated covariance matrix of $\hat b$ (the inverse of the Fisher information), so one more pass gives them:
+
+```{r}
+se_stream <- sqrt(diag(solve(one_pass(b)$H)))
+cbind(stream = se_stream, glm = sqrt(diag(vcov(fit))))   # agree to about 4 digits (glm uses the weights of its last iteration)
+dbDisconnect(con)
+```
+
+The same idea works for OLS, whose standard errors come from $\hat\sigma^2 (X^\top X)^{-1}$, and for every other generalized linear model (Poisson, gamma, ...): only the formulas for $p_i$ and the weights change.
+
++------------------+--------------------------+----------------------------+
+|                  | Streaming OLS            | Streaming logistic         |
++:=================+:=========================+:===========================+
+| Summary kept     | $X^\top X$, $X^\top y$   | $X^\top W X$, $X^\top(y-p)$|
++------------------+--------------------------+----------------------------+
+| Depends on $b$?  | no                       | yes                        |
++------------------+--------------------------+----------------------------+
+| Passes over data | 1                        | one per Newton iteration,  |
+|                  |                          | here 7                     |
++------------------+--------------------------+----------------------------+
+| Memory           | $O(p^2)$                 | $O(p^2)$                   |
++------------------+--------------------------+----------------------------+
+
+: Streaming OLS vs streaming logistic regression
+
+If even seven passes are too many, for example for data that arrives once and is never stored, **stochastic gradient descent** updates $b$ a little after each row or small batch, $b \leftarrow b + \eta \, x_i (y_i - p_i)$ for a small step size $\eta$, in a single pass. It gives an approximate answer, and the price is choosing $\eta$. It is how neural networks are trained, and beyond the scope here.

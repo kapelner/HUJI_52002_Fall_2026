@@ -1,0 +1,94 @@
+---
+title: "Lecture 11: Sampling"
+subtitle: "Big Data Algorithms"
+format:
+  html:
+    toc: true
+    toc-depth: 2
+    number-sections: true
+    code-copy: true
+    embed-resources: true
+---
+
+<!-- DRAFT OUTLINE. Sections marked TODO still need prose and code; nothing here has been run yet. -->
+
+Lecture 9 showed how to fit a model to *all* $n$ rows, streaming them past R a chunk at a time. This lecture asks the question a statistician should ask first: **do we need all $n$?** Usually not. A well-chosen sample answers the question almost as precisely, in a fraction of the time and memory, and the precision we give up is smaller than the errors that no amount of data removes.
+
+The plan:
+
+1. Why a sample is enough: standard errors shrink like $1/\sqrt{n}$, bias does not shrink at all.
+2. Simple random samples in SQL and from streams.
+3. Stratified samples, and weights.
+4. Cluster samples by hashing a unit (from Lecture 10).
+5. Standard errors at scale: subsampling and the bag of little bootstraps.
+6. Huge $n$: statistical vs practical significance.
+
+# Why a sample is enough
+
+TODO prose and a chalkboard derivation. Points:
+
+* The standard error of a mean or a regression coefficient is about $\sigma / \sqrt{n}$. Going from $n = 10^6$ to $n = 10^9$ makes it about 30 times smaller, but it was already tiny.
+* **Total error = bias + sampling error.** A wrong model (a missing variable, a nonlinearity), a biased data source or a measurement problem gives bias, which does not shrink as $n$ grows. Once the sampling error is far below the bias, more rows buy nothing.
+* Rule of thumb to state: choose $n$ from the precision you need, not from how much data exists. Example: a proportion to within ±0.1 percentage point (95%) needs about $n = 1/0.001^2 \approx 10^6$ rows, whatever the population size.
+* The **finite population correction** $\sqrt{1 - n/N}$ shows the population size $N$ barely matters once $n \ll N$.
+
+TODO: an R demo with Lecture 9's simulated million rows: fit on samples of size $10^3, 10^4, 10^5, 10^6$, plot the estimate with its CI against $n$ on a log scale, and add the true value.
+
+# Simple random samples
+
+## In SQL
+
+* `TABLESAMPLE BERNOULLI (1) REPEATABLE (52002)`: each row kept independently with probability 1%, as in Lecture 4's `covid_1pct`. The sample size is random, around 1%.
+* `TABLESAMPLE SYSTEM (1)`: keeps whole 8 KB pages, so it is much faster but *not* a simple random sample (rows on the same page come together, like a cluster sample).
+* `ORDER BY random() LIMIT n`: an exact sample size, but it sorts the whole table.
+
+TODO: compare the three on `daily_counts` with `EXPLAIN ANALYZE` (time) and with the spread of an estimate over repeated samples (quality).
+
+## From a stream: reservoir sampling
+
+How do you draw a sample of exactly $k$ rows from a stream whose length you don't know in advance, in one pass, keeping only $k$ rows in memory? **Reservoir sampling**: keep the first $k$ rows; then the $i$-th row replaces a random one of the $k$ with probability $k/i$. At every moment the reservoir is a simple random sample of the rows seen so far.
+
+TODO: the proof by induction (chalkboard, short), and a 10-line R or Python version run on covid.csv read line by line.
+
+# Stratified samples
+
+TODO prose. Points:
+
+* Split the population into **strata** (e.g. states) and sample within each. Small strata are guaranteed to appear, and the variance falls when the strata differ from each other.
+* **Proportional allocation** vs **equal allocation** (oversampling small states). With unequal allocation every row carries a **weight**, $N_h / n_h$, and estimates must use it, or small states count as much as California.
+* In SQL: `row_number() OVER (PARTITION BY state ORDER BY random())`, then keep `rn <= n_h`. That is the window function from Lecture 6.
+
+TODO: state-level estimates from a 1% SRS vs a stratified sample of the same total size, repeated 200 times, comparing the spread for small states.
+
+# Cluster samples by hashing
+
+From Lecture 10: `WHERE abs(hashtext(county_id::text)::bigint) % 100 = 0` keeps about 1% of the *counties* with *all* of their days. That is a **cluster sample**: the unit sampled is the county, not the row.
+
+TODO prose. Points:
+
+* Use it when the question is about the unit (a county's trajectory, a customer's history), which a row sample would chop up.
+* The price: rows within a cluster are correlated, so the effective sample size is smaller than the row count (the **design effect**). Standard errors must be computed at the cluster level.
+* Hashing makes it reproducible, and consistent across tables, so the sampled counties' rows can still be joined.
+
+# Standard errors at scale
+
+TODO prose. Points:
+
+* The ordinary bootstrap resamples $n$ rows $B$ times, which is $B$ times the work of one fit on all the data: hopeless at big $n$.
+* **Subsampling** ($m$ out of $n$ without replacement, with a $\sqrt{m/n}$ rescaling) and the **bag of little bootstraps** (Kleiner et al. 2014): bootstrap on small subsets, rescaled to size $n$, then average. Every piece is small and independent, so it runs in parallel (Slurm arrays again).
+
+TODO: BLB for the mean or an OLS coefficient on the simulated million rows, against the formula SE.
+
+# Huge $n$: statistical vs practical significance
+
+TODO prose. Points:
+
+* With $n = 10^7$ almost every coefficient is "significant": a p-value measures whether an effect is exactly zero, and with enough data nothing is exactly zero.
+* Report **effect sizes** and confidence intervals, and ask whether the effect matters in the units of the problem.
+* TODO: a simulated example with a tiny true effect (e.g. slope 0.001 on a feature with SD 1) that gives $p < 10^{-10}$ at $n = 10^8$ but changes no prediction or decision.
+
+# Not covered
+
+* Survey sampling in depth (multi-stage designs, nonresponse, calibration weights).
+* Importance sampling and MCMC.
+* Active learning (choosing which rows to label).

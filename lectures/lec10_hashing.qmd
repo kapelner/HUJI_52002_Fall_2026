@@ -1,0 +1,204 @@
+---
+title: "Lecture 10: Hash Functions"
+subtitle: "Big Data Algorithms"
+format:
+  html:
+    toc: true
+    toc-depth: 2
+    number-sections: true
+    code-copy: true
+    embed-resources: true
+---
+
+<!-- DRAFT OUTLINE. Sections marked TODO still need prose. Code marked "verified" was run
+     (Python 3 / DuckDB 1.5.6 on covid.csv); everything else is untested. -->
+
+We have used hash functions all semester without naming them: every `awk` array, every Python `dict`, the `Hash Join` and `HashAggregate` that `EXPLAIN` showed in Lectures 6 and 7, and every git commit ID. This lecture says what they are, why they work, and the big-data tricks they make possible.
+
+The plan:
+
+1. What a hash function is, and why collisions are unavoidable (theory).
+2. Hash tables: why `GROUP BY` and joins don't need to sort (theory, then the demos we already ran).
+3. Cryptographic hashes: checksums, identity, and Bitcoin.
+4. Hashing to split work and to sample.
+5. Sketches: counting and membership in tiny memory.
+
+# What a hash function is
+
+TODO prose. Points to make:
+
+* A **hash function** maps an input of any size (a string, a row, a file) to a number of fixed size, e.g. 32, 64 or 256 bits.
+* Properties we want: **deterministic** (same input, same output, every time and on every machine), **fast**, and **spreads inputs evenly**, so similar inputs get unrelated outputs.
+* It cannot be reversed in general, since infinitely many inputs share each output.
+* **Collisions** (two inputs, one output) are unavoidable: there are more possible inputs than outputs (the pigeonhole principle). The questions are only how often and whether someone can cause one on purpose.
+
+```{python}
+import hashlib
+hashlib.sha256(b"Texas").hexdigest()[:16]     # '4b95ce6272018a31' (verified)
+hashlib.sha256(b"Texas.").hexdigest()[:16]    # 'bf77dfd977a6a21c': one character more, an unrelated output (verified)
+```
+
+## The birthday problem: how soon do collisions happen?
+
+Theory (chalkboard). Hash $n$ keys uniformly into $m$ possible values. The number of pairs is $\binom{n}{2} \approx n^2/2$ and each pair collides with probability $1/m$, so
+
+$$P(\text{at least one collision}) \approx 1 - e^{-n^2 / (2m)}.$$
+
+A collision becomes likely around $n \approx \sqrt{m}$, far sooner than intuition says (23 people for a shared birthday, $m = 365$).
+
+| Hash size          | $m$       | 50% chance of a collision at  | covid's 884,737 rows                     |
+|:-------------------|:----------|:------------------------------|:-----------------------------------------|
+| 32 bits            | $2^{32}$  | about 77,000 keys             | a collision is certain                   |
+| 256 bits (SHA-256) | $2^{256}$ | about $4 \times 10^{38}$ keys | about $10^{-54}$ even for $10^{12}$ keys |
+
+(Numbers verified.) So a 32-bit hash is fine for *spreading* rows into buckets, where collisions are expected and handled, but never as a row's *identity*. For identity use a 256-bit cryptographic hash, where collisions never happen in practice.
+
+TODO: an R simulation that hashes $n$ random keys into $m$ buckets many times and compares the collision rate with the formula. It suits a statistics audience: the formula is a Poisson approximation.
+
+## Two families for two jobs
+
+| Family                  | Examples                                  | Used for                                     | Why                                               |
+|:------------------------|:------------------------------------------|:---------------------------------------------|:--------------------------------------------------|
+| fast, non-cryptographic | MurmurHash, xxHash, Postgres's `hashtext` | hash tables, partitioning, sketches          | very fast; collisions are rare enough and handled |
+| cryptographic           | SHA-256 (MD5 and SHA-1 are broken)        | checksums, identity, git, Bitcoin, passwords | nobody can construct a collision on purpose       |
+
+Gotcha for later: Python's built-in `hash()` of a string is **randomized per process** (for security), so it gives different answers in different runs. Never use it to partition or sample. Use `hashlib` or `zlib.crc32` instead.
+
+# Hash tables
+
+Theory (chalkboard). TODO prose. Points:
+
+* An array of $m$ **buckets**. A key goes into bucket `hash(key) % m`. Keys that collide share a bucket (a short list, "chaining").
+* With $n$ keys the **load factor** is $\alpha = n/m$, the expected number of keys per bucket. Keep $\alpha$ around 1 by growing the array, and a lookup costs $O(1)$ on average, independent of $n$.
+* Compare: a sorted array or B-tree index costs $O(\log n)$ per lookup, and sorting costs $O(n \log n)$.
+
+Callbacks to what we already ran:
+
+* **`awk` arrays** (Lecture 2): `n[$3]++` is a hash table from state to count, which is why one pass over covid counts every state.
+* **`GROUP BY`**: Postgres's `HashAggregate` keeps one running total per group in a hash table, one pass, no sort.
+* **Hash Join** (Lecture 7): build a hash table on the smaller table's join key, then stream the bigger table past it, one $O(1)$ lookup per row. That is the `NR==FNR` two-pass `awk` program.
+* Python's `dict` and `set`, R's `environment`.
+
+TODO: a 15-line toy hash table in Python (a list of lists, `insert` and `lookup`) to make the buckets concrete, then `EXPLAIN` of the Lecture 7 all-states query to see `Hash Join` again.
+
+# Cryptographic hashes: checksums and identity
+
+## Checksums
+
+A file's SHA-256 is its fingerprint: change one byte and the fingerprint changes completely.
+
+```bash
+sha256sum covid.csv                       # compare with the value the data provider publishes
+scp covid.csv moriah:~/ && ssh moriah sha256sum covid.csv   # same fingerprint = arrived intact
+```
+
+TODO: R (`digest::digest(file = "covid.csv", algo = "sha256")`) and Python (`hashlib.file_digest`, Python 3.11+) versions.
+
+## Git
+
+A commit ID is the SHA-1 hash of the commit's contents, which include the hash of its parent commit. Changing any old commit changes its hash and therefore every hash after it, which is why history cannot be edited quietly. (Git is moving to SHA-256 because SHA-1 is broken.)
+
+## Rows: duplicates and changes
+
+Hash a whole row to compare rows cheaply. This finishes Lecture 7's deduplication unit: with a hash per row, "which rows are exact duplicates" and "which rows changed since the last load" are a `GROUP BY` and a join on one short column.
+
+```sql
+-- one md5 per row of the Lecture 7 demo table (re-create covid_raw first) (untested)
+SELECT md5(row(r.*)::text) AS row_hash, count(*)
+  FROM covid_raw AS r
+  GROUP BY row_hash
+  HAVING count(*) > 1;                     -- the 3245 re-sent rows
+```
+
+TODO: a "changed rows" example: hash today's and yesterday's load, join on the key, and keep rows whose hashes differ.
+
+## Bitcoin
+
+Every transaction ID is a SHA-256 of a SHA-256 of the transaction's bytes, and every block's hash covers the previous block's hash, the same chain idea as git. The very first block's hash, computed from its 80-byte header:
+
+```{python}
+import hashlib
+header = bytes.fromhex(
+    "01000000" + "00" * 32                                                    # version, previous block (none)
+    + "3ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4a"      # hash of its transactions
+    + "29ab5f49" + "ffff001d" + "1dac2b7c")                                   # time, difficulty target, nonce
+hashlib.sha256(hashlib.sha256(header).digest()).digest()[::-1].hex()
+# '000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f' (verified)
+```
+
+It starts with many zeros on purpose. **Mining** ("proof of work") means trying nonces until the hash falls below a target. Nobody can do better than guessing, so each try succeeds with probability $p$ and the number of tries is **geometric** with mean $1/p$:
+
+```{python}
+import time
+for k in (4, 5):                                  # require k leading zero hex digits: p = 16^-k
+    start, nonce = time.time(), 0
+    while not hashlib.sha256(f"block data {nonce}".encode()).hexdigest().startswith("0" * k):
+        nonce += 1
+    print(k, nonce, round(time.time() - start, 2))
+# 4 110734 0.11   and   5 2021452 1.86 on a laptop (verified); means 16^4 = 65,536 and 16^5 = 1,048,576
+```
+
+Each extra zero multiplies the expected work by 16. Real Bitcoin requires about 19 zero hex digits, so the whole network tries around $10^{20}$ hashes per second.
+
+TODO: tie to the BTC tables once they are loaded (txid as the primary key; following inputs to earlier outputs is the self-join of Lecture 7).
+
+# Hashing to split work and to sample
+
+## Partitioning
+
+`hash(key) % k` sends every row with the same key to the same one of $k$ workers, with about $n/k$ rows each. Then each worker can `GROUP BY` its share alone, and no group is split between workers. This is the "shuffle" of MapReduce and Spark, and a Slurm job array (Lecture 8) can do it with `SLURM_ARRAY_TASK_ID`:
+
+```bash
+# task t of 10 keeps the counties whose hash mod 10 equals t-1 (untested sketch)
+python -I partition.py covid.csv --tasks 10 --task "$SLURM_ARRAY_TASK_ID"
+```
+
+TODO: write `partition.py` with `zlib.crc32((state + county).encode()) % k`, and note why `hash()` must not be used here (randomized per process).
+
+## Reproducible samples
+
+Keep the rows whose hash falls in the first 1% of the range. Unlike `random()` or `TABLESAMPLE`, this is the **same** 1% on every run, on every machine and in every table, so a sample of `counties` and a sample of `daily_counts` contain the same counties and still join.
+
+```sql
+-- a 1% sample of counties, and all of their daily counts (untested)
+SELECT *
+  FROM daily_counts
+  WHERE abs(hashtext(county_id::text)::bigint) % 100 = 0;   -- ::bigint first: abs() of the smallest int4 overflows
+```
+
+This leads into the sampling lecture: sampling by a hashed *unit* (county, customer, user) keeps every row of a sampled unit, which is cluster sampling.
+
+# Sketches: answers in tiny memory
+
+Hash functions make it possible to answer some questions about a stream of any length with a fixed, small amount of memory, at the price of a small, known error.
+
+## Bloom filter: "have I seen this before?"
+
+TODO prose. A bit array of $m$ bits and $k$ hash functions. Insert sets $k$ bits; a lookup checks them. Never a false "no", and a false "yes" with probability about $(1 - e^{-kn/m})^k$. Used for "is this username taken", "is this URL known to be malicious", and by databases to skip files that cannot contain a key.
+
+TODO: a 20-line Python Bloom filter over the covid county names; measure the false positive rate against the formula.
+
+## HyperLogLog: "how many distinct values?"
+
+`count(DISTINCT x)` must remember every distinct value. HyperLogLog remembers only, per bucket of hash values, the longest run of leading zeros seen: seeing a hash that starts with 20 zeros suggests about $2^{20}$ distinct values. A few kilobytes estimate counts in the billions.
+
+DuckDB has it as `approx_count_distinct` (verified, DuckDB 1.5.6, covid.csv):
+
+| Column                        | `count(DISTINCT ...)` | `approx_count_distinct(...)` | Error |
+|:------------------------------|----------------------:|-----------------------------:|------:|
+| `county \|\| state`           | 3,273                 | 2,531                        | −23%  |
+| `fips`                        | 3,218                 | 2,848                        | −11%  |
+| `date`                        | 346                   | 378                          | +9%   |
+| `county \|\| state \|\| date` | 884,737               | 1,051,997                    | +19%  |
+
+That is a bigger error than HyperLogLog's textbook ~1-2%: DuckDB keeps a very small sketch. Worth showing as is: "approximate" must come with a measured error, and you only know it by checking against the exact answer on data where you can afford to. Postgres has no built-in HyperLogLog (the `hll` extension adds one). TODO: check whether a larger sketch is available or compare with Python's `datasketch`.
+
+## Count-Min sketch: "how often has this value appeared?"
+
+TODO, one paragraph: a small grid of counters, $d$ hash functions, report the minimum; it overestimates, never underestimates. Used for "top-k" and heavy hitters in streams.
+
+# Not covered
+
+* How hash functions are built inside, and cryptographic proofs.
+* Consistent hashing (how distributed databases add machines without moving every key). One sentence.
+* MinHash and locality-sensitive hashing: "find similar items without comparing all pairs". They come back in the nearest neighbors lecture.

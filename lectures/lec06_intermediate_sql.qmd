@@ -355,9 +355,7 @@ DROP TABLE texas;
 Without the transaction, the second example would be dangerous: if the connection dropped (or the machine crashed) between the two `UPDATE`s, 100 cases would simply vanish. With it, the database guarantees that after a crash it comes back with either both changes or neither. This is what banks need when money moves from one account to another, and it is one of the main reasons to keep data in a database instead of in files. The usual name for these guarantees is **ACID**: changes are **A**tomic (all or nothing), keep the data **C**onsistent (rules such as types still hold), run **I**solated from other users (no one sees half a transaction), and are **D**urable (once committed, they survive a crash).
 
 
-### The database checks your data
-
-Try to add a row with a nonsense value:
+As we saw above, the database checks your data types. Try to add a row with an illegal value and it errors.
 
 ```sql
 INSERT INTO covid VALUES ('2021-01-01', 'Harris', 'Texas', '48201', 'N/A', 0);
@@ -386,7 +384,7 @@ SELECT * FROM covid_copy LIMIT 3;
 -- a new column is usually filled in with UPDATE
 ALTER TABLE covid_copy ADD COLUMN death_rate double precision;                      -- about 2 ms
 SELECT * FROM covid_copy LIMIT 3;
-UPDATE covid_copy SET death_rate = deaths::float / cases
+UPDATE covid_copy SET death_rate = deaths::float / cases -- we will see later why this is *NOT* a good idea!!!!
   WHERE cases > 0;                                                        -- UPDATE 884022, about 2 s: every row is rewritten                  -- about 2 ms
 SELECT * FROM covid_copy WHERE cases > 0 LIMIT 3;
 -- RENAME COLUMN and DROP COLUMN
@@ -837,4 +835,4 @@ So the 57 MB is the price of the database's features. The row header is what let
 
 We're finally done with one postgres table!!!
 
-==========================Midterm material cutoff ==========================
+========================== Midterm material cutoff ==========================

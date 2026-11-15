@@ -353,3 +353,4 @@ Once your're done with your work session, be *considerate* to everyone else in t
 ```bash
 scancel ${pg_job_id} 
 ```
+
