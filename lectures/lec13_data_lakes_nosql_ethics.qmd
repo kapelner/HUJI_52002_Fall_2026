@@ -71,6 +71,138 @@ Tabular data is the easy case, because it fits a rectangle with a known type for
 Newer systems blur the line. A **lakehouse** (Delta Lake and Iceberg, from the Parquet history in Lecture 3) puts a table layer, with types, transactions and SQL, on top of the Parquet files in a lake. So a warehouse-like table can live in a lake. A Parquet file is how *tabular* data is stored in a lake, and the database unit of Lecture 3 is the warehouse side.
 
 
+# Spark, by hand: a `GROUP BY` across many machines
+
+A Slurm job array (the Slurm lecture) only fits work whose pieces never need each other. A `GROUP BY` is not like that: the Texas rows are spread through the whole file, so whichever machine adds up Texas needs rows that every other machine has read. **Spark** (Apache 2.0, like Kafka below) is the standard engine for running SQL-style work like this across many machines. Its central trick is the **shuffle**: every machine sends each of its rows to the machine responsible for that row's key, which is the `hash(key) % R` partitioning of the hashing lecture.
+
+To see what Spark does, we build the same thing ourselves on moriah, out of two job arrays and the shared disk. The query is one from Lecture 5:
+
+```sql
+SELECT state, count(*) FROM covid GROUP BY state ORDER BY 2 DESC LIMIT 3;   -- Texas 67002, Georgia 45209, Virginia 36886
+```
+
+There are three stages:
+
+1. **Map** (job array 1, $M = 8$ tasks). Task $i$ reads the $i$-th eighth of the file, counts the rows of each state *in its own piece*, and splits those partial counts into $R = 4$ files, one per reducer: a state goes to reducer `crc32(state) % 4`.
+2. **Shuffle.** Nothing runs. Every mapper's file for reducer $j$ is on the shared disk, where reducer $j$ can read it. On a real Spark cluster this is network traffic between machines.
+3. **Reduce** (job array 2, $R = 4$ tasks). Task $j$ reads its file from each of the 8 mappers and adds up the partial counts. All of a state's partial counts arrive at the same reducer, so each reducer's answer is final for its states.
+
+First split the rows into 8 pieces and write the two scripts:
+
+```bash
+mkdir -p ~/spark_demo/shuffle && cd ~/spark_demo
+cp ~/covid.csv .                                       # wherever your copy is
+tail -n +2 covid.csv > rows.csv                        # drop the header
+split -n l/8 -d rows.csv chunk_                        # chunk_00 ... chunk_07, whole lines only
+rm rows.csv
+
+cat > map.py << 'EOF'
+# one map task: python3 map.py <task> <R>
+import csv, sys, zlib, collections
+task, R = int(sys.argv[1]), int(sys.argv[2])
+counts = collections.Counter()
+with open(f"chunk_{task:02d}") as f:
+    for date, county, state, fips, cases, deaths in csv.reader(f):
+        counts[state] += 1                             # partial count of this piece only
+parts = [open(f"shuffle/map_{task}_part_{j}.csv", "w") for j in range(R)]
+for state, n in counts.items():
+    j = zlib.crc32(state.encode()) % R                 # which reducer gets this state
+    parts[j].write(f"{state},{n}\n")
+for p in parts:
+    p.close()
+EOF
+
+cat > reduce.py << 'EOF'
+# one reduce task: python3 reduce.py <task>
+import csv, sys, glob, collections
+task = int(sys.argv[1])
+counts = collections.Counter()
+for name in glob.glob(f"shuffle/map_*_part_{task}.csv"):   # one file from every mapper
+    with open(name) as f:
+        for state, n in csv.reader(f):
+            counts[state] += int(n)
+with open(f"out_{task}.csv", "w") as f:
+    for state, n in counts.items():
+        f.write(f"{state},{n}\n")
+EOF
+```
+
+`zlib.crc32` and not Python's `hash()`: `hash()` of a string changes from one Python process to the next, and our 8 mappers are 8 different processes that must agree on where Texas goes.
+
+Then the two job scripts. The reduce array is submitted with `--dependency=afterok`, so it waits until every map task has succeeded:
+
+```bash
+cat > map_job.sh << 'EOF'
+#!/bin/bash
+#SBATCH --job-name=map
+#SBATCH --array=0-7
+#SBATCH --time=00:05:00
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=1G
+#SBATCH --output=map_%A_%a.out
+python3 map.py $SLURM_ARRAY_TASK_ID 4
+EOF
+
+cat > reduce_job.sh << 'EOF'
+#!/bin/bash
+#SBATCH --job-name=reduce
+#SBATCH --array=0-3
+#SBATCH --time=00:05:00
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=1G
+#SBATCH --output=reduce_%A_%a.out
+python3 reduce.py $SLURM_ARRAY_TASK_ID
+EOF
+
+map_id=$(sbatch --parsable map_job.sh)                  # --parsable prints only the job ID
+sbatch --dependency=afterok:$map_id reduce_job.sh
+squeue -u $USER                                         # the reduce tasks wait in PD with reason (Dependency)
+
+ls shuffle | wc -l                                      # 32 = 8 mappers x 4 reducers
+cat shuffle/*.csv | wc -l                               # 440 lines crossed the "network"
+grep -l "^Texas," shuffle/*.csv                         # all 8 mappers saw Texas: map_0_part_3.csv ... map_7_part_3.csv
+grep -l "^Texas," out_*.csv                             # but only one reducer has it: out_3.csv
+cat out_*.csv | sort -t, -k2,2nr | head -3              # Texas,67002  Georgia,45209  Virginia,36886
+```
+
+The answer is the same as Postgres's. What to notice:
+
+* **The shuffle is the expensive part.** It is all-to-all: $M \times R$ files, and no reducer can start before the last mapper has finished. This is why the Spark advice is "shuffle as little as possible".
+* **Combining first makes it small.** Each mapper sent partial counts, 440 lines in all. Had it sent every row and let the reducers count, all 884,737 rows would have crossed. Spark does this by itself. It works best for `count`, `sum`, `min` and `max`, whose partial result is one number. A median has no such shortcut: the partial result of a piece is all of its distinct values.
+* **How you split the input matters.** `covid.csv` is sorted by date. Add `WHERE date = '2020-12-31'` to the mappers and seven of the eight have nothing to do: every matching row is in `chunk_07`. Skew in the keys does the same to the reducers: one huge key keeps one reducer busy while the others sit idle.
+
+Two job arrays and a shared disk, connected by a shuffle, are **MapReduce**, the design of Google's 2004 paper and of Hadoop. Spark is the same idea, made faster and easier: it keeps the data in memory between stages instead of writing files, it plans the stages itself from one query, and it reruns a failed task by itself.
+
+## The real thing
+
+Spark runs on a laptop too, with each core playing one machine (`pip install pyspark`, which needs Java 17 or later). On the same file:
+
+```bash
+cat > spark_count.py << 'EOF'
+from pyspark.sql import SparkSession
+spark = SparkSession.builder.master("local[4]").getOrCreate()   # 4 cores play 4 machines
+covid = spark.read.csv("covid.csv", header=True, inferSchema=True)
+covid.createOrReplaceTempView("covid")
+q = spark.sql("SELECT state, count(*) FROM covid GROUP BY state ORDER BY 2 DESC LIMIT 3")
+q.explain()
+q.show()
+spark.stop()
+EOF
+python3 spark_count.py
+```
+
+`show()` prints Texas 67002, Georgia 45209 and Virginia 36886, and the plan that `explain()` prints, read from the bottom up, is our three stages:
+
+```
+TakeOrderedAndProject(limit=3, orderBy=[count(1) DESC])          <- ORDER BY ... LIMIT 3
++- HashAggregate(keys=[state], functions=[count(1)])             <- reduce
+   +- Exchange hashpartitioning(state, 200)                      <- shuffle, into 200 parts
+      +- HashAggregate(keys=[state], functions=[partial_count(1)])  <- map, with the partial count
+         +- FileScan csv [state]                                 <- read only the state column
+```
+
+On a cluster the same script runs unchanged; only the `master` setting changes, from `local[4]` to the address of the cluster. Spark can also run inside a single multi-node Slurm job, which is a common setup on university clusters.
+
 # Where the other databases fit: a NoSQL and streaming landscape
 
 This is a talk, not a demo: nothing here is installed or run. The goal is that when you hear "we put that in Redis" or "it comes in over Kafka", you can place the tool against the two things we do know well, Postgres (Lecture 3) and Parquet files (Lecture 3, and the lake above).

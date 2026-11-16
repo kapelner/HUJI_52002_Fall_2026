@@ -1,0 +1,252 @@
+---
+title: "Lab 6"
+subtitle: "Big Data Algorithms"
+author: "YOUR NAME HERE"
+format:
+  html:
+    toc: true
+    toc-depth: 2
+    number-sections: false
+    code-copy: true
+    embed-resources: true
+execute:
+  eval: false
+---
+
+This lab has exercises that reinforce Lecture 6 (`lectures/lec06_intermediate_sql.qmd`): more subqueries, changing the data, transactions, `ALTER TABLE`, window functions, common table expressions (via `WITH` and views). There is one short problem for each idea in the lecture, in the same order as the lecture.
+
+::: {.callout-warning}
+## Ground rules
+* Leave the "#TODO text [question text] text" line and start a new line underneath and write your answers on that new line
+* Write each SQL statement underneath its `#TODO` line, and below it paste the answer Postgres gave you (or, if it is long, the first few rows).
+* Use only what we covered in Lectures 4, 5 and 6.
+* **Never change the `covid` table itself.** Every `INSERT`, `UPDATE`, `DELETE` and `ALTER TABLE` in this lab runs on the copy `florida` that you make in Part 5.
+:::
+
+# Part 0: Setup
+
+I'm assuming your private github repository for this class is in the following location. If not, please edit the location below:
+
+```bash
+export my_52002_repo="$HOME/workspace/HUJI_52002_Fall_2026"
+```
+
+Create a directory for this assignment, download this file and move it into `$my_52002_repo/labs/06/`. As in the previous labs, commit / push after chunks of work; the timestamp of your final push is your submission date.
+
+As in Labs 4 and 5, the SQL is done **on your laptop**, in the `lab04` database that already holds the `covid` table. Start postgres from bash below:
+
+```bash
+psql lab04
+```
+
+```sql
+-- turn on timing so you can see how long queries take
+\timing on
+-- convenience for display so everything goes to console (rather than opening in `less`)
+\pset pager off
+--- let's make sure the data is still there
+SELECT count(*) FROM covid;
+```
+
+If that last line errored or didn't give the correct number of rows 884,737, you'll have to set up the database again (see beginning of lab 4).
+
+# Part 1: Scalar subqueries
+
+```sql
+#TODO [on 2020-12-31: how many counties had more deaths than the average county on that day? (you should get 519) <1pts>]
+#TODO [on 2020-12-31: the 3 Florida counties with the most deaths, with a column pct_of_florida that is each county's share of all Florida deaths in percent, rounded to 1 decimal, using a subquery in the SELECT (Miami-Dade should be 19.3) <2pts>]
+```
+
+Run these two queries:
+
+```sql
+SELECT county
+  FROM covid
+  WHERE deaths = (
+    SELECT deaths
+      FROM covid
+      WHERE county = 'Cook'
+  );
+SELECT count(*)
+  FROM covid
+  WHERE deaths = (
+    SELECT max(deaths)
+      FROM covid
+      WHERE state = 'Narnia'
+  );
+```
+
+#TODO [Why does the first one fail? <1pts>]
+#TODO [The second one does not fail, but returns 0. What does the subquery return, and why does no row match it? <1pts>]
+
+# Part 2: `IN` and derived tables
+
+```sql
+#TODO [on 2020-12-31: how many rows are there for the states that have at least one county with more than 5000 deaths on that day, using IN with a subquery? (you should get 233) <1pts>]
+#TODO [the number of (state, county) pairs that have a row on 2020-12-31 but no row at all in April 2020, using EXCEPT in a derived table <2pts>]
+```
+
+#TODO [Run your last query again without the `AS t` (or whatever you named the derived table). Does it work in your version of Postgres? Why should you keep the name anyway? <1pts>]
+
+```sql
+#TODO [the sum of the deaths of all Maine and Vermont counties on 2020-12-31, as the sum over a UNION of two SELECTs (one per state) in a derived table <1pts>]
+#TODO [the same with UNION ALL <1pts>]
+```
+
+#TODO [Which of the two numbers is right, and why is the other one smaller? <1pts>]
+
+# Part 3: Subqueries in `HAVING`
+
+```sql
+#TODO [on 2020-12-31: the states whose total deaths are above the average state total (the national total divided by the number of states), and their totals, largest first (you should get 16) <2pts>]
+#TODO [on 2020-12-31: how many states have more counties than the average state? (you should get 26) <1pts>]
+```
+
+# Part 4: Correlated subqueries
+
+```sql
+#TODO [the states that did NOT have a single county with more than 1000 deaths on 2020-12-31, using NOT EXISTS with SELECT 1 inside and an alias for the outer table (you should get 35) <2pts>]
+#TODO [the number of states that DID have one, using EXISTS (do the two answers add up to 55?) <1pts>]
+```
+
+Here is the same query, written by a student who put the alias on the inner table instead:
+
+```sql
+SELECT DISTINCT state
+  FROM covid
+  WHERE date = '2020-12-31'
+    AND NOT EXISTS (
+      SELECT 1
+        FROM covid AS c
+        WHERE c.date = '2020-12-31' AND c.state = state AND c.deaths > 1000
+    );
+```
+
+#TODO [How many rows does it return, and why? <1pts>]
+
+```sql
+#TODO [Fix the one word that is wrong in the above query <1pts>]
+```
+
+```sql
+#TODO [run EXPLAIN on your NOT EXISTS query. What kind of join does the plan use instead of running the inner query once per outer row? <1pts>]
+```
+
+# Part 5: `INSERT`, `UPDATE` and `DELETE`
+
+From here on, work on a copy:
+
+```sql
+#TODO [create the table florida holding all the Florida rows of covid, and count its rows (you should get 19498) <1pts>]
+#TODO [insert a row for Miami-Dade on 2021-01-01 with 300000 cases and 4200 deaths, giving all six columns <1pts>]
+#TODO [insert a row for Broward on 2021-01-01 giving only the date, county, state and cases (138500), then show both 2021-01-01 rows <1pts>]
+```
+
+#TODO [Which values does the Broward row have in the columns you left out? <1pts>]
+
+```sql
+#TODO [set the deaths of the Broward 2021-01-01 row to 1850 <1pts>]
+#TODO [before deleting anything: count the rows whose county is 'Unknown' <1pts>]
+#TODO [now delete them, showing the deleted rows with RETURNING (only the first few in your answer). Check that the number psql prints after DELETE matches your count <1pts>]
+#TODO [delete the two 2021-01-01 rows, and count the rows of florida again <1pts>]
+```
+
+# Part 6: Transactions
+
+```sql
+#TODO [inside a transaction: delete every row of florida, count the rows, then undo it, and count the rows again <2pts>]
+#TODO [inside one transaction, move 10 deaths from Miami-Dade to Broward on 2020-12-31 (two UPDATEs) and make it permanent, then show the two rows (Miami-Dade should now have 4178 and Broward 1857) <2pts>]
+#TODO [inside a transaction: add 5 to Miami-Dade's 2020-12-31 deaths, then set Broward's 2020-12-31 deaths to 'unknown', then COMMIT. What did Postgres answer to the COMMIT? Show the two rows again <2pts>]
+```
+
+#TODO [Which letter of ACID (ctrl+F in the lecture notes) did the last transaction show you, and what would have gone wrong without the transaction? <1pts>]
+
+# Part 7: `ALTER TABLE`
+
+```sql
+#TODO [add a column cfr of type double precision to florida, and fill it with deaths divided by cases (as a decimal) for every row with cases > 0. How many rows did the UPDATE touch? <2pts>]
+#TODO [rename the column cfr to death_rate <1pts>]
+```
+
+#TODO [The lecture warned that saving a computed column like this is *not* a good idea. Run `UPDATE florida SET deaths = deaths + 1 WHERE county = 'Miami-Dade' AND date = '2020-12-31';` and look at the row: compare death_rate with deaths / cases. What went wrong, and what would avoid it? <1pts>]
+
+```sql
+#TODO [drop the column death_rate <1pts>]
+#TODO [add a column reviewed of type boolean whose value is false in every existing row, without an UPDATE <1pts>]
+#TODO [change the type of fips to integer. Postgres refuses at first: read its HINT and fix the command <1pts>]
+#TODO [make deaths NOT NULL. Does it work on florida (the lecture's covid_copy refused)? Then try to insert a 2021-01-01 row for Broward with no deaths <2pts>]
+#TODO [try to add a UNIQUE rule on county alone, and then one on (date, county) <1pts>]
+```
+
+#TODO [Why did the first `UNIQUE` fail and the second work? What did `\d florida` show under "Indexes" afterwards, and why? <2pts>]
+
+# Part 8: Window functions
+
+```sql
+#TODO [on 2020-12-31: the 2 counties with the most deaths in New Jersey and in New York, with their row_number within their state (you should get Essex, Bergen, New York City, Nassau) <2pts>]
+#TODO [on 2020-12-31: the county with the most deaths in every state, using row_number() = 1. Look at Puerto Rico's row <1pts>]
+```
+
+#TODO [What is wrong with Puerto Rico's row? Fix the query (Puerto Rico should then give Unknown with 1503) <2pts>]
+
+#TODO [Why can't you write `WHERE row_number() OVER (...) = 1` directly, without the subquery in `FROM`? <1pts>]
+
+```sql
+#TODO [on 2020-12-31: every Vermont county, its deaths, and both its rank() and its row_number() when sorted by deaths, smallest first <2pts>]
+```
+
+#TODO [How many Vermont counties have rank 1? Why does the row_number of those counties not mean anything? <1pts>]
+
+```sql
+#TODO [on 2020-12-31: the 3 New Jersey counties with the largest share of New Jersey's deaths, in percent rounded to 1 decimal, using sum() OVER (Essex should be 12.6) <2pts>]
+#TODO [the new deaths of Cook County, Illinois on each of the last 3 days of 2020, using lag() (you should get 39 on 2020-12-31) <1pts>]
+#TODO [the 3 counties with the most new deaths on 2020-12-31, using lag() with PARTITION BY (you should get Los Angeles 289 first) <2pts>]
+#TODO [the largest deaths of each state over the whole year (no date filter), once with GROUP BY and once with max(deaths) OVER (PARTITION BY state) and DISTINCT. Both should give 55 rows. Write down both times <2pts>]
+```
+
+#TODO [Which one was faster, and why? <1pts>]
+
+# Part 9: `WITH`
+
+```sql
+#TODO [rewrite your fixed "county with the most deaths in every state" query from Part 8 with WITH, so it reads top to bottom (show 3 rows) <1pts>]
+#TODO [using one WITH name for the New York rows of 2020-12-31, used twice: how many New York counties had more deaths than the average New York county? (you should get 5 of the 58) <2pts>]
+#TODO [the national new deaths per day, with two WITH names daily and new built on each other: the 3 days with the most new deaths (you should get 2020-12-30 3808 first) <2pts>]
+#TODO [add the 7-day moving average of the new deaths, rounded, and show the last 2 days of 2020 (2020-12-31 should be 2400) <1pts>]
+#TODO [add one more column: the running total of the new deaths. Show the last day of 2020 <1pts>]
+```
+
+#TODO [The running total on 2020-12-31 should equal one number you already know. Which one, and why? <1pts>]
+
+# Part 10: Views
+
+```sql
+#TODO [create a view fl_dec31 holding the county, cases and deaths of the florida rows of 2020-12-31, count its rows and show its saved query with \d+ <2pts>]
+#TODO [add 1 to Broward's 2020-12-31 cases in florida with UPDATE, then show Broward from the view <1pts>]
+#TODO [try to change the type of florida's cases to bigint <1pts>]
+```
+
+#TODO [Why did the type change fail? <1pts>]
+#TODO [If you had made fl_dec31 with `CREATE TABLE ... AS` instead of `CREATE VIEW`, what would the Broward query have shown, and why? <1pts>]
+```sql
+#TODO [clean up: drop the view and florida_old, and check with \dt that only covid is left <1pts>]
+```
+
+# Part 11: Storage
+
+**This entire part is optional for undergraduates but required for MASTERS students.** No SQL is needed: answer from the lecture. Show your arithmetic.
+
+#TODO [MASTERS ONLY: The lecture's correlated "county with the most cases in every state" ran the inner query once per outer row. With no index, about how many rows does it read in total, and in big-O, how does that compare with the window function version? <2pts>]
+#TODO [MASTERS ONLY: Postgres pays about 28 bytes of overhead per row before any data. For our 884,737 rows, how many MB is that, and what share of the 57 MB table? <1pts>]
+#TODO [MASTERS ONLY: What do `xmin` and `xmax` in the row header record, and which feature from this lab (Part 6) could not work without them? <2pts>]
+#TODO [MASTERS ONLY: Give the three reasons Parquet is so much smaller than the Postgres table. Why doesn't Postgres just compress its rows as well? <2pts>]
+\q
+
+# Final checklist
+
+Before you push, check that:
+
+* every `#TODO` has a line afterwards that is filled in with your SQL, the real output, or a written English answer to the question in your own words;
+* there are no `awk` commands in your answers (`awk` is only for reference);
+* the `covid` table was never changed (`SELECT count(*) FROM covid;` still gives 884,737), and `\dt` in `psql lab04` lists no `florida` table and `\dv` no view;
+* the file renders: `quarto render lab06.qmd` produces an HTML page with no errors (nothing in this lab is executed during rendering).
