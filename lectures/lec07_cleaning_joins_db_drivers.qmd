@@ -12,6 +12,240 @@ format:
 
 ========================== Final exam material ==========================
 
+
+Open the database and set convenience settings:
+
+```bash
+psql lec04
+```
+
+```sql
+\timing on
+\pset pager off
+```
+
+# Data Hygiene: Duplicates, Cleaning and Missing Data
+
+Real data arrives dirty: rows sent twice, corrections that arrive later, codes that mean "missing" but look like numbers. The rule from the views section of Lecture 6 is the backbone of this whole unit: **never clean the raw table itself**. Keep exactly what the source sent, and put each cleaning step in a view on top of it, so the steps can be read, checked and changed. The views stack up as steps in a pipeline mentioned there, each view built on the one before: raw, then without exact duplicates, then without key duplicates, then cleaned, then imputed. Everyone downstream, in `psql`, R, Python (through the database drivers later in this lecture) or a dashboard, then queries the last view and gets the same cleaned data.
+
+We name the views in **onion** style: each step adds a suffix to the name of the view it is built on, so the pipeline below is `covid_raw` → `covid_uniq` → `covid_uniq_key` → `covid_uniq_key_clean` → `covid_uniq_key_clean_imputed`. Every name tells you exactly which steps the data has been through. The price is that names grow with every step, so in industry you will more often see conventions that name the *layer* instead. FYI:
+
+* **dbt** (the tool Lecture 6 mentions for views on views) uses layer prefixes: `stg_covid` for staging (renamed, typed and deduplicated), `int_covid_imputed` for intermediate steps, and `fct_` / `dim_` for the final tables.
+* The **medallion architecture** (Databricks and most data lakes) has three layers: **bronze** (raw), **silver** (cleaned and deduplicated) and **gold** (ready for analysis).
+
+## Duplicates
+
+There are two kinds:
+
+* **Exact duplicates**: the same row twice, every column equal. Typically a file was loaded twice, or a feed re-sent a day.
+* **Key duplicates**: two rows for the same thing (the same county on the same day) that *disagree*. Typically a later correction. Here you must decide which one is right, usually the newest.
+
+`covid` itself turns out to be clean on both counts. Comparing `count(*)` with the count of distinct rows, and of distinct keys, is the first check to run on any new table:
+
+```sql
+SELECT count(*) AS n_rows,
+       (SELECT count(*) FROM (SELECT DISTINCT * FROM covid) AS t) AS n_distinct_rows,
+       (SELECT count(*) FROM (SELECT DISTINCT state, county, date FROM covid) AS t) AS n_distinct_keys
+  FROM covid;                                               -- 884737, 884737, 884737: no duplicates of either kind
+```
+
+So let's make the mess ourselves, on a copy, as a real feed would. `covid_raw` gets a `loaded_at` column saying when each row arrived. Then the feed re-sends December 31, and a day later it sends a correction for Harris County:
+
+```sql
+CREATE TABLE covid_raw AS
+  SELECT *, timestamp '2021-01-01 06:00' AS loaded_at
+    FROM covid;                                             -- SELECT 884737
+-- the feed sends 2020-12-31 a second time: 3245 exact duplicates
+INSERT INTO covid_raw
+  SELECT *, timestamp '2021-01-01 06:00'
+    FROM covid
+    WHERE date = '2020-12-31';                              -- INSERT 0 3245
+-- a day later, a correction: Harris on 2020-12-31 had 237800 cases, not 237727
+INSERT INTO covid_raw VALUES
+  ('2020-12-31', 'Harris', 'Texas', '48201', 237800, 3402, timestamp '2021-01-02 06:00');
+SELECT count(*)
+  FROM covid_raw;                                           -- 887983 = 884737 + 3245 + 1
+```
+
+To find duplicate keys, group by the key and keep the groups with more than one row:
+
+```sql
+SELECT state, county, date, count(*)
+  FROM covid_raw
+  GROUP BY state, county, date
+  HAVING count(*) > 1
+  ORDER BY count(*) DESC
+  LIMIT 3;                                                  -- Texas Harris 2020-12-31 3 first, then rows with 2 (3245 groups in all)
+```
+
+**Exact duplicates** go away with `SELECT DISTINCT *`:
+
+```sql
+CREATE VIEW covid_uniq AS
+  SELECT DISTINCT *
+    FROM covid_raw;
+SELECT count(*)
+  FROM covid_uniq;                                          -- 884738: the 3245 copies are gone, but Harris still has 2 rows
+```
+
+**Key duplicates** need a rule, in the next view on top of `covid_uniq`. "Keep the newest version of each county-day" is written with the window function `row_number()` from Lecture 6: number the rows of each county-day from newest to oldest, and keep number 1. This works in every SQL database, including DuckDB:
+
+```sql
+CREATE VIEW covid_uniq_key AS
+  SELECT date, county, state, fips, cases, deaths, loaded_at -- every column except rn
+    FROM (
+      SELECT *, row_number() OVER (PARTITION BY state, county, date ORDER BY loaded_at DESC) AS rn
+        FROM covid_uniq
+      ) AS t
+    WHERE rn = 1;                                           -- within each county-day, the newest row is number 1 and is kept
+SELECT count(*)
+  FROM covid_uniq_key;                                      -- 884737: one row per county-day again
+SELECT cases
+  FROM covid_uniq_key
+  WHERE state = 'Texas' AND county = 'Harris' AND date = '2020-12-31';   -- 237800: the correction won
+```
+
+The window function cannot go directly in `WHERE`, because `WHERE` runs before window functions are computed. That is why `rn` is computed in a subquery and filtered outside it. The view reads from `covid_uniq`, not from `covid_raw`: each view does one job and builds on the one before, so you can query any step of the pipeline to check it. Note that `covid_raw` still holds all 887,983 rows. If the rule turns out to be wrong (maybe some corrections were themselves mistakes), you change the view, and nothing was lost.
+
+## Cleaning rules in a view
+
+The next view on top applies the cleaning rules. Each rule is a column expression, so all of them sit in one place.
+
+Each flag is computed from other columns, so it repeats information that is already there: `unassigned` is just `county = 'Unknown'` again. Later in this lecture we will see that storing repeated information in a *table* invites mistakes, because when one copy changes the other can be left behind. Lecture 6 showed why a view does not have that problem: it stores no data. A view is only a saved query, so every column of it, flags included, is computed again from the raw table every time it is queried, and it can never fall out of date. Nobody edits the view either. Views like these, with `DISTINCT` or window functions, are read-only, and Postgres refuses an `UPDATE` on them. The raw table underneath is protected too: while a view reads a column, Postgres refuses to change that column's type, so the table cannot change shape under the pipeline (Lecture 6):
+
+```sql
+UPDATE covid_uniq
+  SET cases = 0
+  WHERE county = 'Harris';
+-- ERROR:  cannot update view "covid_uniq"
+-- DETAIL:  Views containing DISTINCT are not automatically updatable.
+-- HINT:  To enable updating the view, provide an INSTEAD OF UPDATE trigger or an unconditional ON UPDATE DO INSTEAD rule.
+ALTER TABLE covid_raw
+  ALTER COLUMN cases TYPE bigint;
+-- ERROR:  cannot alter type of a column used by a view or rule
+-- DETAIL:  rule _RETURN on view covid_uniq depends on column "cases"
+```
+
+Corrections go into the raw table, the only copy of the data, and every view on top picks them up on the next query. So a view may hold as many computed and duplicative columns as are convenient. Here is the cleaning view:
+
+```sql
+CREATE VIEW covid_uniq_key_clean AS
+  SELECT date,
+         lower(trim(state))             AS state,           -- trim drops stray spaces and lower evens out capitalization, so
+         lower(trim(county))            AS county,          -- ' Harris', 'HARRIS' and 'Harris' all become 'harris'
+         fips, cases, deaths,
+         -- below, state and county are still the columns of covid_uniq_key: a SELECT cannot see the columns it is creating
+         county = 'Unknown'             AS unassigned,      -- cases a state could not yet assign to a county
+         county IN ('New York City', 'Kansas City', 'Joplin')
+                                        AS not_a_county,    -- cities reported instead of their counties, so no fips
+         deaths > cases                AS deaths_exceed_cases,
+         cases < lag(cases) OVER (PARTITION BY state, county ORDER BY date)
+                                        AS cases_went_down  -- cases is cumulative, so a drop means a correction
+    FROM covid_uniq_key;
+-- a flag is true or false, so it can be the whole WHERE condition
+SELECT count(*) FROM covid_uniq_key_clean WHERE unassigned;          -- 7483
+SELECT count(*) FROM covid_uniq_key_clean WHERE not_a_county;        -- 783
+SELECT count(*) FROM covid_uniq_key_clean WHERE deaths_exceed_cases; -- 792
+SELECT count(*) FROM covid_uniq_key_clean WHERE cases_went_down;     -- 15144
+```
+
+The view **flags** the odd rows and does not delete them. Whether to drop them depends on the question, so the decision is left to whoever queries the view. All 792 rows where deaths exceed cases turn out to be "Unknown" rows (deaths assigned to a state before their cases were), and the 15,144 drops in a running total are the corrections that make naive "new cases" negative.
+
+Other data needs other rules, and they are all one-liners of the same kind:
+
+| Problem                                   | Rule in the view                                         |
+|:------------------------------------------|:---------------------------------------------------------|
+| stray spaces, inconsistent capitalization | `trim(county)`, `lower(email)`                           |
+| a code that means "missing"               | `NULLIF(income, -999)`, `NULLIF(trim(name), '')`         |
+| several spellings of the same value       | `CASE WHEN x IN ('N/A', 'NA', '?') THEN NULL ELSE x END` |
+| numbers stored as text                    | `NULLIF(price_text, 'N/A')::numeric`                     |
+| impossible values                         | `CASE WHEN age BETWEEN 0 AND 120 THEN age END`           |
+
+`covid` happens to need almost none of these: no county or state name has stray spaces, and the typed columns refused `'N/A'` as a number back when we loaded it. That is the advantage of typed columns: a whole class of dirt cannot get in. The view still passes `state` and `county` through `lower(trim(...))`. On `covid` that changes only the capitalization, but it protects the next feed and any other source `covid` is joined with, which may write ` Harris ` or `HARRIS`. Every query on the cleaned views must then use the cleaned form, which is why the queries below write `'puerto rico'`, not `'Puerto Rico'`. The raw table still has the original spelling.
+
+## Missing data
+
+`NULL` is SQL's "unknown". The danger is missing values that are *not* `NULL`. A **sentinel** is an ordinary-looking value that a source uses to mean "missing": `-999`, `0`, `9999-12-31`, an empty string. The database cannot tell it from real data. `avg(income)` happily averages in every `-999`, while it would skip a `NULL`. So the first job is to turn sentinels into `NULL` (the `NULLIF` rule above). The second is to profile what is missing. `count(column)` counts the non-`NULL` values, so `count(*) - count(column)` is the number missing:
+
+```sql
+SELECT count(*) - count(cases)  AS cases_missing,
+       count(*) - count(deaths) AS deaths_missing,
+       count(*) - count(fips)   AS fips_missing
+  FROM covid_uniq_key_clean;                                -- 0, 18761, 8266
+SELECT state, count(*) AS deaths_missing
+  FROM covid_uniq_key_clean
+  WHERE deaths IS NULL
+  GROUP BY state;                                           -- puerto rico 18761: all of them
+```
+
+The missing fips are the 7,483 "Unknown" rows and 783 rows for three places that are not single counties (New York City, Kansas City and Joplin). The right fix here is to leave them `NULL`. A fips is an identifier, not a measurement, and these places have none: an "Unknown" row is not a county at all, New York City spans five counties (its boroughs), and Kansas City and Joplin are cities reported separately from the counties they overlap. Any single fips we filled in would be wrong. For example, giving New York City Manhattan's fips would attach Manhattan's population to the cases of all five boroughs. So the view flags these rows (`unassigned`, `not_a_county`) and keeps the `NULL`. If a later question needs county-level data such as population, a small mapping table (New York City → its five borough fips) handles it then.
+
+The missing deaths are all in Puerto Rico, and that is the important lesson about missing data: **first ask why it is missing**. Looking at Puerto Rico on one day shows it:
+
+```sql
+SELECT county, cases, deaths
+  FROM covid_uniq_key_clean
+  WHERE state = 'puerto rico' AND date = '2020-12-31'
+  ORDER BY deaths NULLS LAST, cases DESC
+  LIMIT 4;                                                  -- unknown 3875 1503, san juan 15250 NULL, bayamon 8062 NULL, carolina 6494 NULL
+```
+
+Puerto Rico reported its deaths only for the island as a whole, in its "Unknown" row, and not per municipality (Puerto Rico's equivalent of a county). The deaths are not missing *at random*. They are not even lost, they are recorded at a different level. That decides what to do with them:
+
+* **Dropping** the rows with missing deaths would throw away 78 municipalities and all of their cases.
+* **Filling in 0** would be a sentinel of our own making, and would claim that San Juan had no deaths.
+* **Mean imputation**, e.g. cases times the national deaths-per-case rate, would invent deaths *on top of* the 1,503 already in the Unknown row and count them twice.
+* **Advanced imputation** trains a predictive model on the rows where the value is known, e.g. deaths from cases, population and age structure, and uses it to predict the missing values (regression, random forests as in `missForest`, or the chained models of `mice`). That is beyond SQL: you pull the data into R or Python through the database drivers later in this lecture and fit the model there. Here it would still have to be forced to add up to the 1,503 known deaths. We may or may not get to model-based advanced imputation later in this course.
+
+A sensible simple imputation is to **share out the known total**: give each row with missing deaths part of that day's Unknown deaths for its state, in proportion to its cases. The Unknown row then keeps 0, since its deaths have all been handed out, so the state's total is unchanged.
+
+This is the next step of the pipeline, `covid_uniq_key_clean_imputed` on top of `covid_uniq_key_clean`. The rule is written for every state, not only for Puerto Rico. A rule that names one place silently does nothing when the next feed has missing deaths somewhere else; a general rule handles them, and changes nothing in a state with nothing missing. It needs two numbers per state and day next to every row, the Unknown row's deaths and the total cases of the rows missing deaths. Both are window functions from Lecture 6, over `PARTITION BY state, date`, with a `CASE` inside so each one looks only at the rows it should:
+
+```sql
+CREATE VIEW covid_uniq_key_clean_imputed AS
+  SELECT date, state, county, fips, cases, deaths,
+         unassigned, not_a_county, deaths_exceed_cases, cases_went_down,
+         CASE
+           WHEN deaths IS NULL               THEN unknown_deaths * cases::numeric / NULLIF(missing_cases, 0)
+                                                                      -- ::numeric, or integer division would drop the fractions
+           WHEN unassigned AND missing_cases > 0 THEN 0               -- the Unknown row's deaths were all shared out
+           ELSE deaths                                                -- a real count, kept as it is
+         END                AS deaths_imputed,
+         deaths IS NULL     AS is_imputed                             -- a flag, so nobody mistakes an estimate for a count
+    FROM (SELECT *,
+                 max(CASE WHEN unassigned THEN deaths END)       OVER (PARTITION BY state, date) AS unknown_deaths,
+                 sum(CASE WHEN deaths IS NULL THEN cases END)    OVER (PARTITION BY state, date) AS missing_cases
+            FROM covid_uniq_key_clean) AS t;
+SELECT county, cases, round(deaths_imputed) AS deaths_imputed
+  FROM covid_uniq_key_clean_imputed
+  WHERE state = 'puerto rico' AND date = '2020-12-31'
+  ORDER BY cases DESC
+  LIMIT 3;                                                  -- san juan 15250 216, bayamon 8062 114, carolina 6494 92
+SELECT round(sum(deaths_imputed))                         -- round only the total, for display
+  FROM covid_uniq_key_clean_imputed
+  WHERE state = 'puerto rico' AND date = '2020-12-31';      -- 1503: the total is preserved
+SELECT DISTINCT state
+  FROM covid_uniq_key_clean_imputed
+  WHERE is_imputed;                                         -- puerto rico: the only state the rule changed
+```
+
+`missing_cases` is `NULL` in a state-day with nothing missing (`sum` of no values), so the middle `WHEN` is false there and the Unknown row keeps its own deaths. The `NULLIF` turns a zero into `NULL`, so a day whose missing rows all have 0 cases leaves them `NULL` instead of failing on division by zero. The view fills in all 18,761 missing values, on all 241 days. Keep the unrounded values and round only for display: rounding each one first would make that day add up to 1,505, not 1,503. The imputation assumes deaths are proportional to cases in every municipality, an assumption you should say out loud. Any single imputation also understates uncertainty: the imputed values look as exact as measured ones. **Multiple imputation** (e.g. the `mice` package in R) fills in several plausible versions and combines the results, which is the statistician's tool for this and beyond the scope here.
+
+## Beyond exact rules
+
+Two more techniques you should know about, but we don't have time to cover:
+
+* **Fuzzy matching and record linkage.** "St. Louis" and "Saint Louis", or "Jon Smith, 1980" and "John Smith, 1980", are duplicates that no exact rule catches. String distances find them: Postgres's `pg_trgm` and `fuzzystrmatch` extensions, `rapidfuzz` in Python and `stringdist` in R. Linking whole records across sources, when there is no shared key, is done with `splink` (Python) or `fastLink` (R). The output is usually a small mapping table (spelling → canonical id) that a view then joins on (joins come later in this lecture).
+* **Validation.** Write your assumptions down as tests that fail loudly when new data breaks them: `pointblank` in R, `pandera` or `Great Expectations (GX)` in Python and the Postgres' own `CHECK` constraints, e.g. `ALTER TABLE covid ADD CHECK (cases >= 0)`, which makes the database refuse a negative count the way typed columns refused `'N/A'`.
+
+When you are done, remove the demo. Views depend on the table and on each other, so `CASCADE` drops them along with it:
+
+```sql
+DROP TABLE covid_raw CASCADE;                               -- also drops covid_uniq, covid_uniq_key, covid_uniq_key_clean and covid_uniq_key_clean_imputed
+```
+
+Why do this cleaning in SQL rather than in R or Python? We come back to that after the database drivers.
+
 # Relational Databases with Multiple Tables
 
 Look at what `covid` repeats. It has 884,737 rows but only 3,273 counties and 55 states, so the text "Texas" is stored 67,002 times, and each county's name and fips code are stored once for every day it reported. The only facts that are new on each row are `date`, `cases` and `deaths`. Repeating the rest wastes space, but worse, it invites mistakes: rename a county and you must change hundreds of rows, and if you miss one the table now disagrees with itself.
@@ -710,187 +944,15 @@ The convenience of all three has a price: when a query is slow you have to read 
 
 We will be using database adapters as we "put it all together": from databases -> cleaning -> predictive modeling / inferential modeling using R and/or Python. That's when we'll dip into knowledge from all your other statistics and machine learning courses.
 
-# Data Hygiene: Duplicates, Cleaning and Missing Data
+## Why clean in SQL and not in R or Python?
 
-Real data arrives dirty: rows sent twice, corrections that arrive later, codes that mean "missing" but look like numbers. The rule from the views section of Lecture 6 is the backbone of this whole unit: **never clean the raw table itself**. Keep exactly what the source sent, and put each cleaning step in a view on top of it, so the steps can be read, checked and changed. The views stack up as steps in a pipeline mentioned there: raw, then deduplicated, then cleaned. Everyone downstream, in `psql`, R, Python (through the drivers we just met) or a dashboard, then queries the last view and gets the same cleaned data.
+Every step of this pipeline can also be done in R or Python, once the data has been pulled in through a database driver. `dplyr` or `data.table` in R and `pandas` in Python have a ready-made function for each of them: dropping exact duplicates, keeping the newest row per key, computing flags with a lag, and turning sentinels into missing values. Still, SQL is often preferred for the rule-based steps, for these reasons:
 
-## Duplicates
+* **One copy of the rules.** The views live in the database, so everyone who queries them, from `psql`, R, Python or a dashboard, gets the same cleaned data. Cleaning scripts get copied from project to project and drift apart, until two analysts report two different numbers from the same raw table.
+* **The data does not have to fit in memory.** `pandas`, `dplyr` and `data.table` hold the whole table in RAM, and it first has to travel over the network to get there. The database works on disk with its indexes, next to the data, and sends back only the answer, as in "Let the database do the work" above. For big data, this is often what decides it.
+* **Always current.** A view is recomputed on every query, so tomorrow's feed is cleaned the moment it arrives. A script has to be rerun, and the cleaned file it wrote goes stale in between.
+* **Language-neutral.** One team member uses R, another Python, a third a BI tool. SQL is the one language all of them can read and query.
+* **Dashboards read from the database.** BI tools such as Tableau and Power BI connect straight to the database and are usually pointed at a view, so they show the cleaned data without any extra work. Both also have their own cleaning tools (Tableau Prep, Power BI's Power Query), but rules written there usually live inside that tool (a Prep flow, a Power BI report), where no R or Python user can see or reuse them. Cleaning in a view keeps the dashboard and the analysis consistent.
+* **Auditable.** The raw table is never touched, and every rule is a short, readable line in a view. Tools like dbt (Lecture 6) add version control and tests on top.
 
-There are two kinds:
-
-* **Exact duplicates**: the same row twice, every column equal. Typically a file was loaded twice, or a feed re-sent a day.
-* **Key duplicates**: two rows for the same thing (the same county on the same day) that *disagree*. Typically a later correction. Here you must decide which one is right, usually the newest.
-
-`covid` itself turns out to be clean on both counts. Comparing `count(*)` with the count of distinct rows, and of distinct keys, is the first check to run on any new table:
-
-```sql
-SELECT count(*) AS n_rows,
-       (SELECT count(*) FROM (SELECT DISTINCT * FROM covid) AS t) AS n_distinct_rows,
-       (SELECT count(*) FROM (SELECT DISTINCT state, county, date FROM covid) AS t) AS n_distinct_keys
-  FROM covid;                                               -- 884737, 884737, 884737: no duplicates of either kind
-```
-
-So let's make the mess ourselves, on a copy, as a real feed would. `covid_raw` gets a `loaded_at` column saying when each row arrived. Then the feed re-sends December 31, and a day later it sends a correction for Harris County:
-
-```sql
-CREATE TABLE covid_raw AS
-  SELECT *, timestamp '2021-01-01 06:00' AS loaded_at
-    FROM covid;                                             -- SELECT 884737
--- the feed sends 2020-12-31 a second time: 3245 exact duplicates
-INSERT INTO covid_raw
-  SELECT *, timestamp '2021-01-01 06:00'
-    FROM covid
-    WHERE date = '2020-12-31';                              -- INSERT 0 3245
--- a day later, a correction: Harris on 2020-12-31 had 237800 cases, not 237727
-INSERT INTO covid_raw VALUES
-  ('2020-12-31', 'Harris', 'Texas', '48201', 237800, 3402, timestamp '2021-01-02 06:00');
-SELECT count(*)
-  FROM covid_raw;                                           -- 887983 = 884737 + 3245 + 1
-```
-
-To find duplicate keys, group by the key and keep the groups with more than one row:
-
-```sql
-SELECT state, county, date, count(*)
-  FROM covid_raw
-  GROUP BY state, county, date
-  HAVING count(*) > 1
-  ORDER BY count(*) DESC
-  LIMIT 3;                                                  -- Texas Harris 2020-12-31 3 first, then rows with 2 (3245 groups in all)
-```
-
-**Exact duplicates** go away with `SELECT DISTINCT *`:
-
-```sql
-CREATE VIEW covid_distinct AS
-  SELECT DISTINCT *
-    FROM covid_raw;
-SELECT count(*)
-  FROM covid_distinct;                                      -- 884738: the 3245 copies are gone, but Harris still has 2 rows
-```
-
-**Key duplicates** need a rule. "Keep the newest version of each county-day" is written with Postgres's `DISTINCT ON (...)`: it keeps the *first* row of each group, where "first" follows the `ORDER BY`. So sort by the key, then newest first:
-
-```sql
-CREATE VIEW covid_dedup AS
-  SELECT DISTINCT ON (state, county, date) *
-    FROM covid_raw
-    ORDER BY state, county, date, loaded_at DESC;           -- within each county-day, the newest row comes first and is kept
-SELECT count(*)
-  FROM covid_dedup;                                         -- 884737: one row per county-day again
-SELECT cases
-  FROM covid_dedup
-  WHERE state = 'Texas' AND county = 'Harris' AND date = '2020-12-31';   -- 237800: the correction won
-```
-
-`DISTINCT ON` exists only in Postgres. The portable version, which works in every database including DuckDB, is the window function `row_number()` from Lecture 6: number the rows of each county-day from newest to oldest, and keep number 1:
-
-```sql
-SELECT *
-  FROM (SELECT *,
-               row_number() OVER (PARTITION BY state, county, date ORDER BY loaded_at DESC) AS rn
-          FROM covid_raw) AS t
-  WHERE rn = 1;                                             -- the same 884737 rows
-```
-
-The exact duplicates handled themselves: two identical rows are tied on `loaded_at`, and keeping either one is the same. Note that `covid_raw` still holds all 887,983 rows. If the rule turns out to be wrong (maybe some corrections were themselves mistakes), you change the view, and nothing was lost.
-
-## Cleaning rules in a view
-
-The next view on top applies the cleaning rules. Each rule is a column expression, so all of them sit in one place:
-
-```sql
-CREATE VIEW covid_clean AS
-  SELECT date, state, county, fips, cases, deaths,
-         county = 'Unknown'             AS unassigned,      -- cases a state could not yet assign to a county
-         deaths > cases                 AS deaths_exceed_cases,
-         cases < lag(cases) OVER (PARTITION BY state, county ORDER BY date)
-                                        AS cases_went_down  -- cases is cumulative, so a drop means a correction
-    FROM covid_dedup;
--- a flag is true or false, so it can be the whole WHERE condition
-SELECT count(*) FROM covid_clean WHERE unassigned;          -- 7483
-SELECT count(*) FROM covid_clean WHERE deaths_exceed_cases; -- 792
-SELECT count(*) FROM covid_clean WHERE cases_went_down;     -- 15144
-```
-
-The view **flags** the odd rows and does not delete them. Whether to drop them depends on the question, so the decision is left to whoever queries the view. All 792 rows where deaths exceed cases turn out to be "Unknown" rows (deaths assigned to a state before their cases were), and the 15,144 drops in a running total are the corrections that make naive "new cases" negative.
-
-Other data needs other rules, and they are all one-liners of the same kind:
-
-| Problem                                   | Rule in the view                                       |
-|:------------------------------------------|:-------------------------------------------------------|
-| stray spaces, inconsistent capitalization | `trim(county)`, `lower(email)`                         |
-| a code that means "missing"               | `NULLIF(income, -999)`, `NULLIF(trim(name), '')`       |
-| several spellings of the same value       | `CASE WHEN x IN ('N/A', 'NA', '?') THEN NULL ELSE x END` |
-| numbers stored as text                    | `NULLIF(price_text, 'N/A')::numeric`                   |
-| impossible values                         | `CASE WHEN age BETWEEN 0 AND 120 THEN age END`         |
-
-`covid` happens to need none of these: no county or state name has stray spaces, and the typed columns refused `'N/A'` as a number back when we loaded it. That is the advantage of typed columns: a whole class of dirt cannot get in.
-
-## Missing data
-
-`NULL` is SQL's "unknown". The danger is missing values that are *not* `NULL`. A **sentinel** is an ordinary-looking value that a source uses to mean "missing": `-999`, `0`, `9999-12-31`, an empty string. The database cannot tell it from real data. `avg(income)` happily averages in every `-999`, while it would skip a `NULL`. So the first job is to turn sentinels into `NULL` (the `NULLIF` rule above). The second is to profile what is missing. `count(column)` counts the non-`NULL` values, so `count(*) - count(column)` is the number missing:
-
-```sql
-SELECT count(*) - count(cases)  AS cases_missing,
-       count(*) - count(deaths) AS deaths_missing,
-       count(*) - count(fips)   AS fips_missing
-  FROM covid_clean;                                         -- 0, 18761, 8266
-SELECT state, count(*) AS deaths_missing
-  FROM covid_clean
-  WHERE deaths IS NULL
-  GROUP BY state;                                           -- Puerto Rico 18761: all of them
-```
-
-The missing fips are the "Unknown" rows and three places that are not single counties (New York City, Kansas City and Joplin). The missing deaths are all in Puerto Rico, and that is the important lesson about missing data: **first ask why it is missing**. Looking at Puerto Rico on one day shows it:
-
-```sql
-SELECT county, cases, deaths
-  FROM covid_clean
-  WHERE state = 'Puerto Rico' AND date = '2020-12-31'
-  ORDER BY deaths NULLS LAST, cases DESC
-  LIMIT 4;                                                  -- Unknown 3875 1503, San Juan 15250 NULL, Bayamon 8062 NULL, Carolina 6494 NULL
-```
-
-Puerto Rico reported its deaths only for the island as a whole, in its "Unknown" row, and not per municipality (Puerto Rico's equivalent of a county). The deaths are not missing *at random*. They are not even lost, they are recorded at a different level. That decides what to do with them:
-
-* **Dropping** the rows with missing deaths would throw away 78 municipalities and all of their cases.
-* **Filling in 0** would be a sentinel of our own making, and would claim that San Juan had no deaths.
-* **Mean imputation**, e.g. cases times the national deaths-per-case rate, would invent deaths *on top of* the 1,503 already in the Unknown row and count them twice.
-* **Advanced imputation** trains a predictive model on the rows where the value is known, e.g. deaths from cases, population and age structure, and uses it to predict the missing values (regression, random forests as in `missForest`, or the chained models of `mice`). That is beyond SQL: you pull the data into R or Python through the drivers above and fit the model there. Here it would still have to be forced to add up to the 1,503 known deaths. We may or may not get to model-based advanced imputation later in this course.
-
-A sensible simple imputation is to **share out the known total**: give each municipality part of that day's Unknown deaths in proportion to its cases. This is one more view, built from two things we already know: a self-join puts each municipality's row next to the Unknown row of the same day, and a window `sum()` gives that day's total cases:
-
-```sql
-CREATE VIEW pr_deaths AS
-  SELECT m.date, m.county, m.cases, m.deaths,
-         u.deaths * m.cases::numeric / sum(m.cases) OVER (PARTITION BY m.date)
-                           AS deaths_imputed,               -- ::numeric, or integer division would drop the fractions
-         m.deaths IS NULL  AS is_imputed                    -- a flag, so nobody mistakes an estimate for a count
-    FROM covid_clean AS m
-    JOIN covid_clean AS u ON u.state = m.state AND u.date = m.date AND u.county = 'Unknown'
-    WHERE m.state = 'Puerto Rico' AND m.county <> 'Unknown';
-SELECT county, cases, round(deaths_imputed) AS deaths_imputed
-  FROM pr_deaths
-  WHERE date = '2020-12-31'
-  ORDER BY cases DESC
-  LIMIT 3;                                                  -- San Juan 15250 216, Bayamon 8062 114, Carolina 6494 92
-SELECT sum(deaths_imputed)
-  FROM pr_deaths
-  WHERE date = '2020-12-31';                                -- 1503: the total is preserved
-```
-
-The view fills in all 18,761 missing values, on all 241 days. Keep the unrounded values and round only for display: rounding each one first would make that day add up to 1,505, not 1,503. The imputation assumes deaths are proportional to cases in every municipality, an assumption you should say out loud. Any single imputation also understates uncertainty: the imputed values look as exact as measured ones. **Multiple imputation** (e.g. the `mice` package in R) fills in several plausible versions and combines the results, which is the statistician's tool for this and beyond the scope here.
-
-## Beyond exact rules
-
-Two more techniques you should know about, but we don't have time to cover:
-
-* **Fuzzy matching and record linkage.** "St. Louis" and "Saint Louis", or "Jon Smith, 1980" and "John Smith, 1980", are duplicates that no exact rule catches. String distances find them: Postgres's `pg_trgm` and `fuzzystrmatch` extensions, `rapidfuzz` in Python and `stringdist` in R. Linking whole records across sources, when there is no shared key, is done with `splink` (Python) or `fastLink` (R). The output is usually a small mapping table (spelling → canonical id) that a view then joins on.
-* **Validation.** Write your assumptions down as tests that fail loudly when new data breaks them: `pointblank` in R, `pandera` or `Great Expectations (GX)` in Python and the Postgres' own `CHECK` constraints, e.g. `ALTER TABLE covid ADD CHECK (cases >= 0)`, which makes the database refuse a negative count the way typed columns refused `'N/A'`.
-
-When you are done, remove the demo. Views depend on the table and on each other, so `CASCADE` drops them along with it:
-
-```sql
-DROP TABLE covid_raw CASCADE;                               -- also drops covid_distinct, covid_dedup, covid_clean and pr_deaths
-```
+R and Python are the better choice for what SQL does badly: model-based imputation (`mice`, `missForest`), fuzzy matching with dedicated libraries, heavy text parsing, and exploratory plots to find the problems in the first place. The usual pattern combines the two. SQL views do the heavy, rule-based cleaning next to the data, and R or Python pulls the last view through a driver for modeling.

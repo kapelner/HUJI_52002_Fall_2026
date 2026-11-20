@@ -37,7 +37,7 @@ None released yet
 
 ## Exams
 
-* Midterm is Nov 29 in class
+* Midterm is Nov 29 in class [practice exam](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/exams/practice_midterm/midterm.pdf) [practice exam solutions](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/exams/practice_midterm/midterm_solutions.pdf)
 * Final exam is TBD
 
 ## Office Hours
