@@ -203,6 +203,59 @@ TakeOrderedAndProject(limit=3, orderBy=[count(1) DESC])          <- ORDER BY ...
 
 On a cluster the same script runs unchanged; only the `master` setting changes, from `local[4]` to the address of the cluster. Spark can also run inside a single multi-node Slurm job, which is a common setup on university clusters.
 
+# SQL at scale: cloud data warehouses
+
+::: {.callout-note}
+## Not covered on the exam
+This section is FYI only: it will not be tested.
+:::
+
+Spark shows how one `GROUP BY` can run on many machines. A **cloud data warehouse** packages that idea as a database: you send it ordinary SQL, and it runs the query on as many machines as the data needs. When a job ad says "Snowflake", "BigQuery" or "Redshift", this is what it means, and it is where most company-wide analytics runs today. Like the next section, this is a talk, not a demo: all of these are paid cloud services.
+
+**Why not just a bigger Postgres?** Postgres is built for **OLTP** ("online transaction processing"): many small reads and writes, each touching a few rows, all of them correct at once. That is the database behind an app, a bank or a shop. A warehouse is built for **OLAP** ("online analytical processing"): few queries, each reading millions or billions of rows but only a few columns, and almost no updates. The design follows from that, and it is the course's ideas put together:
+
+* **Columnar storage**, like Parquet (Lecture 3). A query that needs `state` and `cases` reads only those two columns.
+* **Many machines working on one query**, the map, shuffle and reduce of the Spark section above. This is called **MPP** ("massively parallel processing").
+* **Storage separate from compute.** The data sits once in cheap cloud object storage (a lake, in effect), and the machines that query it are rented only while a query runs. Postgres keeps both on one server, so a bigger database means a bigger server.
+* **No indexes in the Postgres sense.** Instead, the data is stored in blocks sorted or grouped by a chosen column (often the date), and each block records the minimum and maximum of every column. A query for December 2020 skips every block whose dates lie outside it. It gives what an index gives, reading less of the data, but for big scans rather than for single-row lookups.
+
++---------------------+--------------------------+--------------------------------------------------------------------+
+| System              | Who runs it              | What makes it different                                            |
++:====================+:=========================+:===================================================================+
+| **Snowflake**       | a company of its own;    | Storage and compute fully separate: the data sits once in cloud    |
+|                     | runs on AWS, Azure or    | storage, and each team starts its own "virtual warehouse" (a       |
+|                     | Google Cloud             | cluster) to query it, billed by the second while it runs           |
++---------------------+--------------------------+--------------------------------------------------------------------+
+| **Amazon Redshift** | Amazon (AWS)             | Began as a fork of an old Postgres version, so `psql` and          |
+|                     |                          | `psycopg` can connect to it and much of the SQL is Postgres SQL.   |
+|                     |                          | Columnar and spread over many machines underneath                  |
++---------------------+--------------------------+--------------------------------------------------------------------+
+| **Google BigQuery** | Google Cloud             | "Serverless": there is no cluster to start or size. You send SQL,  |
+|                     |                          | Google finds the machines, and on-demand pricing charges by the    |
+|                     |                          | bytes the query reads                                              |
++---------------------+--------------------------+--------------------------------------------------------------------+
+| **Databricks**      | the company founded by   | Spark with SQL on top, over a lake of Parquet files with a         |
+|                     | Spark's creators; runs   | transaction log (Delta Lake). The "lakehouse": lake files,         |
+|                     | on the big clouds        | warehouse SQL. The bronze / silver / gold layers of Lecture 7 come |
+|                     |                          | from here                                                          |
++---------------------+--------------------------+--------------------------------------------------------------------+
+| **ClickHouse**      | open source (Apache      | A columnar analytics database you can also run yourself, on one    |
+|                     | 2.0), or as a cloud      | machine or many. Known for very fast aggregates                    |
+|                     | service                  |                                                                    |
++---------------------+--------------------------+--------------------------------------------------------------------+
+
+: Five warehouses you will hear about. All of them speak SQL with window functions, CTEs and joins.
+
+**What carries over from this course: almost all of it.** The SQL of Lectures 4 to 7 (grouping, window functions, `WITH`, joins, views) runs on every one of them, with small differences in dialect. Some have conveniences Postgres lacks, such as `QUALIFY`, which filters on a window function directly and saves the subquery of the de-duplication section in Lecture 7. The drivers of Lecture 7 carry over too: each warehouse has a Python connector and an R driver for `DBI`, and `dbplyr` and `ibis` can translate to their SQL. Tools like dbt (Lecture 6) are used mostly on warehouses: the stack of views from Lecture 7, raw to cleaned, is exactly what a dbt project builds there.
+
+**What is different:**
+
+* **You pay per query.** On BigQuery's on-demand pricing, the bill is the bytes each query reads, so `SELECT *` on a wide table costs real money, while selecting two columns of it costs a fraction. Columnar storage turns "read fewer columns" from a speed tip into a budget rule. Always try a query on a sample, or with a filter on the date, first.
+* **Slow at small things.** Even a tiny query takes on the order of a second, because the work is spread over machines. Single-row inserts and updates are slow and expensive. A warehouse is the wrong place for an app's transactions, just as Postgres on a laptop is the wrong place for a scan of 10 billion rows.
+* **The data leaves your machine.** It lives in someone else's cloud, under their security, their region and their contract. That matters for the privacy section below.
+
+A typical company runs both kinds: Postgres (or another OLTP database) behind the app, and a copy of its data, together with everything else, loaded into the warehouse every night or streamed in continuously (over Kafka, below) for analysis. And note the scale at which a warehouse is needed. The 44-million-row `covid_big` file from Lecture 3 is still comfortable on one laptop. Warehouses earn their cost at billions of rows, or when hundreds of analysts query the same data.
+
 # Where the other databases fit: a NoSQL and streaming landscape
 
 This is a talk, not a demo: nothing here is installed or run. The goal is that when you hear "we put that in Redis" or "it comes in over Kafka", you can place the tool against the two things we do know well, Postgres (Lecture 3) and Parquet files (Lecture 3, and the lake above).

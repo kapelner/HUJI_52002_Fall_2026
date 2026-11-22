@@ -24,18 +24,18 @@ psql lec04
 \pset pager off
 ```
 
-# Data Hygiene: Duplicates, Cleaning and Missing Data
+# Data Hygiene: Duplicates, Handling Missing Data andother Types of Cleaning
 
-Real data arrives dirty: rows sent twice, corrections that arrive later, codes that mean "missing" but look like numbers. The rule from the views section of Lecture 6 is the backbone of this whole unit: **never clean the raw table itself**. Keep exactly what the source sent, and put each cleaning step in a view on top of it, so the steps can be read, checked and changed. The views stack up as steps in a pipeline mentioned there, each view built on the one before: raw, then without exact duplicates, then without key duplicates, then cleaned, then imputed. Everyone downstream, in `psql`, R, Python (through the database drivers later in this lecture) or a dashboard, then queries the last view and gets the same cleaned data.
+Real data arrives dirty: rows sent twice, corrections that arrive later, codes that mean "missing" but look like numbers. The rule from the views section of Lecture 6 is the backbone of this whole unit: **never clean the raw table itself**. Keep exactly what the source sent, and put each cleaning step in a view on top of it, so the steps can be read, audited and branched if you want to try different things. The views stack up as steps in a pipeline mentioned there, each view built on the one before: raw, then without exact duplicates, then without key duplicates, then cleaned, then imputed. Everyone downstream, in `psql`, R, Python (through the database drivers later in this lecture) or a dashboard, then queries the last view and gets the same cleaned data, fully updated from the live underlying raw table.
 
 We name the views in **onion** style: each step adds a suffix to the name of the view it is built on, so the pipeline below is `covid_raw` → `covid_uniq` → `covid_uniq_key` → `covid_uniq_key_clean` → `covid_uniq_key_clean_imputed`. Every name tells you exactly which steps the data has been through. The price is that names grow with every step, so in industry you will more often see conventions that name the *layer* instead. FYI:
 
 * **dbt** (the tool Lecture 6 mentions for views on views) uses layer prefixes: `stg_covid` for staging (renamed, typed and deduplicated), `int_covid_imputed` for intermediate steps, and `fct_` / `dim_` for the final tables.
 * The **medallion architecture** (Databricks and most data lakes) has three layers: **bronze** (raw), **silver** (cleaned and deduplicated) and **gold** (ready for analysis).
 
-## Duplicates
+## De-Duplication
 
-There are two kinds:
+There are two kinds of duplication that should be cleaned:
 
 * **Exact duplicates**: the same row twice, every column equal. Typically a file was loaded twice, or a feed re-sent a day.
 * **Key duplicates**: two rows for the same thing (the same county on the same day) that *disagree*. Typically a later correction. Here you must decide which one is right, usually the newest.
@@ -49,69 +49,86 @@ SELECT count(*) AS n_rows,
   FROM covid;                                               -- 884737, 884737, 884737: no duplicates of either kind
 ```
 
-So let's make the mess ourselves, on a copy, as a real feed would. `covid_raw` gets a `loaded_at` column saying when each row arrived. Then the feed re-sends December 31, and a day later it sends a correction for Harris County:
+So let's make the mess ourselves, on a copy, as a real feed would. `covid_raw` gets a `loaded_at` column saying when each batch of rows arrived. As in a real pipeline, the database fills it in with `now()`, the current time. In Postgres, `now()` is the time the *transaction* started (Lecture 6), so every row loaded in one transaction gets the same `loaded_at`. In the first batch, the file for December 31 is accidentally loaded twice, so those copies match the originals in every column, `loaded_at` included. Later, in its own transaction, the feed sends a correction for Harris County:
 
 ```sql
+BEGIN;                                                      -- the first batch: one transaction, so one now()
 CREATE TABLE covid_raw AS
-  SELECT *, timestamp '2021-01-01 06:00' AS loaded_at
+  SELECT *, now() AS loaded_at
     FROM covid;                                             -- SELECT 884737
--- the feed sends 2020-12-31 a second time: 3245 exact duplicates
+-- same batch, same now(): 2020-12-31 is loaded a second time, 3245 exact duplicates
 INSERT INTO covid_raw
-  SELECT *, timestamp '2021-01-01 06:00'
+  SELECT *, now()
     FROM covid
     WHERE date = '2020-12-31';                              -- INSERT 0 3245
--- a day later, a correction: Harris on 2020-12-31 had 237800 cases, not 237727
+COMMIT;
+-- later, a correction in its own transaction, so a later now(): Harris on 2020-12-31 had 237800 cases, not 237727
+-- this is a key duplicate
 INSERT INTO covid_raw VALUES
-  ('2020-12-31', 'Harris', 'Texas', '48201', 237800, 3402, timestamp '2021-01-02 06:00');
+  ('2020-12-31', 'Harris', 'Texas', '48201', 237800, 3402, now());
 SELECT count(*)
   FROM covid_raw;                                           -- 887983 = 884737 + 3245 + 1
 ```
 
-To find duplicate keys, group by the key and keep the groups with more than one row:
-
-```sql
-SELECT state, county, date, count(*)
-  FROM covid_raw
-  GROUP BY state, county, date
-  HAVING count(*) > 1
-  ORDER BY count(*) DESC
-  LIMIT 3;                                                  -- Texas Harris 2020-12-31 3 first, then rows with 2 (3245 groups in all)
-```
-
-**Exact duplicates** go away with `SELECT DISTINCT *`:
+The first type of duplicates, Exact duplicates, are eliminated via `SELECT DISTINCT *`:
 
 ```sql
 CREATE VIEW covid_uniq AS
   SELECT DISTINCT *
     FROM covid_raw;
-SELECT count(*)
-  FROM covid_uniq;                                          -- 884738: the 3245 copies are gone, but Harris still has 2 rows
+\d+ --we see the new view and it takes up zero space, why?
 ```
 
-**Key duplicates** need a rule, in the next view on top of `covid_uniq`. "Keep the newest version of each county-day" is written with the window function `row_number()` from Lecture 6: number the rows of each county-day from newest to oldest, and keep number 1. This works in every SQL database, including DuckDB:
+Let's check if it the de-dup worked:
+
+```sql
+SELECT count(*)
+  FROM covid_uniq; -- 884738: the 3245 exact copies are gone
+```
+
+The first layer of the onion is done. Moving to the second. The second type of duplicates can be found by grouping by the key and retaining the groups with more than one row:
+
+```sql
+SELECT state, county, date, count(*)
+  FROM covid_uniq
+  GROUP BY state, county, date                              -- the key: one row per county-day
+  HAVING count(*) > 1;                                      -- one group: Texas Harris 2020-12-31 2 (the original and the correction)
+SELECT *
+  FROM covid_uniq
+  WHERE state = 'Texas' AND county = 'Harris' AND date = '2020-12-31'; 
+```
+
+Key duplicates need a rule for which row to keep. The usual one is "keep the newest version of each county-day", on the assumption that later data corrects earlier data. We write it with the window function `row_number()` from Lecture 6: number the rows of each county-day from newest to oldest, and keep number 1:
 
 ```sql
 CREATE VIEW covid_uniq_key AS
-  SELECT date, county, state, fips, cases, deaths, loaded_at -- every column except rn
+  SELECT date, county, state, fips, cases, deaths, loaded_at -- every column except rn as that's just a temporary tabulation
     FROM (
-      SELECT *, row_number() OVER (PARTITION BY state, county, date ORDER BY loaded_at DESC) AS rn
+      SELECT *, row_number() OVER (PARTITION BY state, county, date --this 3-tuple is the key
+                                   ORDER BY loaded_at DESC, cases DESC) AS rn  -- a tie in loaded_at: the larger cases wins
         FROM covid_uniq
       ) AS t
-    WHERE rn = 1;                                           -- within each county-day, the newest row is number 1 and is kept
+    WHERE rn = 1; -- within each county-day, the newest row is number 1 and is kept
+\d+
+```
+
+Why the second column in `ORDER BY`? Every row in one batch has the same `now()`. If one batch held two different versions of the same county-day, `loaded_at` alone would tie them, and `row_number()` would number the tied rows in whatever order Postgres happened to read them. The view could then keep one version today and the other tomorrow, with no error and no warning. A **tiebreaker** column makes the order total, so the same data always gives the same answer. What matters most is not which tiebreaker you choose but that there is one. Any `ORDER BY` inside `row_number()` that can tie is a bug waiting for the right data.
+
+Why should the larger `cases` value win in case of a tie on `loaded_at`? We use common sense: `cases` is a running total, so a fuller report of the same day usually has more cases. That is an educated guess.
+
+The window function cannot go directly in `WHERE`, because `WHERE` runs before window functions are computed. That is why `rn` is computed in a subquery and filtered outside it. The view reads from `covid_uniq`, not from `covid_raw`: each view does one job and builds on the one before, so you can query any step of the pipeline to check it.
+
+Now let's check to see it worked:
+
+```sql                                          
 SELECT count(*)
   FROM covid_uniq_key;                                      -- 884737: one row per county-day again
-SELECT cases
+SELECT *
   FROM covid_uniq_key
   WHERE state = 'Texas' AND county = 'Harris' AND date = '2020-12-31';   -- 237800: the correction won
 ```
 
-The window function cannot go directly in `WHERE`, because `WHERE` runs before window functions are computed. That is why `rn` is computed in a subquery and filtered outside it. The view reads from `covid_uniq`, not from `covid_raw`: each view does one job and builds on the one before, so you can query any step of the pipeline to check it. Note that `covid_raw` still holds all 887,983 rows. If the rule turns out to be wrong (maybe some corrections were themselves mistakes), you change the view, and nothing was lost.
-
-## Cleaning rules in a view
-
-The next view on top applies the cleaning rules. Each rule is a column expression, so all of them sit in one place.
-
-Each flag is computed from other columns, so it repeats information that is already there: `unassigned` is just `county = 'Unknown'` again. Later in this lecture we will see that storing repeated information in a *table* invites mistakes, because when one copy changes the other can be left behind. Lecture 6 showed why a view does not have that problem: it stores no data. A view is only a saved query, so every column of it, flags included, is computed again from the raw table every time it is queried, and it can never fall out of date. Nobody edits the view either. Views like these, with `DISTINCT` or window functions, are read-only, and Postgres refuses an `UPDATE` on them. The raw table underneath is protected too: while a view reads a column, Postgres refuses to change that column's type, so the table cannot change shape under the pipeline (Lecture 6):
+We're done with de-duplicating. Before we go on. Note that the raw table underneath is protected: while any of its view(s) reads a column, Postgres refuses any alterations that would break any view:
 
 ```sql
 UPDATE covid_uniq
@@ -124,26 +141,36 @@ ALTER TABLE covid_raw
   ALTER COLUMN cases TYPE bigint;
 -- ERROR:  cannot alter type of a column used by a view or rule
 -- DETAIL:  rule _RETURN on view covid_uniq depends on column "cases"
+DROP TABLE covid_raw; --can't drop the table now as the view depends on it
 ```
 
-Corrections go into the raw table, the only copy of the data, and every view on top picks them up on the next query. So a view may hold as many computed and duplicative columns as are convenient. Here is the cleaning view:
+## Cleaning rules in a view
+
+The next view on top applies the cleaning rules. Each rule is a column expression, so all of them sit in one place.
+
+Each flag is computed from other columns, so it repeats information that is already there: `county_unassigned` is just `county = 'unknown'` again. Storing repeated information in a *table* invites mistakes, because when one copy changes the other can be left behind. Lecture 6 showed why a view does not have that problem: it stores no data. A view is only a saved query, so every column of it, flags included, is computed again from the raw table every time it is queried, and it can never go stale. Nobody edits the views either; they are read-only. 
+
+Here is an example cleaning view:
 
 ```sql
 CREATE VIEW covid_uniq_key_clean AS
   SELECT date,
-         lower(trim(state))             AS state,           -- trim drops stray spaces and lower evens out capitalization, so
-         lower(trim(county))            AS county,          -- ' Harris', 'HARRIS' and 'Harris' all become 'harris'
-         fips, cases, deaths,
-         -- below, state and county are still the columns of covid_uniq_key: a SELECT cannot see the columns it is creating
-         county = 'Unknown'             AS unassigned,      -- cases a state could not yet assign to a county
-         county IN ('New York City', 'Kansas City', 'Joplin')
-                                        AS not_a_county,    -- cities reported instead of their counties, so no fips
-         deaths > cases                AS deaths_exceed_cases,
-         cases < lag(cases) OVER (PARTITION BY state, county ORDER BY date)
-                                        AS cases_went_down  -- cases is cumulative, so a drop means a correction
+      lower(trim(state))             AS state,           -- trim drops stray spaces and lower evens out capitalization, so
+      lower(trim(county))            AS county,          -- ' Harris', 'HARRIS' and 'Harris' all become 'harris'
+      trim(fips)                     AS fips,            -- fips is text so it can have stray spaces too
+      cases, deaths,                                     -- no cleaning here: typed integers cannot have stray spaces
+      -- below, county is still the raw column of covid_uniq_key (a SELECT cannot see the columns it is creating),
+      -- so the flags clean it again with lower(trim(...)) and compare with lowercase names
+      lower(trim(county)) = 'unknown'
+                                     AS county_unassigned, -- cases a state could not yet assign to a county
+      lower(trim(county)) IN ('new york city', 'kansas city', 'joplin') --these are the only examples found (imagine we did other work)
+                                     AS not_a_county,    -- cities reported instead of their counties, so no fips
+      deaths > cases                 AS deaths_exceed_cases,
+      cases < lag(cases) OVER (PARTITION BY state, county ORDER BY date)
+                                    AS cases_went_down  -- cases is cumulative, so a drop means a correction or an error
     FROM covid_uniq_key;
 -- a flag is true or false, so it can be the whole WHERE condition
-SELECT count(*) FROM covid_uniq_key_clean WHERE unassigned;          -- 7483
+SELECT count(*) FROM covid_uniq_key_clean WHERE county_unassigned;   -- 7483
 SELECT count(*) FROM covid_uniq_key_clean WHERE not_a_county;        -- 783
 SELECT count(*) FROM covid_uniq_key_clean WHERE deaths_exceed_cases; -- 792
 SELECT count(*) FROM covid_uniq_key_clean WHERE cases_went_down;     -- 15144
@@ -151,17 +178,87 @@ SELECT count(*) FROM covid_uniq_key_clean WHERE cases_went_down;     -- 15144
 
 The view **flags** the odd rows and does not delete them. Whether to drop them depends on the question, so the decision is left to whoever queries the view. All 792 rows where deaths exceed cases turn out to be "Unknown" rows (deaths assigned to a state before their cases were), and the 15,144 drops in a running total are the corrections that make naive "new cases" negative.
 
-Other data needs other rules, and they are all one-liners of the same kind:
+Other data needs other rules, and they are all one-liners of the same kind, e.g.
 
 | Problem                                   | Rule in the view                                         |
 |:------------------------------------------|:---------------------------------------------------------|
-| stray spaces, inconsistent capitalization | `trim(county)`, `lower(email)`                           |
 | a code that means "missing"               | `NULLIF(income, -999)`, `NULLIF(trim(name), '')`         |
 | several spellings of the same value       | `CASE WHEN x IN ('N/A', 'NA', '?') THEN NULL ELSE x END` |
 | numbers stored as text                    | `NULLIF(price_text, 'N/A')::numeric`                     |
 | impossible values                         | `CASE WHEN age BETWEEN 0 AND 120 THEN age END`           |
 
-`covid` happens to need almost none of these: no county or state name has stray spaces, and the typed columns refused `'N/A'` as a number back when we loaded it. That is the advantage of typed columns: a whole class of dirt cannot get in. The view still passes `state` and `county` through `lower(trim(...))`. On `covid` that changes only the capitalization, but it protects the next feed and any other source `covid` is joined with, which may write ` Harris ` or `HARRIS`. Every query on the cleaned views must then use the cleaned form, which is why the queries below write `'puerto rico'`, not `'Puerto Rico'`. The raw table still has the original spelling.
+`covid` happens to need almost none of these: the typed columns refused `'N/A'` as a number back when we loaded it. That is the advantage of typed columns: a whole class of dirt cannot get in. The view still passes `state` and `county` through `lower(trim(...))`. On `covid` that changes only the capitalization, but it protects the next feed and any other source `covid` is joined with, which may write ` Harris ` or `HARRIS`. Every query on the cleaned views must then use the cleaned form, which is why the queries below write `'puerto rico'`, not `'Puerto Rico'`. The raw table still has the original spelling.
+
+## Running totals and reporting artifacts
+
+This section won't be covered in this class, but it's important in time-series data so I'll spend a few minutes explaining it.
+
+The `cases_went_down` flag found 15,144 days on which a running total went *down*. That matters as soon as anyone asks for the new cases per day, the number most analyses actually want. The new cases of a day are today's total minus yesterday's, as in Lecture 6. Here it is per county. The second and third arguments of `lag(cases, 1, 0)` say to look 1 row back, and to use 0 when there is no row before, so that a county's first day counts all of its cases as new:
+
+```sql
+WITH daily AS (
+  SELECT state, county, date,
+         cases - lag(cases, 1, 0) OVER (PARTITION BY state, county ORDER BY date) AS new_cases 
+         --if there's no lag one row back then (i.e., it's the first row) then default to zero
+    FROM covid_uniq_key_clean
+  )
+SELECT count(CASE WHEN new_cases < 0 THEN 1 END) AS negative_days,  -- 15144: the cases_went_down rows
+       sum(new_cases)                            AS total,          -- 20031513: each county's last running total, added up
+       sum(greatest(new_cases, 0))               AS total_clamped   -- 20265329: 233816 too many
+  FROM daily;
+```
+
+A negative day is a correction: the worst is Rhode Island's Unknown row on 2020-12-09, at -6,994, most likely cases moved from Unknown to the counties they belonged to once those were known. Negative new cases break plots, logs and every count model, so the tempting fix is to **clamp** them to 0 with `greatest(new_cases, 0)`. But clamping keeps the inflated days that came before each correction and only throws away the correction, so the clamped total is 233,816 cases too high. Adding up the days no longer gives the running total.
+
+A better fix follows the same rule as the de-duplication: **trust the later report**. If the total on some day is higher than a total reported after it, the earlier number was too high, so lower it to the smallest total reported on any later day. That is a window from the current row to the end of the count. 
+
+```sql
+WITH fixed AS (
+  SELECT state, county, date, cases,
+         min(cases) OVER (PARTITION BY state, county ORDER BY date
+                          ROWS BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING) AS cases_fixed
+    FROM covid_uniq_key_clean
+  ),
+  daily AS (
+    SELECT *, cases_fixed - lag(cases_fixed, 1, 0) OVER (PARTITION BY state, county ORDER BY date) AS new_cases
+      FROM fixed
+  )
+SELECT count(CASE WHEN cases_fixed < cases THEN 1 END) AS days_lowered,   -- 30526
+       count(CASE WHEN new_cases < 0 THEN 1 END)       AS negative_days,  -- 0
+       sum(new_cases)                                  AS total           -- 20031513: the total is preserved
+  FROM daily;
+```
+
+The correction is now spread back over the days that were too high (30,526 of them), no day is negative, and the days add up to the running total again. This assumes the later number is right, the same assumption as "keep the newest version", and it is worth saying out loud in the same way.
+
+A correction makes a day too *low*. The opposite artifact is a day that is too *high*. When a health department clears a backlog, a week's worth of tests is reported on a single day. Lecture 5 showed the milder version, the weekend dip. These numbers are not impossible: 14,000 new cases in Harris County is a perfectly valid integer, so no `BETWEEN` rule can catch it. What gives it away is that it is impossible *compared with the days around it*. That is a statistical rule rather than a fixed one, and it is again a window function. Compare each day with the average of the 7 days before it (`1 PRECEDING`, so a spike does not count in its own baseline), and flag the days more than 10 times that average.  This won't be covered in this class, but here's how to do it:
+
+```sql
+WITH fixed AS (
+  SELECT state, county, date, cases,
+         min(cases) OVER (PARTITION BY state, county ORDER BY date
+                          ROWS BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING) AS cases_fixed
+    FROM covid_uniq_key_clean
+  ),
+  daily AS (
+    SELECT *, cases_fixed - lag(cases_fixed, 1, 0) OVER (PARTITION BY state, county ORDER BY date) AS new_cases
+      FROM fixed
+  ),
+  baseline AS (
+    SELECT *, avg(new_cases) OVER (PARTITION BY state, county ORDER BY date
+                                   ROWS BETWEEN 7 PRECEDING AND 1 PRECEDING) AS prev_week_avg
+      FROM daily
+  )
+SELECT date, state, county, new_cases, round(prev_week_avg) AS prev_week_avg
+  FROM baseline
+  WHERE new_cases > 10 * prev_week_avg
+    AND new_cases >= 100                                    -- ignore small counties, where 10 after a week of 0s is noise
+  ORDER BY new_cases DESC
+  LIMIT 3;
+-- 2020-09-21 texas harris 14129 1092, 2020-12-28 texas tarrant 8208 671, 2020-11-18 rhode island providence 3704 357
+```
+
+Without the `LIMIT`, 557 county-days in 43 states are flagged. Harris on Monday, September 21 has the typical shape of a backlog: 553 new cases the day before, 527 the day after, and 14,129 in between. As with the other flags, the honest move is to flag such a day, not to "fix" it. Spreading the backlog back over the days it really belongs to needs information the feed does not have. The cut-offs (10 times, at least 100) are choices, not facts, so try a few and see how the count changes. Two caveats. First, `ROWS` counts rows, not days, so for a county with unreported days, "the 7 rows before" covers more than a week (we find those missing rows with a `CROSS JOIN` later in this lecture). Second, a mean is pulled up by the very spikes it is meant to detect, so a backlog right after another one can hide. The robust baseline is the median, but Postgres cannot compute a median as a window function. That is one place where R or Python (e.g. `zoo::rollmedian`, or `rolling(7).median()` in `pandas`) is the better tool.
 
 ## Missing data
 
@@ -178,7 +275,7 @@ SELECT state, count(*) AS deaths_missing
   GROUP BY state;                                           -- puerto rico 18761: all of them
 ```
 
-The missing fips are the 7,483 "Unknown" rows and 783 rows for three places that are not single counties (New York City, Kansas City and Joplin). The right fix here is to leave them `NULL`. A fips is an identifier, not a measurement, and these places have none: an "Unknown" row is not a county at all, New York City spans five counties (its boroughs), and Kansas City and Joplin are cities reported separately from the counties they overlap. Any single fips we filled in would be wrong. For example, giving New York City Manhattan's fips would attach Manhattan's population to the cases of all five boroughs. So the view flags these rows (`unassigned`, `not_a_county`) and keeps the `NULL`. If a later question needs county-level data such as population, a small mapping table (New York City → its five borough fips) handles it then.
+The missing fips are the 7,483 "Unknown" rows and 783 rows for three places that are not single counties (New York City, Kansas City and Joplin). The right fix here is to leave them `NULL`. A fips is an identifier, not a measurement, and these places have none: an "Unknown" row is not a county at all, New York City spans five counties (its boroughs), and Kansas City and Joplin are cities reported separately from the counties they overlap. Any single fips we filled in would be wrong. For example, giving New York City Manhattan's fips would attach Manhattan's population to the cases of all five boroughs. So the view flags these rows (`county_unassigned`, `not_a_county`) and keeps the `NULL`. If a later question needs county-level data such as population, a small mapping table (New York City → its five borough fips) handles it then.
 
 The missing deaths are all in Puerto Rico, and that is the important lesson about missing data: **first ask why it is missing**. Looking at Puerto Rico on one day shows it:
 
@@ -186,14 +283,13 @@ The missing deaths are all in Puerto Rico, and that is the important lesson abou
 SELECT county, cases, deaths
   FROM covid_uniq_key_clean
   WHERE state = 'puerto rico' AND date = '2020-12-31'
-  ORDER BY deaths NULLS LAST, cases DESC
-  LIMIT 4;                                                  -- unknown 3875 1503, san juan 15250 NULL, bayamon 8062 NULL, carolina 6494 NULL
+  ORDER BY deaths NULLS LAST, cases DESC;                                                  -- unknown 3875 1503, san juan 15250 NULL, bayamon 8062 NULL, carolina 6494 NULL
 ```
 
 Puerto Rico reported its deaths only for the island as a whole, in its "Unknown" row, and not per municipality (Puerto Rico's equivalent of a county). The deaths are not missing *at random*. They are not even lost, they are recorded at a different level. That decides what to do with them:
 
-* **Dropping** the rows with missing deaths would throw away 78 municipalities and all of their cases.
-* **Filling in 0** would be a sentinel of our own making, and would claim that San Juan had no deaths.
+* **Dropping** the rows with missing deaths would throw away 78 counties and all of their cases.
+* **Filling in 0** would be a sentinel of our own making, and would claim that San Juan, Bayamon, etc had no deaths.
 * **Mean imputation**, e.g. cases times the national deaths-per-case rate, would invent deaths *on top of* the 1,503 already in the Unknown row and count them twice.
 * **Advanced imputation** trains a predictive model on the rows where the value is known, e.g. deaths from cases, population and age structure, and uses it to predict the missing values (regression, random forests as in `missForest`, or the chained models of `mice`). That is beyond SQL: you pull the data into R or Python through the database drivers later in this lecture and fit the model there. Here it would still have to be forced to add up to the 1,503 known deaths. We may or may not get to model-based advanced imputation later in this course.
 
@@ -204,39 +300,45 @@ This is the next step of the pipeline, `covid_uniq_key_clean_imputed` on top of 
 ```sql
 CREATE VIEW covid_uniq_key_clean_imputed AS
   SELECT date, state, county, fips, cases, deaths,
-         unassigned, not_a_county, deaths_exceed_cases, cases_went_down,
+         county_unassigned, not_a_county, deaths_exceed_cases, cases_went_down,
          CASE
            WHEN deaths IS NULL               THEN unknown_deaths * cases::numeric / NULLIF(missing_cases, 0)
                                                                       -- ::numeric, or integer division would drop the fractions
-           WHEN unassigned AND missing_cases > 0 THEN 0               -- the Unknown row's deaths were all shared out
+           WHEN county_unassigned AND missing_cases > 0 THEN 0        -- the Unknown row's deaths were all shared out
            ELSE deaths                                                -- a real count, kept as it is
          END                AS deaths_imputed,
          deaths IS NULL     AS is_imputed                             -- a flag, so nobody mistakes an estimate for a count
     FROM (SELECT *,
-                 max(CASE WHEN unassigned THEN deaths END)       OVER (PARTITION BY state, date) AS unknown_deaths,
-                 sum(CASE WHEN deaths IS NULL THEN cases END)    OVER (PARTITION BY state, date) AS missing_cases
+                 max(CASE WHEN county_unassigned THEN deaths END) OVER (PARTITION BY state, date) AS unknown_deaths,
+                 sum(CASE WHEN deaths IS NULL THEN cases END)     OVER (PARTITION BY state, date) AS missing_cases
             FROM covid_uniq_key_clean) AS t;
-SELECT county, cases, round(deaths_imputed) AS deaths_imputed
+```
+
+Let's make sure it worked:
+
+```sql
+SELECT county, cases, deaths, deaths_imputed
   FROM covid_uniq_key_clean_imputed
   WHERE state = 'puerto rico' AND date = '2020-12-31'
   ORDER BY cases DESC
   LIMIT 3;                                                  -- san juan 15250 216, bayamon 8062 114, carolina 6494 92
-SELECT round(sum(deaths_imputed))                         -- round only the total, for display
+SELECT sum(deaths_imputed) 
   FROM covid_uniq_key_clean_imputed
-  WHERE state = 'puerto rico' AND date = '2020-12-31';      -- 1503: the total is preserved
+  WHERE state = 'puerto rico' AND date = '2020-12-31';      -- 1503: the total is preserved with some numerical error
 SELECT DISTINCT state
   FROM covid_uniq_key_clean_imputed
   WHERE is_imputed;                                         -- puerto rico: the only state the rule changed
 ```
 
-`missing_cases` is `NULL` in a state-day with nothing missing (`sum` of no values), so the middle `WHEN` is false there and the Unknown row keeps its own deaths. The `NULLIF` turns a zero into `NULL`, so a day whose missing rows all have 0 cases leaves them `NULL` instead of failing on division by zero. The view fills in all 18,761 missing values, on all 241 days. Keep the unrounded values and round only for display: rounding each one first would make that day add up to 1,505, not 1,503. The imputation assumes deaths are proportional to cases in every municipality, an assumption you should say out loud. Any single imputation also understates uncertainty: the imputed values look as exact as measured ones. **Multiple imputation** (e.g. the `mice` package in R) fills in several plausible versions and combines the results, which is the statistician's tool for this and beyond the scope here.
+This unit only considered missing *values*, in rows that exist. The sneakier kind of missing data is entire missing *rows*: a county-day that was never reported is simply absent from the table, and no `count` over the table can see it. Finding those needs a list of every county-day that *should* be there, to compare against. We build exactly that with a `CROSS JOIN` later in this lecture, and it turns up 860 unreported county-days in December 2020 alone.
 
 ## Beyond exact rules
 
-Two more techniques you should know about, but we don't have time to cover:
+Three more techniques you should know about, but we don't have time to cover:
 
 * **Fuzzy matching and record linkage.** "St. Louis" and "Saint Louis", or "Jon Smith, 1980" and "John Smith, 1980", are duplicates that no exact rule catches. String distances find them: Postgres's `pg_trgm` and `fuzzystrmatch` extensions, `rapidfuzz` in Python and `stringdist` in R. Linking whole records across sources, when there is no shared key, is done with `splink` (Python) or `fastLink` (R). The output is usually a small mapping table (spelling → canonical id) that a view then joins on (joins come later in this lecture).
 * **Validation.** Write your assumptions down as tests that fail loudly when new data breaks them: `pointblank` in R, `pandera` or `Great Expectations (GX)` in Python and the Postgres' own `CHECK` constraints, e.g. `ALTER TABLE covid ADD CHECK (cases >= 0)`, which makes the database refuse a negative count the way typed columns refused `'N/A'`.
+* **Materialized views.** Every query on `covid_uniq_key_clean_imputed` recomputes the whole pipeline underneath it: the `DISTINCT`, the `row_number()`, the `lag()` and the imputation windows, over all 887,983 raw rows. In practice the last layer is usually a `MATERIALIZED VIEW`, which runs the query once and stores the result like a table, and is brought up to date with `REFRESH MATERIALIZED VIEW` (typically on a schedule, after each new feed arrives). Queries on it are then as fast as on a table, but it is only as current as its last refresh, so it gives up the "always current" advantage of plain views that we discuss below.
 
 When you are done, remove the demo. Views depend on the table and on each other, so `CASCADE` drops them along with it:
 
@@ -246,11 +348,12 @@ DROP TABLE covid_raw CASCADE;                               -- also drops covid_
 
 Why do this cleaning in SQL rather than in R or Python? We come back to that after the database drivers.
 
+
 # Relational Databases with Multiple Tables
 
 Look at what `covid` repeats. It has 884,737 rows but only 3,273 counties and 55 states, so the text "Texas" is stored 67,002 times, and each county's name and fips code are stored once for every day it reported. The only facts that are new on each row are `date`, `cases` and `deaths`. Repeating the rest wastes space, but worse, it invites mistakes: rename a county and you must change hundreds of rows, and if you miss one the table now disagrees with itself.
 
-A **relational database** stores each kind of thing in its own table, once, and connects the tables with **keys**:
+A **relational database** stores each kind of unit in its own table, once, and connects the tables with **keys** of where there are two types:
 
 * A **primary key** is a column (or a few columns together) whose value is different on every row, so it names/identifies exactly one row. Usually it is an integer **id** that the database hands out (1, 2, 3, ...). Thus id is a column that is not "real" data and its value means nothing on its own. A real-world code such as fips could serve too (a *natural* key), but real-world codes have gaps: New York City and the "Unknown" counties in `covid` have no fips at all. A postgres hard-coded invented `id` never has that problem.
 * A **foreign key** is a column that holds another table's primary key, e.g. `state_id` in the counties table holds an id from the states table. It is a pointer: "this county's state is the row with id 47 over there".
@@ -284,12 +387,10 @@ In practice you will often see an `id` column anyway in a table like `daily_coun
 
 The three tables follow the rules of good relational design. Converting this raw table to this format is called **normalization**. The central rule is **no duplicate data: every fact is stored in exactly one place**. Then a change is made once, and the database cannot disagree with itself. A few habits follow from it:
 
-* **One table per kind of thing.** States, counties and daily counts are different things, so each gets its own table. A good test is to say in words what one row of the table is: "one county", "one county on one day". If you can't, the table mixes two kinds of thing.
-* **Every column describes the row's own thing.** A state's name belongs in `states`, not in `counties`. States do not describe `counties`. The county row points to its state with `state_id` and gets the name through a "join" which we will see shortly.
-* **Don't store what you can compute.** Daily new cases are the difference of two days of cumulative `cases`, and a state's total is a `SUM` over its counties. Stored copies of them go stale the moment someone corrects the numbers they came from.
-* **One value per cell** which means you store data in *long* format, not *wide* format. Don't put a list such as `"06037,48113"` in one cell, and don't make one column per month (`cases_jan`, `cases_feb`, ...). That is the *wide* format: one row per county with the months spread across the columns. The *long* format has one row per county per day, like `daily_counts`, so each new day is new rows rather than a new column and a changed table. We will return to long vs. wide when we get to visualization, where plotting software also wants the long format.
-
-Sometimes you break these rules on purpose especially if the table is written once and read many times e.g. an analytics table or a Parquet file is often one wide, repetitive table. But again, that's not relevant to this topic which is about good database design.
+* **One table per kind of unit.** States, counties and daily counts are different units, so each gets its own table. A good test is to say in words what one row of the table is: "one county", "one county on one day". If you can't, the table mixes two kinds of unit.
+* **Every column describes the row's own unit.** A state's name belongs in `states`, not in `counties`. States do not describe `counties`. The county row points to its state with `state_id` and gets the name through a "join" which we will see shortly.
+* **Don't store what you can compute.** We spoke about this before. Daily new cases are the difference of two days of cumulative `cases`, and a state's total is a `SUM` over its counties. Stored copies of them go stale the moment someone corrects the numbers they came from.
+* **One value per cell** which means you store data in *long* format, not *wide* format. Don't put a list such as `"06037,48113"` in one cell, and don't make one column per month (`cases_jan`, `cases_feb`, ...). That is the *wide* format: one row per county with the months spread across the columns. The *long* format has one row per county per day, like `daily_counts`, so each new day is new rows rather than a new column and a changed table. We will hopefully return to long vs. wide when we get to visualization, where plotting software also wants the long format. But doing regressions like *wide*. We'll see that later.
 
 Here is the SQL that builds the normalized form, i.e. the three tables we mentioned derived from the non-normazlied `covid` table. Three things in it are new. `GENERATED ALWAYS AS IDENTITY` makes Postgres hand out the ids 1, 2, 3, ... itself. `PRIMARY KEY` and `REFERENCES` declare the keys, and Postgres then refuses rows that break them: a repeated primary key, or a foreign key that points at no row. And `INSERT INTO ... SELECT` is the `INSERT` from above, but its rows come from a query instead of from `VALUES`:
 
@@ -385,7 +486,6 @@ SELECT pg_size_pretty(pg_total_relation_size('covid')) AS covid,
        pg_size_pretty(pg_total_relation_size('states')
                     + pg_total_relation_size('counties')
                     + pg_total_relation_size('daily_counts')) AS three_tables;
--- covid 63 MB, three_tables 63 MB
 ```
 
 No savings at all, even though "Texas" is now stored once instead of 67,002 times and "California" is stored once instead of 16,801 times, etc. To see why, split each table's size into the table itself and its indexes:
@@ -397,12 +497,6 @@ SELECT relname AS table_name,
   FROM pg_stat_user_tables                                  -- one row per table in this database
   WHERE relname IN ('covid', 'states', 'counties', 'daily_counts')
   ORDER BY pg_total_relation_size(relid) DESC;
--- covid XX MB + XX MB = 63MB, daily_counts XX MB + XX MB = 63MB, 
--- the size of counties and states tables are trivial
-SELECT pg_size_pretty(pg_total_relation_size('covid')) AS covid,
-       pg_size_pretty(pg_total_relation_size('states')
-                    + pg_total_relation_size('counties')
-                    + pg_total_relation_size('daily_counts')) AS three_tables;
 ```
 
 `states` and `counties` are tiny, so the comparison is really `covid` against `daily_counts`, which still has all 884,737 rows. Two things happened to them, and they cancel out:
@@ -448,12 +542,12 @@ Before we discuss all the types of "relationships between tables", it would be c
 
 Before we talk about the relationship between this table and the original `counties` table, the obvious question is: why design the database this way? Why not just store all this extra metadata about counties in the counties table? Often you should: if every county has these facts and they are read together with its name, extra columns in `counties` are simpler. A separate table pays off when:
 
-* **Not every row has the extra facts.** Our imagined profiles exist for only some counties. In `counties` the other counties would carry a row of `NULL`s; in a separate table they simply have no row.
+* **Not every row has the extra facts.** Our imagined profiles exist for only some counties. In `counties` the other counties would carry a lot of columns with `NULL`s; in a separate table they simply have no row.
 * **The facts come from somewhere else.** Population comes from the Census, which publishes new estimates every year. A separate table can be replaced wholesale with each release without touching `counties`, which other tables point at.
 * **The profile data is rarely needed.** A table is stored in 8 KB pages, like the index pages of Lecture 5, so every extra column makes each row bigger and every scan of `counties` read more pages (thus run slower), even for queries that only want names. Long text, images or JSON documents are usually moved out for this reason.
 * **They are private.** Columns such as salaries or patients' details can live in their own table that most users are not allowed to read, while everyone can read the main one.
 
-(2) Also consider two more imaginary tables. `zips` holds one row per ZIP code: its own invented `id`, the `code` itself (`text`, like `fips`, so leading zeros survive), its land area in square miles and `approx_population`, its population rounded to the nearest thousand. `post_office_city_name` is the city name the post office uses for the ZIP code, which is not always the city its addresses are legally in. `county_zip_bridge` holds one row for each pair of a county and a ZIP code that lies (at least partly) in it, and nothing else: two foreign keys, one into `counties` and one into `zips`.
+(2) Also consider two more imaginary tables. `zips` holds one row per ZIP code (which is a land area not the same as county/fips): its own invented `id`, the `code` itself (`text`, like `fips`, so leading zeros survive), its land area in square miles and `approx_population`, its population rounded to the nearest thousand. `post_office_city_name` is the city name the post office uses for the ZIP code, which is not always the city its addresses are legally in. `county_zip_bridge` holds one row for each pair of a county and a ZIP code that lies (at least partly) in it, and nothing else: two foreign keys, one into `counties` and one into `zips`.
 
 | `zips` |          |                           |                |                       |
 |-------:|:---------|:--------------------------|---------------:|----------------------:|
@@ -480,8 +574,8 @@ Neither `county_profiles` nor `county_zip_bridge` has an `id` column, because ne
 
 ### Three kinds of relationships. 
 
-* **One-to-many.** A state "has many" counties, and each county "belongs to one" state. The foreign key always sits on the "many" side (`counties.state_id`), because one county has exactly one state to point at, while a state cannot hold a list of all its counties in one column. Likewise a county has many daily counts. This is by far the most common relationship.
-* **One-to-one.** Each row matches at most one row of the other table, e.g. a county "has one" row in `county_profiles` and a count_profile "belongs to one" county. It is a one-to-many whose foreign key may not repeat, and it is used to split off columns that are rarely needed, very large, or private.
+* **One-to-many.** A state "has many" counties, and each county "belongs to one" state. The foreign key always sits on the "many" table (`counties.state_id`), because one county has exactly one state to point at, while a state cannot hold a list of all its counties in one column. Likewise a county has many daily counts. This is by far the most common relationship.
+* **One-to-one.** Each row matches at most one row of the other table, e.g. a county "has one" row in `county_profiles` and a count_profile "belongs to one" county. It is really just a one-to-many whose foreign key may not repeat, and it is used to split off columns that are rarely needed, very large, or private.
 * **Many-to-many.** ZIP codes and counties: a county "has many" ZIP codes, and a ZIP code "has many" counties since zip codes can cross county lines (e.g., zip code 75019 lies partly in Dallas County and partly in Denton County). Thus, neither `counties` nor `zips` can hold a single foreign key to the other, so a third table, `county_zip_bridge`, holds one row per pair, two foreign keys and nothing else. Such a table goes by many names: a **bridge table**, **join table**, **junction table**, **link table**, **associative table** or **cross-reference table**. They all mean the same thing.
 
 Two variations are also common in practice:
@@ -496,21 +590,21 @@ Relational databases with multiple tables are an amazing technology. But splitti
 A **join** puts rows of two related tables (or a table with itself) side by side wherever a condition between them holds, almost always "this table's foreign key equals that table's primary key". `FROM a JOIN b ON <condition>` gives one row for each pair of rows that matches, and every later clause (`WHERE`, `GROUP BY`, `SELECT`, ...) sees those combined rows as if they were one table. Here are the cases in Texas on 2020-12-31 again, put back together from the three tables:
 
 ```sql
--- d, c and s are table aliases, as for subqueries: both counties and states have a column "name" (and "id"),
+-- we d, c and s are table aliases for convenience, as for subqueries: both counties and states have a column "name" (and "id"),
 -- so every column must say which table it comes from
-SELECT s.name AS state, c.name AS county, d.cases
+SELECT s.name AS state, c.name AS county, d.date, d.cases, d.deaths
   FROM daily_counts AS d
   JOIN counties AS c ON c.id = d.county_id                  -- each daily count, next to its county's row
   JOIN states AS s ON s.id = c.state_id                     -- ... and next to that county's state's row
   WHERE s.name = 'Texas' AND d.date = '2020-12-31'
   ORDER BY d.cases DESC
-  LIMIT 3;                                                  -- Texas Harris 237727, Texas Dallas 193318, Texas Tarrant 150004
+  LIMIT 3;                                                
 ```
 
 Read it in processing order: `FROM` and its `JOIN`s first build the combined rows, then `WHERE` keeps Texas on 2020-12-31, then `ORDER BY` and `LIMIT`. How Postgres matches the rows is up to the planner, and `EXPLAIN` shows its choice. 
 
 ```sql
-EXPLAIN SELECT s.name AS state, c.name AS county, d.cases
+EXPLAIN SELECT s.name AS state, c.name AS county, d.date, d.cases, d.deaths
   FROM daily_counts AS d
   JOIN counties AS c ON c.id = d.county_id                  -- each daily count, next to its county's row
   JOIN states AS s ON s.id = c.state_id                     -- ... and next to that county's state's row
@@ -519,7 +613,53 @@ EXPLAIN SELECT s.name AS state, c.name AS county, d.cases
   LIMIT 3;                                                  -- Texas Harris 237727, Texas Dallas 193318, Texas Tarrant 150004
 ```
 
-For this query it picks a **Nested Loop**: find Texas in `states`, then for each of its counties look up that day's count, every lookup through an index. These are the indexes that `PRIMARY KEY` and `UNIQUE` built for free, which is one more reason to declare keys. 
+```
+Limit
+  ->  Sort  (Sort Key: d.cases DESC)
+        ->  Nested Loop
+              ->  Nested Loop
+                    ->  Seq Scan on states s                          (Filter: name = 'Texas')
+                    ->  Bitmap Heap Scan on counties c                (Recheck Cond: state_id = s.id)
+                          ->  Bitmap Index Scan on counties_state_id_name_key
+              ->  Index Scan using daily_counts_pkey on daily_counts d
+                    (Index Cond: county_id = c.id AND date = '2020-12-31')
+```
+
+For this query it picks a **Nested Loop**: find Texas in `states`, then for each of its counties look up that day's count. A nested loop runs its lower branch once for every row of its upper branch, so read the plan from the innermost scans outwards:
+
+* **`Seq Scan on states`** reads all 55 rows of `states` and keeps Texas. There *is* an index on `name` (the one `UNIQUE` built), but the whole table fits on a single disk page, so reading it straight through is cheaper than walking a B-tree first. For a tiny table, a sequential scan is the right plan, not a missing index.
+* **`Bitmap Index Scan` and `Bitmap Heap Scan` on `counties`** find Texas's 255 counties (the plan estimates 60, an average state). The index used is `counties_state_id_name_key`, built by `UNIQUE (state_id, name)`. It is sorted by `state_id` first, so it also serves a search on `state_id` alone. A bitmap scan, the plan Lecture 5 got for Harris County, works in two steps: the index scan first marks the disk pages that hold a match, then the heap scan reads just those pages, in disk order, and checks each row again ("Recheck Cond"). That pays off when there are many matches spread over the table, like 255 counties.
+* **`Index Scan using daily_counts_pkey`** runs once per Texas county and finds that county's row for 2020-12-31 directly, out of all 884,737 daily counts. The index is the `PRIMARY KEY (county_id, date)`, and both columns are given in the condition, so each lookup is a walk down the B-tree to exactly one row: 255 lookups of $O(\log n)$ instead of one scan of $O(n)$.
+* **`Sort` and `Limit`** then order the 255 combined rows by `cases` and keep the top 3.
+
+Two of the three scans run through indexes that `PRIMARY KEY` and `UNIQUE` built for free, which is one more reason to declare keys.
+
+Almost every query below needs a county's name next to its state's name, and so needs the `counties` to `states` join every time. Write it once, as a view (Lecture 6), with column names that no longer collide:
+
+```sql
+CREATE VIEW state_county AS
+  SELECT c.id AS county_id, s.name AS state, c.name AS county, c.fips
+    FROM counties AS c
+    JOIN states AS s ON s.id = c.state_id;                  -- one row per county, with its state's name
+SELECT *
+  FROM state_county
+  ORDER BY county_id
+  LIMIT 3;                                                  -- 1 Alabama Autauga 01001, 2 Alabama Baldwin 01003, 3 Alabama Barbour 01005
+```
+
+The three-table query from above is now a two-table one:
+
+```sql
+SELECT sc.state, sc.county, d.date, d.cases, d.deaths
+  FROM daily_counts AS d
+  JOIN state_county AS sc ON sc.county_id = d.county_id
+  WHERE sc.state = 'Texas' AND d.date = '2020-12-31'
+  ORDER BY d.cases DESC
+  LIMIT 3;                                                  -- Texas Harris 237727, Texas Dallas 193318, Texas Tarrant 150004
+```
+
+A view costs nothing here. Postgres replaces `state_county` by its query before planning, so `EXPLAIN` on this version prints exactly the plan above, with the same three scans and the same indexes. The view only saves typing, and it keeps the join written correctly in one place.
+
 
 
 ## `INNER JOIN` and `LEFT JOIN`
@@ -530,15 +670,15 @@ E.g., which counties reported on 2020-12-31?
 
 ```sql
 SELECT count(*)
-  FROM counties;                                            -- 3273 counties
+  FROM state_county;                                        -- 3273 counties
 -- INNER: only counties that have a count on that day
 SELECT count(*)
-  FROM counties AS c
-  JOIN daily_counts AS d ON d.county_id = c.id AND d.date = '2020-12-31';        -- 3245
+  FROM state_county AS sc
+  JOIN daily_counts AS d ON d.county_id = sc.county_id AND d.date = '2020-12-31';        -- 3245
 -- LEFT: every county, with NULL cases where it has no count on that day
 SELECT count(*)
-  FROM counties AS c
-  LEFT JOIN daily_counts AS d ON d.county_id = c.id AND d.date = '2020-12-31';   -- 3273
+  FROM state_county AS sc
+  LEFT JOIN daily_counts AS d ON d.county_id = sc.county_id AND d.date = '2020-12-31';   -- 3273
 ```
 
 28 counties are in the left join but not in the inner one. 
@@ -546,68 +686,45 @@ SELECT count(*)
 To see them, run the same `LEFT JOIN` and sort the rows with no partner to the top. Their `d` columns came back `NULL`, and `NULLS FIRST` (from the window functions section) puts them first:
 
 ```sql
-SELECT s.name AS state, c.name AS county, d.cases
-  FROM counties AS c
-  JOIN states AS s ON s.id = c.state_id
-  LEFT JOIN daily_counts AS d ON d.county_id = c.id AND d.date = '2020-12-31'
-  ORDER BY d.county_id NULLS FIRST, s.name                  -- d.county_id is NULL only where there is no partner on that day
+SELECT sc.state, sc.county, d.cases
+  FROM state_county AS sc
+  LEFT JOIN daily_counts AS d ON d.county_id = sc.county_id AND d.date = '2020-12-31'
+  ORDER BY d.county_id NULLS FIRST, sc.state                -- d.county_id is NULL only where there is no partner on that day
   LIMIT 33;                                                  -- Arizona Unknown NULL, California Unknown NULL, Colorado Unknown NULL
 ```
 
-All 28 are "Unknown" rows: cases a state could not yet assign to a county, which it stopped reporting once it had assigned them all. The same question with `NOT EXISTS` from the subqueries section, `SELECT count(*) FROM counties AS c WHERE NOT EXISTS (SELECT * FROM daily_counts AS d WHERE d.county_id = c.id AND d.date = '2020-12-31')`, also gives 28.
+All 28 are "Unknown" rows. "Unknown" is not a county: it is where a state puts cases whose county it does not know yet, and the cases move to their real county once it is found. These 28 states had no such cases left by December 31, so they sent no Unknown row that day. The same question with `NOT EXISTS` from the subqueries section, `SELECT count(*) FROM state_county AS sc WHERE NOT EXISTS (SELECT * FROM daily_counts AS d WHERE d.county_id = sc.county_id AND d.date = '2020-12-31')`, also gives 28.
 
-## Pitfall 1: a condition in `WHERE` instead of `ON`
-
-In the `LEFT JOIN` above, the date sits in `ON`. Move it to `WHERE` and the answer changes:
-
-```sql
--- right: the date test is in ON, so it only decides which rows are partners
-SELECT count(*)
-  FROM counties AS c
-  LEFT JOIN daily_counts AS d ON d.county_id = c.id AND d.date = '2020-12-31';   -- 3273: every county
--- wrong: the date test is in WHERE, so it runs after the join and removes rows
-SELECT count(*)
-  FROM counties AS c
-  LEFT JOIN daily_counts AS d ON d.county_id = c.id
-  WHERE d.date = '2020-12-31';                              -- 3245, not 3273: it became an inner join
-```
-
-`ON` decides which rows are partners, and the `LEFT JOIN` then keeps the unmatched counties with `NULL`s. `WHERE` runs after that (`FROM` comes first in the processing order) and keeps only the rows where `d.date = '2020-12-31'` is true, and for the 28 unmatched counties `d.date` is `NULL`, so they are thrown out again, without any error. The rule: **a condition on the right table of a `LEFT JOIN` goes in `ON`**; `WHERE` is for conditions that should remove rows from the final answer.
-
-## Pitfall 2: joins multiply rows
+## Possible Pitfall: multiple rows for each row in the left table
 
 A join along a one-to-many relationship repeats the "one" side once for each of its matches. That is what a join is supposed to do, but it is easy to forget when you add a table "just to have it":
 
 ```sql
 -- how many counties does Texas have?
 SELECT count(*)
-  FROM states AS s
-  JOIN counties AS c ON c.state_id = s.id
-  WHERE s.name = 'Texas';                                   -- 255 (254 counties and "Unknown")
+  FROM state_county
+  WHERE state = 'Texas';                                    -- 255 (254 counties and "Unknown")
 -- the rows themselves: each county once
-SELECT s.name AS state, c.name AS county
-  FROM states AS s
-  JOIN counties AS c ON c.state_id = s.id
-  WHERE s.name = 'Texas'
-  ORDER BY c.name
+SELECT state, county
+  FROM state_county
+  WHERE state = 'Texas'
+  ORDER BY county
   LIMIT 3;                                                  -- Texas Anderson, Texas Andrews, Texas Angelina
 -- the same, with daily_counts joined in as well
 SELECT count(*)
-  FROM states AS s
-  JOIN counties AS c ON c.state_id = s.id
-  JOIN daily_counts AS d ON d.county_id = c.id
-  WHERE s.name = 'Texas';                                   -- 67002: every county once per day it reported
+  FROM state_county AS sc
+  JOIN daily_counts AS d ON d.county_id = sc.county_id
+  WHERE sc.state = 'Texas';                                 -- 67002: every county once per day it reported
 -- the rows themselves: now each county repeats, once per day
-SELECT s.name AS state, c.name AS county, d.date
-  FROM states AS s
-  JOIN counties AS c ON c.state_id = s.id
-  JOIN daily_counts AS d ON d.county_id = c.id
-  WHERE s.name = 'Texas'
-  ORDER BY c.name, d.date
+SELECT sc.state, sc.county, d.date
+  FROM state_county AS sc
+  JOIN daily_counts AS d ON d.county_id = sc.county_id
+  WHERE sc.state = 'Texas'
+  ORDER BY sc.county, d.date
   LIMIT 3;                                                  -- Texas Anderson three times, on its first three days
 ```
 
-The second query is not wrong SQL: it counts county-days. But if you meant to query counties individually (instead of days), the answer is about 263x too big, and nothing warns you. The same happens to `sum()`: any column of the "one" side, summed after the join, is added once per match. This is the most common bug in real-world joins. Two habits catch it: join only the tables the question needs, and check `count(*)` before and after adding a join. If the row count jumped, ask whether it should have. (Here `count(DISTINCT c.id)` would also repair the second query, giving 255 again, but the better fix is to leave `daily_counts` out.)
+The second query is not wrong SQL: it counts county-days. But if you meant to query counties individually (instead of days), the answer is about 263x too big, and nothing warns you. The same happens to `sum()`: any column of the "one" side, summed after the join, is added once per match. This is the most common bug in real-world joins. Two habits catch it: join only the tables the question needs, and check `count(*)` before and after adding a join. If the row count jumped, ask whether it should have. (Here `count(DISTINCT sc.county_id)` would also repair the second query, giving 255 again, but the better fix is to leave `daily_counts` out.)
 
 ## Self-joins
 
@@ -615,21 +732,19 @@ A **self-join** joins a table to itself. Name the table twice in `FROM`, under t
 
 ```sql
 -- INNER: a day with no day before it has no partner and is dropped
-SELECT d.date, d.cases, p.cases AS prev_cases, d.cases - p.cases AS new_cases
+SELECT d.date, d.cases AS total_cases, p.cases AS prev_cases, d.cases - p.cases AS new_cases
   FROM daily_counts AS d
   JOIN daily_counts AS p ON p.county_id = d.county_id AND p.date = d.date - 1   -- the same table, a second time
-  JOIN counties AS c ON c.id = d.county_id
-  JOIN states AS s ON s.id = c.state_id
-  WHERE s.name = 'Texas' AND c.name = 'Harris'
+  JOIN state_county AS sc ON sc.county_id = d.county_id
+  WHERE sc.state = 'Texas' AND sc.county = 'Harris'
   ORDER BY d.date
   LIMIT 3;                                                  -- starts on Harris's *second* day: its first day has no partner
 -- LEFT: every day is kept, and a day with no day before gets NULLs
-SELECT d.date, d.cases, p.cases AS prev_cases, d.cases - p.cases AS new_cases
+SELECT d.date, d.cases AS total_cases, p.cases AS prev_cases, d.cases - p.cases AS new_cases
   FROM daily_counts AS d
   LEFT JOIN daily_counts AS p ON p.county_id = d.county_id AND p.date = d.date - 1
-  JOIN counties AS c ON c.id = d.county_id
-  JOIN states AS s ON s.id = c.state_id
-  WHERE s.name = 'Texas' AND c.name = 'Harris'
+  JOIN state_county AS sc ON sc.county_id = d.county_id
+  WHERE sc.state = 'Texas' AND sc.county = 'Harris'
   ORDER BY d.date
   LIMIT 3;                                                  -- starts on Harris's first day, with prev_cases and new_cases NULL
 ```
@@ -646,60 +761,78 @@ We will not be covering these in class, but you should know about them.
 
 * **`RIGHT JOIN`** keeps every row of the *right* table instead. It is a `LEFT JOIN` with the tables swapped, and almost nobody writes it: swap the tables and use `LEFT JOIN`.
 * **`FULL OUTER JOIN`** keeps the unmatched rows of *both* tables, with `NULL`s on whichever side is missing. It is the tool for reconciling two lists, e.g. two versions of a customer list: which entries are only in the old one, only in the new one, or in both.
-* **`CROSS JOIN`** has no `ON` at all: it pairs every row with every row, $n \times m$ rows. That sounds useless, but it builds a complete grid. Every county crossed with every day of December 2020 (`generate_series` makes the days) is 101,463 county-days, and a `LEFT JOIN` of `daily_counts` onto that grid shows that 860 of them were never reported.
+* **`CROSS JOIN`** has no `ON` at all: it pairs every row with every row, $n \times m$ rows. That sounds useless, but it builds a complete grid. Every county crossed with every day of December 2020 (`generate_series` makes the days) is 101,463 county-days, and a `LEFT JOIN` of `daily_counts` onto that grid shows that 860 of them were never reported:
 
-In the shell, imagine the three tables as three CSV files. Linux has a command for exactly this, `join`: it pairs the lines of two files whose join field is equal, like `JOIN ... ON`. It has one requirement: both files must be **sorted** on the join field, because it walks down the two files at once, line by line, like `comm` from Lecture 5. That is the third way of matching rows, a **merge join**, which Postgres also uses. Its options map onto SQL directly: no option is an inner join, `-a 1` also prints the unmatched lines of file 1 (a `LEFT JOIN`), `-v 1` prints *only* those (the 28 counties above), and `-a 1 -a 2` would be a `FULL OUTER JOIN`. `-1` and `-2` say which field of each file to join on (the first, if left out), `-o` which fields to print (`2.3` is field 3 of file 2), and `-` stands for the input from a pipe. Again, none of the following is covered in this course. It's just FYI because it shows that linux is highly developed and can do any query SQL can do.
+```sql
+SELECT count(*)
+  FROM state_county AS sc
+  CROSS JOIN generate_series(date '2020-12-01', date '2020-12-31', interval '1 day') AS g(day);   -- 101463 = 3273 counties x 31 days
+-- the grid's county-days with no report: d.county_id is NULL only where the LEFT JOIN found no partner
+SELECT sc.state, sc.county, g.day::date AS day             -- ::date, since generate_series with an interval makes timestamps
+  FROM state_county AS sc
+  CROSS JOIN generate_series(date '2020-12-01', date '2020-12-31', interval '1 day') AS g(day)
+  LEFT JOIN daily_counts AS d ON d.county_id = sc.county_id AND d.date = g.day
+  WHERE d.county_id IS NULL
+  ORDER BY sc.state, sc.county, day
+  LIMIT 3;                                                  -- Arizona Unknown 2020-12-01, 2020-12-02, 2020-12-03
+SELECT count(*)
+  FROM state_county AS sc
+  CROSS JOIN generate_series(date '2020-12-01', date '2020-12-31', interval '1 day') AS g(day)
+  LEFT JOIN daily_counts AS d ON d.county_id = sc.county_id AND d.date = g.day
+  WHERE d.county_id IS NULL;                                -- 860 county-days
+-- which counties, and how many days each
+SELECT sc.state, sc.county, count(*) AS days_missing, min(g.day)::date AS first_missing, max(g.day)::date AS last_missing
+  FROM state_county AS sc
+  CROSS JOIN generate_series(date '2020-12-01', date '2020-12-31', interval '1 day') AS g(day)
+  LEFT JOIN daily_counts AS d ON d.county_id = sc.county_id AND d.date = g.day
+  WHERE d.county_id IS NULL
+  GROUP BY sc.state, sc.county
+  ORDER BY days_missing DESC, sc.state;                     -- 31 counties: Arizona Unknown 31 2020-12-01 2020-12-31, ...
+```
+
+31 counties miss at least one day of December, 26 of them all 31 days. All but one are "Unknown" rows again, the same story as the 28 above. The one real county is Kalawao, Hawaii, one of the smallest counties in the US (fewer than a hundred residents), whose first report in December came on the 10th.
+
+Which column to test for `NULL` matters. After a `LEFT JOIN`, test a column of the right table that can *never* be `NULL` in a real row, such as its key, as above. A data column can be `NULL` in a matched row too, and then the test counts real reports as missing:
+
+```sql
+SELECT count(*)
+  FROM state_county AS sc
+  CROSS JOIN generate_series(date '2020-12-01', date '2020-12-31', interval '1 day') AS g(day)
+  LEFT JOIN daily_counts AS d ON d.county_id = sc.county_id AND d.date = g.day
+  WHERE d.deaths IS NULL;                                   -- 3278, not 860: Puerto Rico's reported days have NULL deaths
+```
+
+`d.cases IS NULL` happens to give 860, but only because no reported day has `NULL` cases. A key column gives the right answer for any data.
+
+Can you do this using bash?
+
+Yes, imagine `state_county` and `daily_counts` as two CSV files. Linux has a command for exactly this, `join`: it pairs the lines of two files whose join field is equal, like `JOIN ... ON`. It has one requirement: both files must be **sorted** on the join field, because it walks down the two files at once, line by line, like `comm` from Lecture 5. That is the third way of matching rows, a **merge join**, which Postgres also uses. Its options map onto SQL directly: no option is an inner join, `-a 1` also prints the unmatched lines of file 1 (a `LEFT JOIN`), `-v 1` prints *only* those (the 28 counties above), and `-a 1 -a 2` would be a `FULL OUTER JOIN`. `-1` and `-2` say which field of each file to join on (the first, if left out), `-o` which fields to print (`2.3` is field 3 of file 2), and `-` stands for the input from a pipe. Again, none of the following is covered in this course. It's just FYI because it shows that linux is highly developed and can do any query SQL can do.
 
 ```bash
-# the three tables as three CSV files, without a header line (join would treat it like any other line)
-psql lec04 -c "\copy states TO 'states.csv' CSV"
-psql lec04 -c "\copy counties TO 'counties.csv' CSV"
+# the view and the daily counts as two CSV files, without a header line (join would treat it like any other line)
+psql lec04 -c "\copy (SELECT * FROM state_county) TO 'state_county.csv' CSV"   # a view needs the (SELECT ...) form
 psql lec04 -c "\copy daily_counts TO 'daily_counts.csv' CSV"
-head -n 2 states.csv counties.csv daily_counts.csv          # 1,Alabama  1,1,Autauga,01001  and county_id,date,cases,deaths
+head -n 2 state_county.csv daily_counts.csv                # 1,Alabama,Autauga,01001  and county_id,date,cases,deaths
 # join compares the fields as text, so sort and join must use the same rules: LC_ALL=C (plain byte order) for this whole session
 export LC_ALL=C
-sort -t, -k1,1 states.csv       > states_by_id.csv
-sort -t, -k1,1 counties.csv     > counties_by_id.csv
-sort -t, -k2,2 counties.csv     > counties_by_state.csv     # sorted on state_id, to join with states
+sort -t, -k1,1 state_county.csv > state_county_by_id.csv
 sort -t, -k1,1 daily_counts.csv > daily_by_county.csv
 awk -F, '$2=="2020-12-31"' daily_counts.csv | sort -t, -k1,1 > dec31_by_county.csv
-# the three-table join: counties with that day's counts (county name, state_id, cases), then with states
-join -t, -o 1.3,1.2,2.3 counties_by_id.csv dec31_by_county.csv | sort -t, -k2,2 |
-  join -t, -1 2 -2 1 -o 2.2,1.1,1.3 - states_by_id.csv | awk -F, '$1=="Texas"' | sort -t, -k3,3nr | head -n 3   # Texas,Harris,237727 Texas,Dallas,193318 Texas,Tarrant,150004
+# the join: each county with that day's count (state, county, cases)
+join -t, -o 1.2,1.3,2.3 state_county_by_id.csv dec31_by_county.csv | awk -F, '$1=="Texas"' | sort -t, -k3,3nr | head -n 3   # Texas,Harris,237727 Texas,Dallas,193318 Texas,Tarrant,150004
 # INNER JOIN: only counties with a line on 2020-12-31
-join -t, counties_by_id.csv dec31_by_county.csv | wc -l                            # 3245
+join -t, state_county_by_id.csv dec31_by_county.csv | wc -l                        # 3245
 # LEFT JOIN: -a 1 also keeps the counties without one
-join -t, -a 1 counties_by_id.csv dec31_by_county.csv | wc -l                       # 3273
+join -t, -a 1 state_county_by_id.csv dec31_by_county.csv | wc -l                   # 3273
 # only the unmatched counties: -v 1 keeps only those, and field 3 is the county name
-join -t, -v 1 counties_by_id.csv dec31_by_county.csv | cut -d, -f3 | sort | uniq -c   # 28 Unknown
+join -t, -v 1 state_county_by_id.csv dec31_by_county.csv | cut -d, -f3 | sort | uniq -c   # 28 Unknown
 # pitfall 1: LEFT JOIN with all the days, then the date test afterwards (like WHERE) loses the unmatched counties again
-join -t, -a 1 counties_by_id.csv daily_by_county.csv | awk -F, '$5=="2020-12-31"' | wc -l   # 3245
+join -t, -a 1 state_county_by_id.csv daily_by_county.csv | awk -F, '$5=="2020-12-31"' | wc -l   # 3245
 # pitfall 2: Texas counties, then Texas counties joined with all their days
-join -t, -1 1 -2 2 -o 1.2,2.1 states_by_id.csv counties_by_state.csv | awk -F, '$1=="Texas"' | wc -l   # 255
-join -t, -1 1 -2 2 -o 1.2,2.1 states_by_id.csv counties_by_state.csv | awk -F, '$1=="Texas" {print $2}' | sort |
-  join -t, - daily_by_county.csv | wc -l                                           # 67002
-rm states*.csv counties*.csv daily*.csv dec31_by_county.csv
+awk -F, '$2=="Texas"' state_county_by_id.csv | wc -l                               # 255
+awk -F, '$2=="Texas"' state_county_by_id.csv | join -t, - daily_by_county.csv | wc -l   # 67002
+rm state_county*.csv daily*.csv dec31_by_county.csv
 ```
-
-## Conclusion of Postgres and the SQL unit as itself
-
-How large is the postgres software package (not including any databases)? Add it up, with `du` ("disk usage") for the program files and the database itself for your data:
-
-```bash
-du -ch /usr/lib/postgresql /usr/share/postgresql | tail -n 1   # for linus users
-du -shL "$(brew --prefix postgresql@18)" #for macos users
-```
-
-That is a lot of space for a program whose job is to store rows in a table. But look at what it bought you in this unit:
-
-- **Speed:** the same question went from scanning every row (about 70 ms here, and growing with the table) to under 1 ms with an index, and that stays true as the table grows.
-- **Correctness:** typed columns refused `'N/A'` as a number, and rules such as `NOT NULL` and `UNIQUE` can refuse other nonsense when it arrives.
-- **Safe changes:** single-row updates and transactions that happen completely or not at all, even if the machine crashes.
-- **Many users at once:** many programs reading and writing the same tables at once without corrupting them.
-- **A query language** instead of one-off shell pipelines: SQL, with joins, grouping and sorting, and a planner that picks how to run each query.
-
-PostgreSQL grew out of research at Berkeley in the 1980s and has had decades of engineering since. Nobody would write all of that again for one analysis. It's another "truly amazing" piece of software, a pinnacle of human achievement.
-
 
 # Database Drivers (Adapters, Clients) and Database Abstraction
 
@@ -919,7 +1052,7 @@ Here are all the pieces together, from your code down to the files on disk. Whic
  +--------------------------------------------------------------------------+
  | CONNECTION, speaking the Postgres wire protocol over                     |
  |   a Unix socket (/var/run/postgresql on your laptop)                     |
- |   or TCP (host:5432)                                                     |
+ |   or TCP on a remote machine (host:5432). (Not covered in this class).   |
  +--------------------------------------------------------------------------+
                           |      ^
                           v      |
@@ -938,21 +1071,201 @@ Here are all the pieces together, from your code down to the files on disk. Whic
  +--------------------------------------------------------------------------+
 ```
 
-The convenience of all three has a price: when a query is slow you have to read the SQL they generated (`show_query` in `dbplyr`, `ibis.to_sql` in `ibis`, the query log in an ORM) to see why, so you still need to know SQL. ORMs in particular make it easy to write a loop such as "for each county, print `county.state.name`", which quietly sends one query per county, the same row-by-row pattern as the correlated subquery in Lecture 6.
+The convenience of all three has a price: when a query is slow you have to read the SQL they generated (`show_query` in `dbplyr`, `ibis.to_sql` in `ibis`, the query log in an ORM) to see why, so you still need to know SQL. ORMs in particular make it easy to write a loop such as "for each county, print `county.state.name`", which quietly sends one query per county which is extremely inefficient. I have so many of my own stories about this!
 
-## Big picture plan
+## Conclusion of Postgres and the SQL unit as itself
 
-We will be using database adapters as we "put it all together": from databases -> cleaning -> predictive modeling / inferential modeling using R and/or Python. That's when we'll dip into knowledge from all your other statistics and machine learning courses.
+How large is the postgres software package (not including any databases)? Add it up, with `du` ("disk usage") for the program files and the database itself for your data:
+
+```bash
+du -ch /usr/lib/postgresql /usr/share/postgresql | tail -n 1   # for linus users
+du -shL "$(brew --prefix postgresql@18)" #for macos users
+```
+
+That is a lot of space for a program whose job is to store rows in a table. But look at what it bought you in this unit:
+
+- **Speed:** the same question went from scanning every row (about 70 ms here, and growing with the table) to under 1 ms with an index, and that stays true as the table grows.
+- **Correctness:** typed columns refused `'N/A'` as a number, and rules such as `NOT NULL` and `UNIQUE` can refuse other nonsense when it arrives.
+- **Safe changes:** single-row updates and transactions that happen completely or not at all, even if the machine crashes.
+- **Many users at once:** many programs reading and writing the same tables at once without corrupting them.
+- **A query language** instead of one-off shell pipelines: SQL, with joins, grouping and sorting, and a planner that picks how to run each query.
+
+PostgreSQL grew out of research at Berkeley in the 1980s and has had decades of engineering since. Nobody would write all of that again for one analysis. It's another "truly amazing" piece of software, a pinnacle of human achievement.
+
+But not every job needs a heavyweight server running on linux. When one analyst queries data that mostly gets read, not written, a lightweight database is often enough, and for analytics the most popular is **DuckDB**. It has no server: it is a program you run from the shell, much as you run `psql`, or a library you load inside Python or R through its own driver (in R, only the `dbConnect(...)` line changes). A whole database is one file, or no file at all. It speaks almost the same SQL as Postgres, so the queries of this unit, window functions included, mostly run unchanged, and it can query a CSV or Parquet file directly, without loading it first. Its storage is columnar (Lecture 6), which makes it very fast for aggregates over a few columns of many rows. What it gives up is the "many users at once" point above: it is not built for many programs writing to the same tables. Since it is close to a drop-in replacement for the more universal, full-featured, robust Postgres you now know, we will not cover it separately.
 
 ## Why clean in SQL and not in R or Python?
 
 Every step of this pipeline can also be done in R or Python, once the data has been pulled in through a database driver. `dplyr` or `data.table` in R and `pandas` in Python have a ready-made function for each of them: dropping exact duplicates, keeping the newest row per key, computing flags with a lag, and turning sentinels into missing values. Still, SQL is often preferred for the rule-based steps, for these reasons:
 
-* **One copy of the rules.** The views live in the database, so everyone who queries them, from `psql`, R, Python or a dashboard, gets the same cleaned data. Cleaning scripts get copied from project to project and drift apart, until two analysts report two different numbers from the same raw table.
-* **The data does not have to fit in memory.** `pandas`, `dplyr` and `data.table` hold the whole table in RAM, and it first has to travel over the network to get there. The database works on disk with its indexes, next to the data, and sends back only the answer, as in "Let the database do the work" above. For big data, this is often what decides it.
 * **Always current.** A view is recomputed on every query, so tomorrow's feed is cleaned the moment it arrives. A script has to be rerun, and the cleaned file it wrote goes stale in between.
-* **Language-neutral.** One team member uses R, another Python, a third a BI tool. SQL is the one language all of them can read and query.
+* **The data does not have to fit in memory.** `pandas`, `dplyr` and `data.table` hold the whole table in RAM, and it first has to travel over the network to get there. The database works on disk with its indexes, next to the data, and sends back only the answer, as in "Let the database do the work" above. For big data, this is often what decides it.
+* **Language-neutral.** One team member uses R, another Python, a third a BI tool (like Tableau/PowerBI). SQL is the one language all of them can read and query.
+* **One copy of the rules.** Cleaning scripts in R, Python, BI tools get copied from project to project and drift apart, until two analysts report two different numbers from the same raw table.
 * **Dashboards read from the database.** BI tools such as Tableau and Power BI connect straight to the database and are usually pointed at a view, so they show the cleaned data without any extra work. Both also have their own cleaning tools (Tableau Prep, Power BI's Power Query), but rules written there usually live inside that tool (a Prep flow, a Power BI report), where no R or Python user can see or reuse them. Cleaning in a view keeps the dashboard and the analysis consistent.
-* **Auditable.** The raw table is never touched, and every rule is a short, readable line in a view. Tools like dbt (Lecture 6) add version control and tests on top.
+* **Auditable.** The raw table is never touched, and every rule is a short, readable line in a view. Tools like dbt (which we won't cover) add version control and tests on top.
 
-R and Python are the better choice for what SQL does badly: model-based imputation (`mice`, `missForest`), fuzzy matching with dedicated libraries, heavy text parsing, and exploratory plots to find the problems in the first place. The usual pattern combines the two. SQL views do the heavy, rule-based cleaning next to the data, and R or Python pulls the last view through a driver for modeling.
+R and Python are the better choice for what SQL does badly: model-based imputation (`mice`, `missForest`), fuzzy matching with dedicated libraries, heavy text parsing, and exploratory plots to find the problems in the first place. The usual pattern combines the two. SQL views do low-level rule-based cleaning like we saw above, and R or Python pulls the last view through a driver for modeling.
+
+## Big picture plan
+
+We will be using database adapters as we "put it all together": from databases -> cleaning -> predictive modeling / inferential modeling using R and/or Python. That's when we'll dip into knowledge from all your other statistics and machine learning courses.
+
+# Data Frames in R and Python
+
+::: {.callout-note}
+## Not covered on the exam
+This unit is FYI reading only: it will not be tested.
+:::
+
+A driver hands the result of a query to R or Python as a **data frame**, and from then on the work happens in memory, in whichever data-frame library you chose. There are several, and they differ more than their similar names suggest: in syntax, in speed, and in whether they use one core or all of them. This unit compares five of them on `covid`. Nothing in it is new statistics; it is a buyer's guide.
+
+## The libraries
+
+| Library               | Language | In one line                                                                              |
+|:----------------------|:---------|:-----------------------------------------------------------------------------------------|
+| `data.frame` (base R) | R        | built in, no packages needed; the baseline, and slow on big data                         |
+| `dplyr` (tidyverse)   | R        | readable verbs joined by pipes; `dbplyr` turns the same verbs into SQL (above)           |
+| `data.table`          | R        | the fastest in R, with a terse `dt[i, j, by]` syntax, and changes data in place          |
+| `pandas`              | Python   | the standard in Python, with a row index; most operations use one core                   |
+| `polars`              | Python   | newer, columnar (Arrow), uses all cores, and can plan a whole query first (lazy mode)    |
+
+: Five data-frame libraries. `polars` also exists for R, and `data.table` has a Python port, but both are mostly used in the language shown.
+
+## The same two questions in each library
+
+Two questions from this lecture, asked five times: the three states with the most cases on 2020-12-31 (the query from the drivers section), and the daily new cases per county with `lag`, counting the days that went negative (the `cases_went_down` flag of the cleaning view). Every version gives California 2307860, Texas 1770527, Florida 1323307 and 15144.
+
+Base R needs no packages. `aggregate` groups, and `ave` applies a function within each group, here "shift down by one":
+
+```{r}
+setwd("~/workspace/HUJI_52002_Fall_2026/scratch/lec03")     # where covid.csv lives
+covid <- read.csv("covid.csv", colClasses = c(fips = "character"))
+covid$date <- as.Date(covid$date)
+dec31 <- covid[covid$date == as.Date("2020-12-31"), ]
+top <- aggregate(cases ~ state, data = dec31, FUN = sum)
+head(top[order(-top$cases), ], 3)                           # California 2307860, Texas 1770527, Florida 1323307
+covid <- covid[order(covid$state, covid$county, covid$date), ]
+covid$new_cases <- covid$cases - ave(covid$cases, covid$state, covid$county, FUN = function(v) c(0, head(v, -1)))
+sum(covid$new_cases < 0)                                    # 15144
+```
+
+`dplyr` reads like the SQL, one verb per clause, in the order the steps happen. `lag(cases, 1, default = 0)` is the same as SQL's `lag(cases, 1, 0)`:
+
+```{r}
+setwd("~/workspace/HUJI_52002_Fall_2026/scratch/lec03")
+library(dplyr)
+library(readr)
+covid <- read_csv("covid.csv", col_types = cols(fips = col_character()))
+covid |>
+  filter(date == as.Date("2020-12-31")) |>                 # WHERE
+  group_by(state) |>                                        # GROUP BY
+  summarise(cases = sum(cases)) |>                          # SELECT sum(cases)
+  arrange(desc(cases)) |>                                   # ORDER BY ... DESC
+  head(3)                                                   # LIMIT 3
+covid <- covid |>
+  arrange(state, county, date) |>
+  group_by(state, county) |>                                # PARTITION BY
+  mutate(new_cases = cases - lag(cases, 1, default = 0)) |> # a window function: every row is kept
+  ungroup()
+sum(covid$new_cases < 0)                                    # 15144
+```
+
+`data.table` puts everything inside the brackets: `dt[i, j, by]` reads "take rows `i`, compute `j`, grouped by `by`". `:=` adds the column *in place*, without copying the table, which is a large part of its speed and memory advantage:
+
+```{r}
+setwd("~/workspace/HUJI_52002_Fall_2026/scratch/lec03")
+library(data.table)
+covid <- fread("covid.csv", colClasses = c(fips = "character"))
+covid[date == as.IDate("2020-12-31"), .(cases = sum(cases)), by = state][order(-cases)][1:3]
+setorder(covid, state, county, date)                       # sorts in place, too
+covid[, new_cases := cases - shift(cases, 1, fill = 0), by = .(state, county)]
+covid[new_cases < 0, .N]                                    # 15144
+```
+
+`pandas` chains methods. `groupby(...)["cases"].shift()` is its `lag`:
+
+```{python}
+import os
+os.chdir(os.path.expanduser("~/workspace/HUJI_52002_Fall_2026/scratch/lec03"))
+import pandas as pd
+covid = pd.read_csv("covid.csv", dtype={"fips": "string"}, parse_dates=["date"])
+(covid[covid["date"] == "2020-12-31"]
+   .groupby("state", as_index=False)["cases"].sum()
+   .sort_values("cases", ascending=False)
+   .head(3))                                                # California 2307860, Texas 1770527, Florida 1323307
+covid = covid.sort_values(["state", "county", "date"])
+covid["new_cases"] = covid["cases"] - covid.groupby(["state", "county"])["cases"].shift(1, fill_value=0)
+(covid["new_cases"] < 0).sum()                              # 15144
+```
+
+`polars` looks like `pandas` at first glance but is a different design. You write **expressions** (`pl.col("cases").sum()`) instead of indexing, there is no row index, and `.over(...)` is SQL's `OVER (PARTITION BY ...)`. Code written for `pandas` must be rewritten, not just re-imported:
+
+```{python}
+import os
+os.chdir(os.path.expanduser("~/workspace/HUJI_52002_Fall_2026/scratch/lec03"))
+import polars as pl
+covid = pl.read_csv("covid.csv", schema_overrides={"fips": pl.Utf8}, try_parse_dates=True)
+(covid.filter(pl.col("date") == pl.date(2020, 12, 31))
+      .group_by("state").agg(pl.col("cases").sum())
+      .sort("cases", descending=True)
+      .head(3))                                             # California 2307860, Texas 1770527, Florida 1323307
+covid = covid.sort(["state", "county", "date"]).with_columns(
+    new_cases = pl.col("cases") - pl.col("cases").shift(1, fill_value=0).over(["state", "county"]))
+covid.filter(pl.col("new_cases") < 0).height                # 15144
+```
+
+`polars` also has a **lazy** mode: `scan_csv` instead of `read_csv` builds a plan and runs nothing until `collect()`. Like Postgres's planner, it then rearranges the work. `explain()` shows that the filter and the column choice were pushed into the scan itself, so only 3 of the 6 columns are ever read, and only the December 31 rows are kept:
+
+```{python}
+lazy = (pl.scan_csv("covid.csv", schema_overrides={"fips": pl.Utf8}, try_parse_dates=True)
+          .filter(pl.col("date") == pl.date(2020, 12, 31))
+          .group_by("state").agg(pl.col("cases").sum())
+          .sort("cases", descending=True)
+          .head(3))
+print(lazy.explain())                                       # Csv SCAN [covid.csv]  PROJECT 3/6 COLUMNS  SELECTION: col("date") == 2020-12-31
+lazy.collect()                                              # the same three states
+```
+
+## How fast are they?
+
+Six everyday operations, timed in seconds on `covid.csv` (884,737 rows, 36 MB), the median of 5 runs, with the fastest in each row in bold:
+
+| operation                                  | base R | `dplyr` | `data.table` | `pandas` |  `polars` |
+|:-------------------------------------------|-------:|--------:|-------------:|---------:|----------:|
+| read the CSV                               |   3.48 |    0.56 |         0.15 |     0.83 | **0.036** |
+| filter: Texas rows                         |  0.009 |   0.010 |    **0.005** |    0.008 |     0.010 |
+| group by state and day, sum                |   0.90 |   0.083 |    **0.021** |    0.042 |     0.021 |
+| window: new cases per county               |   2.51 |    0.29 |     **0.11** |     0.19 |      0.16 |
+| join: each row with its county's first day |   5.95 |    0.12 |        0.062 |     0.16 | **0.049** |
+| sort by cases                              |  0.090 |   0.085 |        0.096 |     0.19 | **0.055** |
+
+: `covid.csv`, 884,737 rows. Seconds, median of 5 runs.
+
+At this size, every library except base R answers everything in under a second, so pick by syntax, not speed. The differences appear at scale. The same operations on `covid_big.csv` from Lecture 3 (50 copies of `covid`: 44,236,850 rows, 1.8 GB), one run each:
+
+| operation                                  | base R | `dplyr` | `data.table` | `pandas` | `polars` |
+|:-------------------------------------------|-------:|--------:|-------------:|---------:|---------:|
+| read the CSV                               |  238.2 |    25.5 |          8.0 |     46.6 |  **2.4** |
+| filter: Texas rows                         |   10.2 |    0.59 |         0.41 |     0.45 | **0.27** |
+| group by state and day, sum                |  205.8 |     2.5 |     **0.68** |      3.0 |      4.3 |
+| window: new cases per county               |  572.8 |    13.4 |      **5.6** |     31.0 |     24.5 |
+| join: each row with its county's first day |  801.4 |     7.7 |          6.8 |     10.3 |  **2.4** |
+| sort by cases                              |    8.8 |    11.9 |      **8.5** |     31.3 |      8.6 |
+
+: `covid_big.csv`, 44 million rows. Seconds, one run.
+
+What the numbers say:
+
+* **Base R does not scale.** The join took over 13 minutes and the window almost 10, against seconds for everything else. Its `aggregate`, `ave` and `merge` were not built for tens of millions of rows. Use it for small data and for teaching, not for big data.
+* **`data.table` and `polars` lead**, and they trade first places. `polars` is fastest at reading (all cores parse the file at once) and at the join; `data.table` at grouping and the window. Both are often several times faster than `dplyr` and `pandas`, but not on every operation: here `polars` grouped more slowly than `pandas`.
+* **`dplyr` and `pandas` are fine up to a few million rows**, and they have the most users, documentation and answers online. That is often worth more than a few seconds.
+* **Memory matters as much as time.** The Python run peaked at 16.5 GB of RAM for a 1.8 GB CSV: the table itself takes more room in memory than in the file, and many operations (the sorts, the window) make a full copy of it. `data.table`'s in-place `:=` and `polars`'s lazy mode avoid many of those copies. When the data does not fit in RAM at all, none of these work, and the database (or Parquet with `arrow` or `polars`'s lazy scans) is the answer, as the "data does not have to fit in memory" point above says.
+
+Benchmarks are a snapshot, not a ranking for all time. These were run on one 12-thread laptop (WSL2, 41 GB of RAM) with Python 3.14, `pandas` 3.0.6 and `polars` 1.44.2, and R (development version of October 2026) with `dplyr` 1.2.1, `readr` 2.2.0 and `data.table` 1.18.4, which used 6 threads by default while `polars` used all 12. A different machine, a different version or a different operation can reorder the middle of the table. Time your own job before you switch libraries for speed.
+
+## Which one when?
+
+* **Already in R, data in the millions of rows:** `dplyr` for readability. Switch to `data.table` (or `dtplyr`, which runs `dplyr` code on `data.table`) when it gets slow.
+* **Already in Python:** `pandas` is what every tutorial and most libraries expect (`scikit-learn`, `statsmodels`, plotting). Reach for `polars` when the data is large, and convert with `.to_pandas()` at the end if a library needs it.
+* **Bigger than memory, or shared:** keep it in the database and pull only the answer (the "Let the database do the work" section above), or keep it in Parquet and scan it lazily.

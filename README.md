@@ -35,6 +35,23 @@ None released yet
 * Homework 2 [(download)](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/homeworks/hw02/hw02t.pdf?raw=true) [(view)](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/homeworks/hw02/hw02t.pdf) (due Oct 17 23:59 pushed to your github repo)
 * Homework 1 [(download)](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/homeworks/hw01/hw01t.pdf?raw=true) [(view)](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/homeworks/hw01/hw01t.pdf) (due Oct 17 23:59 pushed to your github repo) -->
 
+## Lectures
+
+<!-- 
+* [Lecture 13: Data Lakes, NoSQL and Ethics](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/lectures/lec13_data_lakes_nosql_ethics.qmd)
+* [Lecture 11: Sampling](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/lectures/lec11_sampling.qmd)
+* [Lecture 10: Hash Functions](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/lectures/lec10_hashing.qmd)
+* [Lecture 9: Streaming Algorithms and OLS](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/lectures/lec09_streaming_ols.qmd)
+* [Lecture 8: Slurm and Scheduling Jobs on a Shared Supercomputer](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/lectures/lec08_slurm.qmd)-->
+* [Lecture 7: Data Cleaning, Joins, Database Drivers and Abstraction](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/lectures/lec07_cleaning_joins_db_drivers.qmd)
+* [Lecture 6: Intermediate PostgreSQL B](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/lectures/lec06_intermediate_sql.qmd)
+* [Lecture 5: Intermediate PostgreSQL A](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/lectures/lec05_basic_sql_continued.qmd)
+* [Lecture 4: Remote Machines, Querying PostgreSQL](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/lectures/lec04_remote_machines_postgres.qmd)
+* [Lecture 3: git, Parquet and Intro to Databases](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/lectures/lec03_git_parquet_databases.qmd)
+* [Lecture 2: Advanced Linux](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/lectures/lec02_linux_advanced.qmd)
+* [Lecture 1: Working at the Unix Command Line](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/lectures/lec01_linux_shell_basics.qmd)
+
+
 ## Exams
 
 * Midterm is Nov 29 in class [practice exam](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/exams/practice_midterm/midterm.pdf) [practice exam solutions](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/exams/practice_midterm/midterm_solutions.pdf)
