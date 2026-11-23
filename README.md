@@ -42,8 +42,8 @@ None released yet
 * [Lecture 11: Sampling](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/lectures/lec11_sampling.qmd)
 * [Lecture 10: Hash Functions](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/lectures/lec10_hashing.qmd)
 * [Lecture 9: Streaming Algorithms and OLS](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/lectures/lec09_streaming_ols.qmd)
-* [Lecture 8: Slurm and Scheduling Jobs on a Shared Supercomputer](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/lectures/lec08_slurm.qmd)-->
-* [Lecture 7: Data Cleaning, Joins, Database Drivers and Abstraction](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/lectures/lec07_cleaning_joins_db_drivers.qmd)
+* [Lecture 8: Joins Continued, Database Drivers and Abstraction, Slurm](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/lectures/lec08_joins_db_drivers_slurm.qmd)-->
+* [Lecture 7: Data Cleaning, Multiple Tables and Joins](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/lectures/lec07_cleaning_multiple_tables_joins.qmd)
 * [Lecture 6: Intermediate PostgreSQL B](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/lectures/lec06_intermediate_sql.qmd)
 * [Lecture 5: Intermediate PostgreSQL A](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/lectures/lec05_basic_sql_continued.qmd)
 * [Lecture 4: Remote Machines, Querying PostgreSQL](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/lectures/lec04_remote_machines_postgres.qmd)

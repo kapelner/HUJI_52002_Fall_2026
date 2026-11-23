@@ -76,7 +76,7 @@ Callbacks to what we already ran:
 
 * **`awk` arrays** (Lecture 2): `n[$3]++` is a hash table from state to count, which is why one pass over covid counts every state.
 * **`GROUP BY`**: Postgres's `HashAggregate` keeps one running total per group in a hash table, one pass, no sort.
-* **Hash Join** (Lecture 7): build a hash table on the smaller table's join key, then stream the bigger table past it, one $O(1)$ lookup per row. That is the `NR==FNR` two-pass `awk` program.
+* **Hash Join** (Lectures 7 and 8): build a hash table on the smaller table's join key, then stream the bigger table past it, one $O(1)$ lookup per row. That is the `NR==FNR` two-pass `awk` program.
 * Python's `dict` and `set`, R's `environment`.
 
 TODO: a 15-line toy hash table in Python (a list of lists, `insert` and `lookup`) to make the buckets concrete, then `EXPLAIN` of the Lecture 7 all-states query to see `Hash Join` again.
@@ -140,7 +140,7 @@ for k in (4, 5):                                  # require k leading zero hex d
 
 Each extra zero multiplies the expected work by 16. Real Bitcoin requires about 19 zero hex digits, so the whole network tries around $10^{20}$ hashes per second.
 
-TODO: tie to the BTC tables once they are loaded (txid as the primary key; following inputs to earlier outputs is the self-join of Lecture 7).
+TODO: tie to the BTC tables once they are loaded (txid as the primary key; following inputs to earlier outputs is the self-join of Lecture 8).
 
 # Hashing to split work and to sample
 

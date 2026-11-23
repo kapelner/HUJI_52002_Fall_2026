@@ -1,0 +1,1073 @@
+---
+title: "Lecture 8: Joins Continued, Database Drivers and Abstraction, Slurm"
+subtitle: "Big Data Algorithms"
+format:
+  html:
+    toc: true
+    toc-depth: 2
+    number-sections: true
+    code-copy: true
+    embed-resources: true
+---
+
+We continue with the joins from Lecture 7, on the same `lec04` database: the tables `states`, `counties` and `daily_counts` and the view `state_county` built there. Open the database and set convenience settings:
+
+```bash
+psql lec04
+```
+
+```sql
+\timing on
+\pset pager off
+```
+
+# Table Joins (continued)
+
+## `INNER JOIN` and `LEFT JOIN`
+
+`JOIN` is short for `INNER JOIN`: it keeps only the pairs that match, so a row with no partner in the other table silently disappears. A `LEFT JOIN` (short for `LEFT OUTER JOIN`) keeps every row of the table on its left, and where it has no partner it fills the right table's columns with `NULL`. `INNER JOIN` and `LEFT JOIN` cover 99% of every join you will write. 
+
+E.g., which counties reported on 2020-12-31?
+
+```sql
+SELECT count(*)
+  FROM state_county;                                        -- 3273 counties
+-- INNER: only counties that have a count on that day
+SELECT count(*)
+  FROM state_county AS sc
+  JOIN daily_counts AS d ON d.county_id = sc.county_id AND d.date = '2020-12-31';        -- 3245
+-- LEFT: every county, with NULL cases where it has no count on that day
+SELECT count(*)
+  FROM state_county AS sc
+  LEFT JOIN daily_counts AS d ON d.county_id = sc.county_id AND d.date = '2020-12-31';   -- 3273
+```
+
+28 counties are in the left join but not in the inner one. 
+
+To see them, run the same `LEFT JOIN` and sort the rows with no partner to the top. Their `d` columns came back `NULL`, and `NULLS FIRST` (from the window functions section) puts them first:
+
+```sql
+SELECT sc.state, sc.county, d.cases
+  FROM state_county AS sc
+  LEFT JOIN daily_counts AS d ON d.county_id = sc.county_id AND d.date = '2020-12-31'
+  ORDER BY d.county_id NULLS FIRST, sc.state                -- d.county_id is NULL only where there is no partner on that day
+  LIMIT 33;                                                  -- Arizona Unknown NULL, California Unknown NULL, Colorado Unknown NULL
+```
+
+All 28 are "Unknown" rows. "Unknown" is not a county: it is where a state puts cases whose county it does not know yet, and the cases move to their real county once it is found. These 28 states had no such cases left by December 31, so they sent no Unknown row that day. The same question with `NOT EXISTS` from the subqueries section, `SELECT count(*) FROM state_county AS sc WHERE NOT EXISTS (SELECT * FROM daily_counts AS d WHERE d.county_id = sc.county_id AND d.date = '2020-12-31')`, also gives 28.
+
+## Possible Pitfall: multiple rows for each row in the left table
+
+A join along a one-to-many relationship repeats the "one" side once for each of its matches. That is what a join is supposed to do, but it is easy to forget when you add a table "just to have it":
+
+```sql
+-- how many counties does Texas have?
+SELECT count(*)
+  FROM state_county
+  WHERE state = 'Texas';                                    -- 255 (254 counties and "Unknown")
+-- the rows themselves: each county once
+SELECT state, county
+  FROM state_county
+  WHERE state = 'Texas'
+  ORDER BY county
+  LIMIT 3;                                                  -- Texas Anderson, Texas Andrews, Texas Angelina
+-- the same, with daily_counts joined in as well
+SELECT count(*)
+  FROM state_county AS sc
+  JOIN daily_counts AS d ON d.county_id = sc.county_id
+  WHERE sc.state = 'Texas';                                 -- 67002: every county once per day it reported
+-- the rows themselves: now each county repeats, once per day
+SELECT sc.state, sc.county, d.date
+  FROM state_county AS sc
+  JOIN daily_counts AS d ON d.county_id = sc.county_id
+  WHERE sc.state = 'Texas'
+  ORDER BY sc.county, d.date
+  LIMIT 3;                                                  -- Texas Anderson three times, on its first three days
+```
+
+The second query is not wrong SQL: it counts county-days. But if you meant to query counties individually (instead of days), the answer is about 263x too big, and nothing warns you. The same happens to `sum()`: any column of the "one" side, summed after the join, is added once per match. This is the most common bug in real-world joins. Two habits catch it: join only the tables the question needs, and check `count(*)` before and after adding a join. If the row count jumped, ask whether it should have. (Here `count(DISTINCT sc.county_id)` would also repair the second query, giving 255 again, but the better fix is to leave `daily_counts` out.)
+
+## Self-joins
+
+A **self-join** joins a table to itself. Name the table twice in `FROM`, under two different aliases, and treat the two copies as if they were two tables. It is how you follow a self-referential key (an employee's row next to their manager's row, through `manager_id`), and it can also put a row next to a related row of the same table. Here each day of Harris County sits next to the day before (`p`, for "previous"), so `d.cases - p.cases` is that day's new cases:
+
+```sql
+-- INNER:
+SELECT d.date, d.cases AS total_cases, p.cases AS prev_cases, d.cases - p.cases AS new_cases
+  FROM daily_counts AS d
+  JOIN daily_counts AS p ON p.county_id = d.county_id AND p.date = d.date - 1   -- the same table, a second time
+  JOIN state_county AS sc ON sc.county_id = d.county_id
+  WHERE sc.state = 'Texas' AND sc.county = 'Harris'
+  ORDER BY d.date
+  LIMIT 3; 
+```
+
+ Joins are on table A and B. A self-join is not a special different kind of join as it just sets B = A.  
+
+Anything wrong with this join above? Anything we can correct?
+
+
+
+
+
+
+
+```sql
+-- LEFT:
+SELECT d.date, d.cases AS total_cases, p.cases AS prev_cases, d.cases - p.cases AS new_cases
+  FROM daily_counts AS d
+  LEFT JOIN daily_counts AS p ON p.county_id = d.county_id AND p.date = d.date - 1
+  JOIN state_county AS sc ON sc.county_id = d.county_id
+  WHERE sc.state = 'Texas' AND sc.county = 'Harris'
+  ORDER BY d.date
+  LIMIT 3;                                                  -- starts on Harris's first day, with prev_cases and new_cases NULL
+```
+
+On 2020-12-31 both give Harris 1054 new cases. Self joins can be inner or left by the same rule as we discussed above, namely whether the rows without a partner should stay. The left one matches `lag()` from the window functions section of Lecture 6, which also keeps every row and gives `NULL` on the first day. The inner one silently drops each county's first day, and in the `employees` table it would drop the boss, whose `manager_id` is `NULL`.
+
+One difference from `lag()` remains even with `LEFT JOIN`. `p.date = d.date - 1` means "the calendar day before", while `lag()` means "the previous row". If a county skipped a day, the self-join finds no partner and gives `NULL`, while `lag()` reaches back to the last day the county did report. So that's an advantage to self-join.
+
+## Other joins
+
+We will not be covering these in class, but you should know about them if you plan to go into data science.
+
+* **`RIGHT JOIN`** keeps every row of the *right* table instead. It is a `LEFT JOIN` with the tables swapped, and almost nobody writes it: swap the tables and use `LEFT JOIN`.
+* **`FULL OUTER JOIN`** keeps the unmatched rows of *both* tables, with `NULL`s on whichever side is missing. It is the tool for reconciling two lists, e.g. two versions of a customer list: which entries are only in the old one, only in the new one, or in both.
+* **`CROSS JOIN`** has no `ON` at all: it is simply a carteisan product; it pairs every row with every row, $n \times m$ rows. That sounds useless, but it builds a complete grid. Every county crossed with every day of December 2020 (`generate_series` makes the days) is 101,463 county-days, and a `LEFT JOIN` of `daily_counts` onto that grid shows that 860 of them were never reported:
+
+```sql
+SELECT count(*)
+  FROM state_county AS sc
+  CROSS JOIN generate_series(date '2020-12-01', date '2020-12-31', interval '1 day') AS g(day);   -- 101463 = 3273 counties x 31 days
+-- the grid's county-days with no report: d.county_id is NULL only where the LEFT JOIN found no partner
+SELECT *
+  FROM state_county AS sc
+  CROSS JOIN generate_series(date '2020-12-01', date '2020-12-31', interval '1 day') AS g(day)
+  LIMIT 10;
+SELECT sc.state, sc.county, g.day::date AS day, d.cases, d.deaths            -- ::date, since generate_series with an interval makes timestamps
+  FROM state_county AS sc
+  CROSS JOIN generate_series(date '2020-12-01', date '2020-12-31', interval '1 day') AS g(day)
+  LEFT JOIN daily_counts AS d ON d.county_id = sc.county_id AND d.date = g.day
+  WHERE d.cases IS NULL
+  ORDER BY sc.state, sc.county, day
+  LIMIT 3;                                                  -- Arizona Unknown 2020-12-01, 2020-12-02, 2020-12-03
+SELECT count(*)
+  FROM state_county AS sc
+  CROSS JOIN generate_series(date '2020-12-01', date '2020-12-31', interval '1 day') AS g(day)
+  LEFT JOIN daily_counts AS d ON d.county_id = sc.county_id AND d.date = g.day
+  WHERE d.county_id IS NULL;                                -- 860 county-days
+-- which counties, and how many days each
+SELECT sc.state, sc.county, count(*) AS days_missing, min(g.day)::date AS first_missing, max(g.day)::date AS last_missing
+  FROM state_county AS sc
+  CROSS JOIN generate_series(date '2020-12-01', date '2020-12-31', interval '1 day') AS g(day)
+  LEFT JOIN daily_counts AS d ON d.county_id = sc.county_id AND d.date = g.day
+  WHERE d.county_id IS NULL
+  GROUP BY sc.state, sc.county
+  ORDER BY days_missing DESC, sc.state;                     -- 31 counties: Arizona Unknown 31 2020-12-01 2020-12-31, ...
+```
+
+31 counties miss at least one day of December, 26 of them all 31 days. All but one are "Unknown" rows again, the same story as the 28 above. The one real county is Kalawao, Hawaii, one of the smallest counties in the US (fewer than a hundred residents), whose first report in December came on the 10th.
+
+Which column to test for `NULL` matters. After a `LEFT JOIN`, test a column of the right table that can *never* be `NULL` in a real row, such as its key, as above. Even with matches, some rows still have `NULL`'s e.g. `d.cases IS NULL` happens to give 860. A key column gives the right answer for any data.
+
+Can you do this using bash?
+
+Yes, imagine `state_county` and `daily_counts` as two CSV files. Linux has a command for exactly this, `join`: it pairs the lines of two files whose join field is equal, like `JOIN ... ON`. It has one requirement: both files must be **sorted** on the join field, because it walks down the two files at once, line by line, like `comm` from Lecture 5. That is the third way of matching rows, a **merge join**, which Postgres also uses. Its options map onto SQL directly: no option is an inner join, `-a 1` also prints the unmatched lines of file 1 (a `LEFT JOIN`), `-v 1` prints *only* those (the 28 counties above), and `-a 1 -a 2` would be a `FULL OUTER JOIN`. `-1` and `-2` say which field of each file to join on (the first, if left out), `-o` which fields to print (`2.3` is field 3 of file 2), and `-` stands for the input from a pipe. Again, none of the following is covered in this course. It's just FYI because it shows that linux is highly developed and can do any query SQL can do.
+
+```bash
+# the view and the daily counts as two CSV files, without a header line (join would treat it like any other line)
+psql lec04 -c "\copy (SELECT * FROM state_county) TO 'state_county.csv' CSV"   # a view needs the (SELECT ...) form
+psql lec04 -c "\copy daily_counts TO 'daily_counts.csv' CSV"
+head -n 2 state_county.csv daily_counts.csv                # 1,Alabama,Autauga,01001  and county_id,date,cases,deaths
+# join compares the fields as text, so sort and join must use the same rules: LC_ALL=C (plain byte order) for this whole session
+export LC_ALL=C
+sort -t, -k1,1 state_county.csv > state_county_by_id.csv
+sort -t, -k1,1 daily_counts.csv > daily_by_county.csv
+awk -F, '$2=="2020-12-31"' daily_counts.csv | sort -t, -k1,1 > dec31_by_county.csv
+# the join: each county with that day's count (state, county, cases)
+join -t, -o 1.2,1.3,2.3 state_county_by_id.csv dec31_by_county.csv | awk -F, '$1=="Texas"' | sort -t, -k3,3nr | head -n 3   # Texas,Harris,237727 Texas,Dallas,193318 Texas,Tarrant,150004
+# INNER JOIN: only counties with a line on 2020-12-31
+join -t, state_county_by_id.csv dec31_by_county.csv | wc -l                        # 3245
+# LEFT JOIN: -a 1 also keeps the counties without one
+join -t, -a 1 state_county_by_id.csv dec31_by_county.csv | wc -l                   # 3273
+# only the unmatched counties: -v 1 keeps only those, and field 3 is the county name
+join -t, -v 1 state_county_by_id.csv dec31_by_county.csv | cut -d, -f3 | sort | uniq -c   # 28 Unknown
+# pitfall 1: LEFT JOIN with all the days, then the date test afterwards (like WHERE) loses the unmatched counties again
+join -t, -a 1 state_county_by_id.csv daily_by_county.csv | awk -F, '$5=="2020-12-31"' | wc -l   # 3245
+# pitfall 2: Texas counties, then Texas counties joined with all their days
+awk -F, '$2=="Texas"' state_county_by_id.csv | wc -l                               # 255
+awk -F, '$2=="Texas"' state_county_by_id.csv | join -t, - daily_by_county.csv | wc -l   # 67002
+rm state_county*.csv daily*.csv dec31_by_county.csv
+```
+
+# Database Drivers (Adapters, Clients) and Database Abstraction
+
+Before we venture into more advanced SQL with multiple tables, let's talk about how the real world interacts with postgres. Generally speaking, not all work is done inside the postgres prompt. Other programs connect to postgres directly and they write "embedded SQL" or abstract away the SQL using a database model. We will see it now in both Python and R. Of course similar connections exist for Java, C++, etc, about every modern language has this ability.
+
+Every language does it the same way. A library called a **driver** (or **adapter**, or **client library**) opens a connection to the Postgres server, sends it the text of an SQL statement, and turns the rows that come back into the language's own data types, e.g. a data frame in R and a list of tuples in Python (which you can turn into a `pandas` DataFrame). Each language also has a standard **database API** that all its drivers follow, so the code looks the same whatever the database: **DB-API 2.0** in Python and **DBI** in R. You already installed both drivers in `setup_docs/03_software_setup_common.qmd`: `psycopg` for Python (in the `pip install` line of your `bigdata` environment) and `RPostgres` for R, which also brings `DBI` (and `dplyr` and `dbplyr` come with the `tidyverse`). If `import psycopg` or `library(RPostgres)` fails, go back to that document and rerun its install commands. The Postgres server must be running, as it is whenever `psql` works.
+
+
+
+## Embedded SQL
+
+In the first style the program holds the SQL as text, sends it, and gets rows back. You write exactly the SQL you would type in `psql`.
+
+### Python: the postgres adapter `psycopg`
+
+`psycopg.connect` takes the same connection information as `psql`. On your laptop the database name is enough, because it connects through the same local socket with your user name:
+
+```{python}
+import psycopg
+conn = psycopg.connect("dbname=lec04")
+print(conn.info.dbname, conn.info.user, conn.info.host)      # lec04 kapelner /var/run/postgresql (like \conninfo)
+```
+
+`execute` sends one SQL statement and returns a **cursor**, a pointer into the answer, from which you fetch the rows:
+
+```{python}
+cur = conn.execute("SELECT count(*) FROM covid")
+cur.fetchone()                                               # (884737,): one row, as a tuple
+cur = conn.execute("""
+    SELECT state, sum(cases) AS total_cases
+      FROM covid
+      WHERE date = '2020-12-31'
+      GROUP BY state
+      ORDER BY total_cases DESC
+      LIMIT 3
+""")
+rows = cur.fetchall()                                        # a list of tuples, one per row
+rows                                                         # [('California', 2307860), ('Texas', 1770527), ('Florida', 1323307)]
+```
+
+The SQL is just a string in the Python program: this is what me mean by "embedded SQL". 
+
+Once the SQL executes it returns a SQL table as text in a format similar to CSV. The `psycopg` package converts the text into tuples. To make the results useful, we need to then convert it to a "data frame". This seems like a lot of hops and it can be improved. If we have time I will show you how to improve that as well by sending binary and skipping conversion and what gains you can expect. There's not huge gains.
+
+The most popular data frame in Python is a `pandas` data frame:
+
+```{python}
+import pandas as pd
+df = pd.DataFrame(rows, columns=[col.name for col in cur.description])
+df
+```
+
+R also has data frames as we will see. The underlying specific data frame type is really important as they are themselves software libraries that have different features and performance characteristics. We will see a few popular data frames in both Python and R at the end of the section.
+
+#### Parameters, and why you never paste values into the SQL
+
+Programs usually fill in part of a query from a variable, such as the state a user picked. Do **not** build the string yourself with an f-string. Write a placeholder `%s` and give the values separately, and the driver sends them to Postgres apart from the SQL text:
+
+```{python}
+state = "Texas"
+conn.execute(
+    "SELECT county, cases FROM covid WHERE date = %s AND state = %s ORDER BY cases DESC LIMIT 3",
+    ("2020-12-31", state)
+).fetchall()                                                 # [('Harris', 237727), ('Dallas', 193318), ('Tarrant', 150004)]
+```
+
+Here is why. Suppose the "state" comes from a web form, and someone types `Texas' OR '1'='1`:
+
+```{python}
+state = "Texas' OR '1'='1"
+# pasted in: the quote in the input ends the string, and the rest becomes SQL, so every row matches
+conn.execute(f"SELECT count(*) FROM covid WHERE state = '{state}'").fetchone()   # (884737,)
+# as a parameter: the whole input is one value, a (strange) state name that matches nothing
+conn.execute("SELECT count(*) FROM covid WHERE state = %s", (state,)).fetchone()  # (0,)
+```
+
+This is **SQL injection**, for decades one of the most common ways websites are broken into: the attacker's input becomes part of your SQL, and with `'; DROP TABLE covid; --` it can do much worse than count rows. Parameters make it impossible.
+
+#### Let the database do the work
+
+The rule from the whole database unit applies here too: send the *question* to the database, and bring back only the *answer*. Bringing the table into Python and grouping it there gives the same result, much more slowly:
+
+```{python}
+import time
+start = time.time()
+cur = conn.execute("SELECT * FROM covid")                    # all 884,737 rows travel to Python
+df_all = pd.DataFrame(cur.fetchall(), columns=[col.name for col in cur.description])
+print(time.time() - start)                                   # about 1.5 s, before any computing
+start = time.time()
+conn.execute("""
+    SELECT state, sum(cases)
+      FROM covid
+      WHERE date = '2020-12-31'
+      GROUP BY state
+""").fetchall()                                              # 55 rows travel to Python
+print(time.time() - start)                                   # about 0.03 s
+```
+
+On a table of billions of rows the first version would not fit in your laptop's memory at all, while the second one still returns 55 rows. Note also that `df_all.dtypes` shows `deaths` as `float64`: `pandas` stores the `NULL`s as `NaN`, which only exists for decimal numbers.
+
+We can close the postgres connection via:
+
+```{python}
+conn.close() # done with the first connection
+```
+
+### R: `DBI` and `RPostgres`
+
+In R, `DBI` is the interface and `RPostgres` the driver. `dbGetQuery` sends a query and returns a data frame directly:
+
+```{r}
+library(DBI)
+con <- dbConnect(RPostgres::Postgres(), dbname = "lec04")
+dbListTables(con)                                            # "covid"           (like \dt)
+dbListFields(con, "covid")                                   # its 6 columns     (like \d covid)
+df <- dbGetQuery(con, "
+  SELECT state, sum(cases) AS total_cases
+    FROM covid
+    WHERE date = '2020-12-31'
+    GROUP BY state
+    ORDER BY total_cases DESC
+    LIMIT 3")
+df                                                           # California 2307860, Texas 1770527, Florida 1323307
+str(df)                                                      # total_cases is integer64: sum() of integers is a bigint in Postgres
+```
+
+Parameters are written `$1`, `$2`, ... and given as a list, for the same reason as in Python:
+
+```{r}
+dbGetQuery(con,
+  "SELECT county, cases FROM covid WHERE date = $1 AND state = $2 ORDER BY cases DESC LIMIT 3",
+  params = list("2020-12-31", "Texas"))                      # Harris 237727, Dallas 193318, Tarrant 150004
+```
+
+### Faster drivers: binary transfer straight into columns
+
+::: {.callout-note}
+## Not covered on the exam
+This subsection is FYI reading only: it will not be tested.
+:::
+
+Sometimes you do need the whole table in memory, for example to fit a model to it. Then the driver's speed matters. By default Postgres sends every value as **text**: the number 237727 travels as the six characters `237727`. The driver then makes three copies of the data:
+
+1. it parses each value into a language object (a Python `int`, a Python `date`, ...),
+2. it collects them into a list of rows,
+3. and the data frame library copies those rows into its columns.
+
+Two ideas speed this up. Postgres can also send values in its **binary** format (237727 as a 4-byte integer), which saves the parsing. And a driver written in C, C++ or Rust can write the values **straight into columns** (often in the Arrow format from Lecture 3), which saves the millions of language objects and the copy into columns. Two newer drivers do both:
+
+* **ADBC** (Arrow Database Connectivity, from the Apache Arrow project) is a standard like DBI, but for columns: the Postgres driver asks for a binary `COPY` and builds Arrow columns from it. It exists for Python (`adbc-driver-postgresql`) and R (`adbcpostgresql`, also through DBI with `adbi`).
+* **ConnectorX** (Python, written in Rust) does the same and can also split one query into parts and run them in parallel.
+
+```{python}
+import adbc_driver_postgresql.dbapi as adbc
+import connectorx as cx
+uri = "postgresql:///lec04?host=/var/run/postgresql"      # the local socket; on a server it is postgresql://user@host/lec04
+with adbc.connect(uri) as conn, conn.cursor() as cur:
+    cur.execute("SELECT * FROM covid")
+    df_adbc = cur.fetch_arrow_table().to_pandas()           # Arrow columns, then a pandas DataFrame
+df_cx = cx.read_sql(uri, "SELECT * FROM covid", return_type = "pandas")
+```
+
+```{r}
+library(data.table)
+con_adbc <- dbConnect(adbi::adbi("adbcpostgresql"), uri = "postgresql:///lec04?host=/var/run/postgresql")
+dt <- setDT(dbGetQuery(con_adbc, "SELECT * FROM covid"))    # the same DBI calls as before, a different driver
+dbDisconnect(con_adbc)
+```
+
+Here is how long each route takes to bring all of `covid` (884,737 rows, 6 columns) into memory: a `pandas` DataFrame in Python and a `data.table` in R. The times are in seconds (the median of 5 runs after a warm-up, connection included), on the local socket, so there was no network:
+
+| Python route, into `pandas`                     | Seconds |
+|:------------------------------------------------|--------:|
+| ADBC (binary `COPY` into Arrow) + `to_pandas()` |    0.57 |
+| ConnectorX (binary `COPY` into columns)         |    0.86 |
+| `psycopg`, text rows (as above)                 |    1.26 |
+| `psycopg`, binary rows                          |    1.32 |
+| `asyncpg` (binary rows)                         |    1.53 |
+| `psycopg`, `COPY` as CSV, then `read_csv`       |    1.58 |
+| `psycopg`, binary `COPY`, read row by row       |    2.84 |
+
+: Python. Seconds, median of 5 runs.
+
+| R route, into `data.table`                     | Seconds |
+|:-----------------------------------------------|--------:|
+| `adbcdrivermanager::read_adbc` + `setDT`       |    0.54 |
+| `adbi` (ADBC through DBI) + `setDT`            |    0.59 |
+| `psql` `\copy` as CSV, piped into `fread`      |    0.64 |
+| `RPostgres` `dbGetQuery` + `setDT` (as above)  |    0.73 |
+
+: R. Seconds, median of 5 runs.
+
+What the numbers say:
+
+* **Binary alone does not help in Python.** Binary rows were no faster than text rows, and reading a binary `COPY` row by row in Python was the slowest route of all. The time goes into making millions of Python objects, not into parsing text.
+* **Writing straight into columns is what helps.** ADBC was about 2.2 times faster than plain `psycopg`, and ConnectorX about 1.5 times.
+* **R gains less**, because `RPostgres` already fills whole vectors in C: all four routes are within 0.2 s of each other. Even `fread` on CSV text beats `RPostgres`.
+* **The columns do not all come back with the same types.** For example, `psycopg`, `asyncpg` and ADBC return `date` as Python `date` objects, while ConnectorX and `read_csv` return `datetime64`. Check `dtypes` before you switch drivers.
+
+None of this changes the rule above. A faster driver brings the whole table over about 2 times faster, but sending only the answer was about 50 times faster even on this small table, and the gap grows with the table. These were run with `psycopg` 3.3.6, `asyncpg` 0.32.0, ConnectorX 0.4.6 and ADBC 1.13.0 in Python, and `RPostgres`, `adbcpostgresql` 0.25.0 and `adbi` 0.1.3 in R, on the laptop of the benchmarks in the Data Frames unit below.
+
+
+## SQL Database Abstraction
+
+The second style is to not write SQL at all. With the `dbplyr` package (part of the `tidyverse`), `tbl(con, "covid")` stands for the table in the database, and ordinary `dplyr` verbs on it are translated into SQL. Nothing is computed in R:
+
+```{r}
+library(dplyr)                                             # SQL translation:
+q <- tbl(con, "covid") |>                                  #  FROM covid
+  filter(date == as.Date("2020-12-31")) |>                 #  WHERE date = '2020-12-31'
+  group_by(state) |>                                       #  GROUP BY state
+  summarise(total_cases = sum(cases, na.rm = TRUE)) |>     #  SELECT state, sum(cases) AS total_cases
+  arrange(desc(total_cases)) |>                            #  ORDER BY total_cases DESC
+  head(3)                                                  #  LIMIT 3;
+show_query(q) # the SQL that dbplyr wrote
+collect(q) # only now is it run in Postgres, and the 3 rows come back to R as a dply data frame (tbl) object
+```
+
+`show_query` prints almost exactly the query we would write by hand, and `collect` runs it in the database and brings back only the answer, so the "let the database do the work" rule holds automatically. 
+
+You can close the R postgres connection with 
+
+```{r}
+dbDisconnect(con)
+```
+
+In Python, `ibis` does the same. It was mistakenly left out of the setup guide when you installed your packages, so install it now, in a terminal with your course environment active:
+
+```bash
+source ~/.venvs/bigdata/bin/activate
+pip install "ibis-framework[postgres]"     # the quotes are needed, as for psycopg[binary]
+python -c "import ibis; print('ok')"
+```
+
+(The `pip install` line in `setup_docs/03_software_setup_common.qmd` now includes it.) `con.table("covid")` stands for the table in the database, the methods build up a query, and `ibis.to_sql` shows the SQL it wrote: `con.table("covid")` stands for the table in the database, the methods build up a query, and `ibis.to_sql` shows the SQL it wrote:
+
+```{python}
+import datetime
+import ibis
+con = ibis.postgres.connect(database="lec04")
+covid = con.table("covid")                                 # SQL translation:
+q = (covid                                                 #  FROM covid
+     .filter(covid.date == datetime.date(2020, 12, 31))    #  WHERE date = '2020-12-31'
+     .group_by("state")                                    #  GROUP BY state
+     .aggregate(total_cases=covid.cases.sum())             #  SELECT state, sum(cases) AS total_cases
+     .order_by(ibis.desc("total_cases"))                   #  ORDER BY total_cases DESC
+     .limit(3))                                            #  LIMIT 3;
+print(ibis.to_sql(q))  # nested derived tables, named t0, t1 and t2, then ORDER BY ... DESC NULLS LAST LIMIT 3
+q.to_pandas()          # only now is it run in Postgres: California 2307860, Texas 1770527, Florida 1323307
+con.disconnect()
+```
+
+The SQL `ibis` writes is uglier than ours, a derived table inside a derived table with the throwaway aliases `t0`, `t1` and `t2`, but Postgres's planner turns it into the same plan.
+
+A third style is the **ORM** ("object-relational mapper"), such as SQLAlchemy and Django in Python (and ActiveRecord in Ruby on Rails). An ORM maps each *table* to a *class* and each *row* to an *object* of that class: you write a `County` class once, and `counties` rows come back as `County` objects whose attributes are the columns, `county.name` and `county.fips`. Foreign keys become attributes too. Declare that `counties.state_id` points at `states` (Lecture 6), and `county.state.name` follows it to the right `states` row for you: the ORM writes the join behind the scenes. Saving works the same way in reverse: change `county.name` and save it (`county.save()` in Django, `session.commit()` in SQLAlchemy), and the ORM writes the `UPDATE`. The difference from `dbplyr` and `ibis` is the goal. Those build a *query* and hand you back a data frame for analysis, while an ORM gives *application code* (a web site, say) objects to work with one at a time, which is why it is what most web applications use.
+
+Here are all the pieces together, from your code down to the files on disk. Whichever of the three styles you pick, what reaches Postgres is always SQL text: the styles differ only in who writes that text and in what form the rows come back. `psql` is not an API but a program like yours, except that you type the SQL yourself. It skips the API layer and goes straight to **libpq**, the C library that `psycopg` and `RPostgres` are built on, so from libpq down everything is shared:
+
+```text
+ CLIENT SIDE: your program (e.g. on your laptop)
+ +--------------------------------------------------------------------------+
+ | embedded SQL      dbplyr / ibis       ORM (SQLAlchemy,     psql          |
+ | you write the     you write dplyr /   Django): you write   you type the  |
+ | SQL               ibis code           classes, objects     SQL yourself  |
+ |      |                 |                    |                  |         |
+ |      |                 | translated         | translated       |         |
+ |      |                 | (show_query,       | (query log)      |         |
+ |      |                 |  to_sql)           |                  |         |
+ |      v                 v                    v                  |         |
+ | +------------------------------------------------------+       |         |
+ | |                      SQL text                        |       |         |
+ | +------------------------------------------------------+       |         |
+ |      |                                                         |         |
+ |      v                                                         |         |
+ | Standard database API                                          |         |
+ |   DB-API 2.0 (Python)  /  DBI (R)                              |         |
+ |      |                                                         |         |
+ |      v                                                         |         |
+ | Driver / adapter                                               |         |
+ |   psycopg (Python)  /  RPostgres (R)                           |         |
+ |   rows come back as tuples / data frames (collect()),          |         |
+ |   or as the ORM's objects (county.name)                        |         |
+ |      |                                                         |         |
+ |      v                                                         v         |
+ | libpq: Postgres's own C client library, used by all of the above         |
+ +--------------------------------------------------------------------------+
+                          |      ^
+                 SQL text |      | rows back
+                          v      |
+ +--------------------------------------------------------------------------+
+ | CONNECTION, speaking the Postgres wire protocol over                     |
+ |   a Unix socket (/var/run/postgresql on your laptop)                     |
+ |   or TCP on a remote machine (host:5432). (Not covered in this class).   |
+ +--------------------------------------------------------------------------+
+                          |      ^
+                          v      |
+ SERVER SIDE: the database
+ +--------------------------------------------------------------------------+
+ | Postgres server (postmaster)                                             |
+ |   listens, checks who you are, starts one backend per connection         |
+ |      |                                                                   |
+ |      v                                                                   |
+ | Backend process (one per connection)                                     |
+ |   parser  ->  planner (what EXPLAIN shows)  ->  executor                 |
+ |      |      ^                                                            |
+ |      v      |                                                            |
+ | Data directory (PGDATA) on disk                                          |
+ |   tables and indexes, stored as 8 kB pages                               |
+ +--------------------------------------------------------------------------+
+```
+
+The convenience of all three has a price: when a query is slow you have to read the SQL they generated (`show_query` in `dbplyr`, `ibis.to_sql` in `ibis`, the query log in an ORM) to see why, so you still need to know SQL. ORMs in particular make it easy to write a loop such as "for each county, print `county.state.name`", which quietly sends one query per county which is extremely inefficient. I have so many of my own stories about this!
+
+## Conclusion of Postgres and the SQL unit as itself
+
+How large is the postgres software package (not including any databases)? Add it up, with `du` ("disk usage") for the program files and the database itself for your data:
+
+```bash
+du -ch /usr/lib/postgresql /usr/share/postgresql | tail -n 1   # for linus users
+du -shL "$(brew --prefix postgresql@18)" #for macos users
+```
+
+That is a lot of space for a program whose job is to store rows in a table. But look at what it bought you in this unit:
+
+- **Speed:** the same question went from scanning every row (about 70 ms here, and growing with the table) to under 1 ms with an index, and that stays true as the table grows.
+- **Correctness:** typed columns refused `'N/A'` as a number, and rules such as `NOT NULL` and `UNIQUE` can refuse other nonsense when it arrives.
+- **Safe changes:** single-row updates and transactions that happen completely or not at all, even if the machine crashes.
+- **Many users at once:** many programs reading and writing the same tables at once without corrupting them.
+- **A query language** instead of one-off shell pipelines: SQL, with joins, grouping and sorting, and a planner that picks how to run each query.
+
+PostgreSQL grew out of research at Berkeley in the 1980s and has had decades of engineering since. Nobody would write all of that again for one analysis. It's another "truly amazing" piece of software, a pinnacle of human achievement.
+
+But not every job needs a heavyweight server running on linux. When one analyst queries data that mostly gets read, not written, a lightweight database is often enough, and for analytics the most popular is **DuckDB**. It has no server: it is a program you run from the shell, much as you run `psql`, or a library you load inside Python or R through its own driver (in R, only the `dbConnect(...)` line changes). A whole database is one file, or no file at all. It speaks almost the same SQL as Postgres, so the queries of this unit, window functions included, mostly run unchanged, and it can query a CSV or Parquet file directly, without loading it first. Its storage is columnar (Lecture 6), which makes it very fast for aggregates over a few columns of many rows. What it gives up is the "many users at once" point above: it is not built for many programs writing to the same tables. Since it is close to a drop-in replacement for the more universal, full-featured, robust Postgres you now know, we will not cover it separately.
+
+## Why clean in SQL and not in R or Python?
+
+Every step of the cleaning pipeline of Lecture 7 can also be done in R or Python, once the data has been pulled in through a database driver. `dplyr` or `data.table` in R and `pandas` in Python have a ready-made function for each of them: dropping exact duplicates, keeping the newest row per key, computing flags with a lag, and turning sentinels into missing values. Still, SQL is often preferred for the rule-based steps, for these reasons:
+
+* **Always current.** A view is recomputed on every query, so tomorrow's feed is cleaned the moment it arrives. A script has to be rerun, and the cleaned file it wrote goes stale in between.
+* **The data does not have to fit in memory.** `pandas`, `dplyr` and `data.table` hold the whole table in RAM, and it first has to travel over the network to get there. The database works on disk with its indexes, next to the data, and sends back only the answer, as in "Let the database do the work" above. For big data, this is often what decides it.
+* **Language-neutral.** One team member uses R, another Python, a third a BI tool (like Tableau/PowerBI). SQL is the one language all of them can read and query.
+* **One copy of the rules.** Cleaning scripts in R, Python, BI tools get copied from project to project and drift apart, until two analysts report two different numbers from the same raw table.
+* **Dashboards read from the database.** BI tools such as Tableau and Power BI connect straight to the database and are usually pointed at a view, so they show the cleaned data without any extra work. Both also have their own cleaning tools (Tableau Prep, Power BI's Power Query), but rules written there usually live inside that tool (a Prep flow, a Power BI report), where no R or Python user can see or reuse them. Cleaning in a view keeps the dashboard and the analysis consistent.
+* **Auditable.** The raw table is never touched, and every rule is a short, readable line in a view. Tools like dbt (which we won't cover) add version control and tests on top.
+
+R and Python are the better choice for what SQL does badly: model-based imputation (`mice`, `missForest`), fuzzy matching with dedicated libraries, heavy text parsing, and exploratory plots to find the problems in the first place. The usual pattern combines the two. SQL views do low-level rule-based cleaning like we saw in Lecture 7, and R or Python pulls the last view through a driver for modeling.
+
+## Big picture plan
+
+We will be using database adapters as we "put it all together": from databases -> cleaning -> predictive modeling / inferential modeling using R and/or Python. That's when we'll dip into knowledge from all your other statistics and machine learning courses.
+
+# Data Frames in R and Python
+
+::: {.callout-note}
+## Not covered on the exam
+This unit is FYI reading only: it will not be tested.
+:::
+
+A driver hands the result of a query to R or Python as a **data frame**, and from then on the work happens in memory, in whichever data-frame library you chose. There are several, and they differ more than their similar names suggest: in syntax, in speed, and in whether they use one core or all of them. This unit compares five of them on `covid`. Nothing in it is new statistics; it is a buyer's guide.
+
+## The libraries
+
+| Library               | Language | In one line                                                                              |
+|:----------------------|:---------|:-----------------------------------------------------------------------------------------|
+| `data.frame` (base R) | R        | built in, no packages needed; the baseline, and slow on big data                         |
+| `dplyr` (tidyverse)   | R        | readable verbs joined by pipes; `dbplyr` turns the same verbs into SQL (above)           |
+| `data.table`          | R        | the fastest in R, with a terse `dt[i, j, by]` syntax, and changes data in place          |
+| `pandas`              | Python   | the standard in Python, with a row index; most operations use one core                   |
+| `polars`              | Python   | newer, columnar (Arrow), uses all cores, and can plan a whole query first (lazy mode)    |
+
+: Five data-frame libraries. `polars` also exists for R, and `data.table` has a Python port, but both are mostly used in the language shown.
+
+## The same two questions in each library
+
+Two questions from Lectures 7 and 8, asked five times: the three states with the most cases on 2020-12-31 (the query from the drivers section), and the daily new cases per county with `lag`, counting the days that went negative (the `cases_went_down` flag of the cleaning view). Every version gives California 2307860, Texas 1770527, Florida 1323307 and 15144.
+
+Base R needs no packages. `aggregate` groups, and `ave` applies a function within each group, here "shift down by one":
+
+```{r}
+setwd("~/workspace/HUJI_52002_Fall_2026/scratch/lec03")     # where covid.csv lives
+covid <- read.csv("covid.csv", colClasses = c(fips = "character"))
+covid$date <- as.Date(covid$date)
+dec31 <- covid[covid$date == as.Date("2020-12-31"), ]
+top <- aggregate(cases ~ state, data = dec31, FUN = sum)
+head(top[order(-top$cases), ], 3)                           # California 2307860, Texas 1770527, Florida 1323307
+covid <- covid[order(covid$state, covid$county, covid$date), ]
+covid$new_cases <- covid$cases - ave(covid$cases, covid$state, covid$county, FUN = function(v) c(0, head(v, -1)))
+sum(covid$new_cases < 0)                                    # 15144
+```
+
+`dplyr` reads like the SQL, one verb per clause, in the order the steps happen. `lag(cases, 1, default = 0)` is the same as SQL's `lag(cases, 1, 0)`:
+
+```{r}
+setwd("~/workspace/HUJI_52002_Fall_2026/scratch/lec03")
+library(dplyr)
+library(readr)
+covid <- read_csv("covid.csv", col_types = cols(fips = col_character()))
+covid |>
+  filter(date == as.Date("2020-12-31")) |>                 # WHERE
+  group_by(state) |>                                        # GROUP BY
+  summarise(cases = sum(cases)) |>                          # SELECT sum(cases)
+  arrange(desc(cases)) |>                                   # ORDER BY ... DESC
+  head(3)                                                   # LIMIT 3
+covid <- covid |>
+  arrange(state, county, date) |>
+  group_by(state, county) |>                                # PARTITION BY
+  mutate(new_cases = cases - lag(cases, 1, default = 0)) |> # a window function: every row is kept
+  ungroup()
+sum(covid$new_cases < 0)                                    # 15144
+```
+
+`data.table` puts everything inside the brackets: `dt[i, j, by]` reads "take rows `i`, compute `j`, grouped by `by`". `:=` adds the column *in place*, without copying the table, which is a large part of its speed and memory advantage:
+
+```{r}
+setwd("~/workspace/HUJI_52002_Fall_2026/scratch/lec03")
+library(data.table)
+covid <- fread("covid.csv", colClasses = c(fips = "character"))
+covid[date == as.IDate("2020-12-31"), .(cases = sum(cases)), by = state][order(-cases)][1:3]
+setorder(covid, state, county, date)                       # sorts in place, too
+covid[, new_cases := cases - shift(cases, 1, fill = 0), by = .(state, county)]
+covid[new_cases < 0, .N]                                    # 15144
+```
+
+`pandas` chains methods. `groupby(...)["cases"].shift()` is its `lag`:
+
+```{python}
+import os
+os.chdir(os.path.expanduser("~/workspace/HUJI_52002_Fall_2026/scratch/lec03"))
+import pandas as pd
+covid = pd.read_csv("covid.csv", dtype={"fips": "string"}, parse_dates=["date"])
+(covid[covid["date"] == "2020-12-31"]
+   .groupby("state", as_index=False)["cases"].sum()
+   .sort_values("cases", ascending=False)
+   .head(3))                                                # California 2307860, Texas 1770527, Florida 1323307
+covid = covid.sort_values(["state", "county", "date"])
+covid["new_cases"] = covid["cases"] - covid.groupby(["state", "county"])["cases"].shift(1, fill_value=0)
+(covid["new_cases"] < 0).sum()                              # 15144
+```
+
+`polars` looks like `pandas` at first glance but is a different design. You write **expressions** (`pl.col("cases").sum()`) instead of indexing, there is no row index, and `.over(...)` is SQL's `OVER (PARTITION BY ...)`. Code written for `pandas` must be rewritten, not just re-imported:
+
+```{python}
+import os
+os.chdir(os.path.expanduser("~/workspace/HUJI_52002_Fall_2026/scratch/lec03"))
+import polars as pl
+covid = pl.read_csv("covid.csv", schema_overrides={"fips": pl.Utf8}, try_parse_dates=True)
+(covid.filter(pl.col("date") == pl.date(2020, 12, 31))
+      .group_by("state").agg(pl.col("cases").sum())
+      .sort("cases", descending=True)
+      .head(3))                                             # California 2307860, Texas 1770527, Florida 1323307
+covid = covid.sort(["state", "county", "date"]).with_columns(
+    new_cases = pl.col("cases") - pl.col("cases").shift(1, fill_value=0).over(["state", "county"]))
+covid.filter(pl.col("new_cases") < 0).height                # 15144
+```
+
+`polars` also has a **lazy** mode: `scan_csv` instead of `read_csv` builds a plan and runs nothing until `collect()`. Like Postgres's planner, it then rearranges the work. `explain()` shows that the filter and the column choice were pushed into the scan itself, so only 3 of the 6 columns are ever read, and only the December 31 rows are kept:
+
+```{python}
+lazy = (pl.scan_csv("covid.csv", schema_overrides={"fips": pl.Utf8}, try_parse_dates=True)
+          .filter(pl.col("date") == pl.date(2020, 12, 31))
+          .group_by("state").agg(pl.col("cases").sum())
+          .sort("cases", descending=True)
+          .head(3))
+print(lazy.explain())                                       # Csv SCAN [covid.csv]  PROJECT 3/6 COLUMNS  SELECTION: col("date") == 2020-12-31
+lazy.collect()                                              # the same three states
+```
+
+## How fast are they?
+
+Six everyday operations, timed in seconds on `covid.csv` (884,737 rows, 36 MB), the median of 5 runs, with the fastest in each row in bold:
+
++--------------------------------------------+----------------+---------+--------------+--------------------+-----------+
+|                                            | R                                       | Python                         |
+| operation                                  +----------------+---------+--------------+--------------------+-----------+
+|                                            | base (default) | `dplyr` | `data.table` | `pandas` (default) | `polars`  |
++:===========================================+===============:+========:+=============:+===================:+==========:+
+| read the CSV                               | 3.48           | 0.56    | 0.15         | 0.83               | **0.036** |
++--------------------------------------------+----------------+---------+--------------+--------------------+-----------+
+| filter: Texas rows                         | 0.009          | 0.010   | **0.005**    | 0.008              | 0.010     |
++--------------------------------------------+----------------+---------+--------------+--------------------+-----------+
+| group by state and day, sum                | 0.90           | 0.083   | **0.021**    | 0.042              | 0.021     |
++--------------------------------------------+----------------+---------+--------------+--------------------+-----------+
+| window: new cases per county               | 2.51           | 0.29    | **0.11**     | 0.19               | 0.16      |
++--------------------------------------------+----------------+---------+--------------+--------------------+-----------+
+| join: each row with its county's first day | 5.95           | 0.12    | 0.062        | 0.16               | **0.049** |
++--------------------------------------------+----------------+---------+--------------+--------------------+-----------+
+| sort by cases                              | 0.090          | 0.085   | 0.096        | 0.19               | **0.055** |
++--------------------------------------------+----------------+---------+--------------+--------------------+-----------+
+
+: `covid.csv`, 884,737 rows. Seconds, median of 5 runs.
+
+At this size, every library except base R answers everything in under a second, so pick by syntax, not speed. The differences appear at scale. The same operations on `covid_big.csv` from Lecture 3 (50 copies of `covid`: 44,236,850 rows, 1.8 GB), one run each:
+
++--------------------------------------------+----------------+---------+--------------+--------------------+----------+
+|                                            | R                                       | Python                        |
+| operation                                  +----------------+---------+--------------+--------------------+----------+
+|                                            | base (default) | `dplyr` | `data.table` | `pandas` (default) | `polars` |
++:===========================================+===============:+========:+=============:+===================:+=========:+
+| read the CSV                               | 238.2          | 25.5    | 8.0          | 46.6               | **2.4**  |
++--------------------------------------------+----------------+---------+--------------+--------------------+----------+
+| filter: Texas rows                         | 10.2           | 0.59    | 0.41         | 0.45               | **0.27** |
++--------------------------------------------+----------------+---------+--------------+--------------------+----------+
+| group by state and day, sum                | 205.8          | 2.5     | **0.68**     | 3.0                | 4.3      |
++--------------------------------------------+----------------+---------+--------------+--------------------+----------+
+| window: new cases per county               | 572.8          | 13.4    | **5.6**      | 31.0               | 24.5     |
++--------------------------------------------+----------------+---------+--------------+--------------------+----------+
+| join: each row with its county's first day | 801.4          | 7.7     | 6.8          | 10.3               | **2.4**  |
++--------------------------------------------+----------------+---------+--------------+--------------------+----------+
+| sort by cases                              | 8.8            | 11.9    | **8.5**      | 31.3               | 8.6      |
++--------------------------------------------+----------------+---------+--------------+--------------------+----------+
+
+: `covid_big.csv`, 44 million rows. Seconds, one run.
+
+What the numbers say:
+
+* **Base R does not scale.** The join took over 13 minutes and the window almost 10, against seconds for everything else. Its `aggregate`, `ave` and `merge` were not built for tens of millions of rows. Use it for small data and for teaching, not for big data.
+* **`data.table` and `polars` lead**, and they trade first places. `polars` is fastest at reading (all cores parse the file at once) and at the join; `data.table` at grouping and the window. Both are often several times faster than `dplyr` and `pandas`, but not on every operation: here `polars` grouped more slowly than `pandas`.
+* **`dplyr` and `pandas` are fine up to a few million rows**, and they have the most users, documentation and answers online. That is often worth more than a few seconds.
+* **Memory matters as much as time.** The Python run peaked at 16.5 GB of RAM for a 1.8 GB CSV: the table itself takes more room in memory than in the file, and many operations (the sorts, the window) make a full copy of it. `data.table`'s in-place `:=` and `polars`'s lazy mode avoid many of those copies. When the data does not fit in RAM at all, none of these work, and the database (or Parquet with `arrow` or `polars`'s lazy scans) is the answer, as the "data does not have to fit in memory" point above says.
+
+Benchmarks are a snapshot, not a ranking for all time. These were run on one 12-thread laptop (WSL2, 41 GB of RAM) with Python 3.14, `pandas` 3.0.6 and `polars` 1.44.2, and R (development version of October 2026) with `dplyr` 1.2.1, `readr` 2.2.0 and `data.table` 1.18.4, which used 6 threads by default while `polars` used all 12. A different machine, a different version or a different operation can reorder the middle of the table. Time your own job before you switch libraries for speed.
+
+## Which one when?
+
+* **Already in R, data in the millions of rows:** `dplyr` for readability. Switch to `data.table` when it gets slow.
+* **Already in Python:** `pandas` is what every tutorial and most libraries expect (`scikit-learn`, `statsmodels`, plotting). Reach for `polars` when the data is large, and convert with `.to_pandas()` at the end if a library needs it.
+* **Bigger than memory, or shared:** keep it in the database and pull only the answer (the "Let the database do the work" section above).
+
+# Crash course in Slurm and scheduling jobs on a shared supercomputer
+
+This topic will not be tested. But you will need to know something about this topic to do your lab assignment.
+
+In Lecture 4 we saw that `moriah-gw` is only the **login node**, the compute which serves as a small vestibule opening into the grand hall. And the login node caps you at 30% of one core. The real work happens in the grand hall, the **compute nodes**, which you never `ssh` into directly. Instead you ask the **scheduler** for resources and it gives you a piece of the grand hall letting you run your work there when the space if available. 
+
+On Moriah the scheduler is **Slurm**, and so is it on most university and national clusters in the world. **Slurm** ("Simple Linux Utility for Resource Management") is free, open-source software that manages a cluster's shared compute nodes. Its code is on GitHub at <https://github.com/SchedMD/slurm>, under the **GPL v2** ("version 2 or any later version"), the same copyleft license as the Linux kernel and `git` (Lecture 2). 
+
+Slurm keeps a **queue** of the jobs everyone has submitted, decides which job runs on which node and when, gives each job the cores, memory and time it asked for and no more, and stops the job when its time runs out. The idea is that of a restaurant with a waiting list. You tell the host how many seats you need (cores), how much table space (memory), and how long you'll stay (time). The host puts you in the queue and seats you when a table that big opens up. You don't pick the table. If you overstay your time, you are thrown out.
+
+A few words:
+
+* A **job** is one request for resources plus the commands to run with them. Every job gets a number, the **job ID**.
+* A **node** is one computer in the cluster. A job runs on one (or more) nodes.
+* A **partition** is a named group of nodes with its own limits (e.g. a short queue, a GPU queue). If you don't name one, you get the default.
+* The **queue** is the list of all jobs that are waiting or running.
+
+We will use three commands:
+
+* `sbatch`: submit a script to run *later*, in the background. You get your prompt back immediately. This is how you run real work.
+* `srun`: run a command on a compute node *now* and wait for it, with its output in your terminal. Good for quick tests and interactive sessions.
+* `squeue`: look at the queue to see your jobs and their state.
+
+And one more to clean up: `scancel` kills a job.
+
+## Look around first
+
+```bash
+ssh moriah
+hostname
+sinfo -s #gives detailed information about the cluster
+```
+
+The output of `sinfo` will be something like this:
+
+```
+PARTITION  AVAIL  TIMELIMIT   NODES(A/I/O/T) NODELIST
+catfish-k     up 7-00:00:00          5/0/0/5 catfish-[01-05]
+catfish       up 7-00:00:00          5/0/0/5 catfish-[01-05]
+salmon-k      up 7-00:00:00         9/0/1/10 salmon-[01-10]
+salmon        up 7-00:00:00         9/0/1/10 salmon-[01-10]
+goldfish-k    up 7-00:00:00          1/0/0/1 goldfish-01
+goldfish      up 7-00:00:00          1/0/0/1 goldfish-01
+dogfish-k     up 7-00:00:00          0/0/2/2 dogfish-[01-02]
+dogfish       up 7-00:00:00          0/0/2/2 dogfish-[01-02]
+glacier-k     up 7-00:00:00        37/0/1/38 glacier-[01-38]
+glacier*      up 7-00:00:00        37/0/1/38 glacier-[01-38]
+```
+
+Let's explain these columns
+
+* PARTITION is a named queue with its own rules, pointing at a set of nodes. The rules cover things like the maximum time, who may submit, priority, and whether jobs can be preempted. Because it's a rule set and not the hardware itself, two partitions can point at the same machines:
+- salmon and salmon-k are the same 10 physical machines with two different sets of rules.
+- glacier and glacier-k are both the same 38 machines.
+* AVAIL whether the queue is available (up = yes, down = no, drain = no, inact = no)
+* TIMELIMIT is the timelimit e.g. 7-00:00:00 denoted 7 days, 0 hours, the longest time a job may ask for in this partition using the "--time" specificiation
+* NODES(A/I/O/T) is the availability status about the machines in the queue e.g. 37/0/1/38.
+  - Allocated: 37 nodes are running at least one job.
+  - Idle: 0 nodes are completely unused.
+  - Other: 1 node is unavailable, usually down, drained for maintenance, or failed.
+  - Total: 38 nodes.
+* NODELIST is the names of the actual machines e.g. glacier-01 through glacier-38.
+
+```bash
+squeue | head -n 5      # info for the first five jobs running on moriah
+squeue | wc -l          # how many jobs are in the whole queue right now
+squeue -u $USER         # just mine (none yet)
+```
+
+`squeue` columns are mostly self explanatory: `JOBID`, `PARTITION`, `NAME` (the name the user gave to their job), `USER` (name of the user), `ST` (current state of the job), `TIME` (how long it has been running), `NODES` and `NODELIST(REASON)`. The states you will see the most are `PD` (pending, waiting in line) and `R` (running). When a job is pending, the last column says the reason why, e.g. `(Resources)` means it is waiting for a free spot and `(Priority)` means others are ahead of you.
+
+## `srun`: execute one bash command on a compute node right now
+
+```bash
+srun hostname                          # not moriah-gw! A compute node ran it
+```
+
+You'll see something like:
+
+```
+srun: job 46637257 queued and waiting for resources
+srun: job 46637257 has been allocated resources
+glacier-14
+```
+
+That job "46637257" is the job_id given to our command. The "glacier-14" is the output of `hostname`. This means we successfully queued our first supercomputer job and all it did was tell use which computer it got allocated to.
+
+We can ask for any number of cores and memory we wish. Let's check it actually gives us what we request: 
+
+```bash
+srun --cpus-per-task=4 nproc           # 4: you get the number of cores you asked for
+srun --cpus-per-task=8 nproc           # 8: you get the number of cores you asked for
+srun --mem=2G --time=00:05:00 bash -c 'numfmt --to=iec < /sys/fs/cgroup/memory$(grep :memory: /proc/self/cgroup | cut -d: -f3 | sed "s|/step.*||")/memory.limit_in_bytes'  #2.0GB: you get the amount of memory you asked for
+srun --mem=7G --time=00:05:00 bash -c 'numfmt --to=iec < /sys/fs/cgroup/memory$(grep :memory: /proc/self/cgroup | cut -d: -f3 | sed "s|/step.*||")/memory.limit_in_bytes'  #7.0GB: you get the amount of memory you asked for
+```
+
+Let's redo the experiment testing how long it takes to add the numbers 1 + 2 + ... + 10,000,000 together on both the gateway node and the compute cluster
+
+```bash
+time python3 -c "sum(range(10**7))"         # on the login node, metered to 30% of a core
+srun bash -c 'time python3 -c "sum(range(10**7))"'    # on a compute node, a full core
+```
+
+The real time for gateway is ~3s and on compute it's ~0.2s.
+
+To get an interactive shell on a compute node (to poke around, test code, etc.) ask for a pseudo-terminal with `--pty`:
+
+```bash
+srun --cpus-per-task=2 --mem=4G --time=00:30:00 --pty bash
+hostname       # we are on a compute node now
+nproc          # 2
+exit           # give the resources back! The job ends when the shell ends
+```
+
+Always `exit` when you are done. While the shell is open you hold those cores and nobody else can use them, even if you are off getting coffee.
+
+## `sbatch`: submit a job script
+
+For anything that takes a while, you don't want to sit and wait. You write a **job script**: a regular bash script which specifies a job that runs in the background (think like runnning something on tmux). After the standard shebang line, the top lines of the bash script starting with `#SBATCH` are the resource request. Bash ignores them (they start with `#` so they are comments). But they are not comments to `sbatch` who reads them carefully.
+
+```bash
+mkdir -p ~/slurm_demo
+cd ~/slurm_demo
+cat > hello_job.sh << 'EOF'
+#!/bin/bash
+#SBATCH --job-name=hello
+#SBATCH --time=00:05:00
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=1G
+#SBATCH --output=hello_%j.out
+
+echo "Job $SLURM_JOB_ID started on $(hostname) at $(date)"
+echo "I was given $SLURM_CPUS_PER_TASK cores"
+sleep 60
+python3 -c "print(sum(range(10**8)))"
+echo "Done at $(date)"
+EOF
+bash -n hello_job.sh #ensure it parses
+ls -alh
+```
+Note: no need to `chmod` the script for execution as `sbatch` doesn't run your file in place. It reads its contents and sends the contents to Slurm, and Slurm writes that copy out on the compute node with its own permissions and runs it there. The execute bit on your original file never comes into play.
+
+The request lines:
+
+* `--job-name`: a name so you recognize it in `squeue`.
+* `--time`: the wall clock limit, `HH:MM:SS` (or `D-HH:MM:SS`). When it runs out, Slurm kills the job, finished or not. Ask for a bit more than you need: asking for less gets you scheduled sooner but asking for too little loses all the work.
+* `--cpus-per-task`: how many cores.
+* `--mem`: how much memory. Go over it and the job is killed with an "out of memory" (`OOM`) error.
+* `--output`: where the job's stdout and stderr go, since there is no terminal to print to. `%j` is replaced by the job ID so each run gets its own file.
+
+Slurm hands the script information through environment variables that all start with `SLURM_`, e.g. `$SLURM_JOB_ID` and `$SLURM_CPUS_PER_TASK`.
+
+Now submit it:
+
+```bash
+sbatch hello_job.sh
+# Submitted batch job 46637001       <- your job ID
+squeue -u $USER                      # PD then R
+squeue -u $USER                      # run it again a few times... or:
+watch -n 1 squeue -u $USER           # refreshes every second, Ctrl+C to stop watching (not the job!)
+ls                                   # hello_<jobid>.out appears once it starts
+tail -f hello_*.out                  # follow the output live, Ctrl+C to stop
+squeue -u $USER                      # should be done now
+```
+
+You can log out right after `sbatch` and the job keeps going: it doesn't belong to your terminal at all. This is the real answer to the "how do I keep a long job running after I log out" question from Lecture 5 (`tmux` / `nohup` are for the login node; on a cluster, long jobs go to the scheduler).
+
+You can also pass your own settings into the script through environment variables put before `sbatch` (they get copied into the job). This is how `KEEP_ALIVE=1 sbatch pg_job.sh` works below.
+
+## `scancel`: kill a job
+
+```bash
+sbatch hello_job.sh
+squeue -u $USER          # note the JOBID
+scancel 46637002         # use your job ID
+scancel -u $USER         # careful: cancels ALL your jobs
+```
+
+## After the job: what happened?
+
+```bash
+cat hello_*.out
+sacct -u $USER --starttime today --format=JobID,JobName,State,Elapsed,MaxRSS,ExitCode
+```
+
+`sacct` is the history of your jobs (`squeue` only shows jobs that are still pending or running). `State` is `COMPLETED`, `FAILED`, `CANCELLED`, `TIMEOUT` or `OUT_OF_MEMORY`. `MaxRSS` is the most memory the job actually used, which is how you learn what to put in `--mem` next time.
+
+## Slurm job arrays: one script, many tasks
+
+Much of the work in this course is the same computation repeated many times on different pieces: one bootstrap replicate per random seed, one model per setting of its tuning parameters, one simulation per scenario, one file per state. The pieces never need anything from each other. This is called **embarrassingly parallel** work, and for it Slurm has **job arrays**. A **Slurm job array** is one `sbatch` of one job script that Slurm runs as many separate **tasks**, each a normal job with its own node, cores and output file. The tasks differ only by one number: Slurm gives each task its **task ID** in `$SLURM_ARRAY_TASK_ID`, and the script uses it to choose its piece of the work.
+
+Here each task estimates $\pi$ from a million random points in the unit square (the share that falls inside the quarter circle is about $\pi/4$), using its task ID as the random seed so that every task draws different points:
+
+```bash
+cd ~/slurm_demo
+cat > pi_job.sh << 'EOF'
+#!/bin/bash
+#SBATCH --job-name=pi
+#SBATCH --array=1-10%5
+#SBATCH --time=00:05:00
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=1G
+#SBATCH --output=pi_%A_%a.out
+
+python3 -c "
+import random
+random.seed($SLURM_ARRAY_TASK_ID)
+n = 10**6
+hits = sum(random.random()**2 + random.random()**2 < 1 for _ in range(n))
+print($SLURM_ARRAY_TASK_ID, hits, n)
+"
+## `srun` inside a running job
+
+One last trick that we need for postgres: `srun --jobid=<id>` runs a new command *inside a job that is already running*, on its node, with its resources. Normally Slurm would wait until the job's cores are free, so we add `--overlap` to share them with what is already running there.
+
+```bash
+sbatch hello_job.sh                                    # sleeps for 60 sec
+squeue -u $USER                                        # wait until it says R
+srun --jobid=46637687 --overlap hostname               # the same node the job is on
+srun --jobid=46637687 --overlap --pty bash             # a shell inside the job
+ps -u $USER                                            # you can see the job's sleep
+exit
+```
+
+## Our course's limits on moriah
+
+All of us share one Slurm account, `course-52002-26`. Its limits apply to **everyone's running jobs added together, at the same moment**:
+
+* at most **647 cores**
+* at most **15 GPUs** (we won't be using these)
+* at most **~6,250 GB of memory**
+
+Each of us, separately:
+
+* at most **2 interactive jobs** open at once (`srun --pty bash`, and every `srun --jobid=... --overlap --pty psql` counts too). A third one waits until you `exit` one.
+* up to 20,000 jobs submitted at once, and at most 7 days per job (the partition limit).
+
+There is **no budget** of CPU hours to run out of. Using a lot only lowers your priority for a while (`sshare -U` shows your `FairShare`, from 0 to 1, where higher is better). There is also no per-person cap, so a few greedy requests can use up the class's 647 cores and leave everyone else in `PD` with reason `(AssocGrpCpuLimit)` or `(AssocGrpMemLimit)`. Ask for modest resources (≤ 4 cores and ≤ 8G is plenty for this course).
+
+Check them yourself:
+
+```bash
+sshare -U
+sacctmgr show assoc account=course-52002-26 user=$USER format=Account%20,User%12,GrpTRES%60,MaxSubmit
+```
+
+The summary of the rules:
+
+1. Never run heavy work on the login node.
+2. Quick test or interactive work: `srun` (with `--pty bash` for a shell, and `exit` when done).
+3. Real work: write a job script and `sbatch` it.
+4. Check on it with `squeue -u $USER`, kill it with `scancel`, look back with `sacct`.
+5. Ask for what you need (`--time`, `--cpus-per-task`, `--mem`), a bit more to be safe, but not much more: big requests wait longer and keep others out.
+
+## Slurm under other names: AWS, Kubernetes and friends
+
+After you graduate you may never see Slurm again, unless you work in academia, a national lab or a pharma / biotech company running its own cluster. In industry the compute usually lives in the cloud: **AWS Batch** (Amazon), **Google Cloud Batch**, **Azure Batch**, **Kubernetes**, **Databricks** jobs, etc. The good news is that they are all schedulers solving the same problem, and the ideas you just learned carry over.
+
+## Using postgres on moriah for this class
+
+```bash
+#let's navigate to my class home directory (not ~)
+cd /sci/courses/2026/52002/$USER
+pwd
+#there's a job that we can use to run postgres located in our class's shared directory
+less /sci/courses/2026/52002/shared/pg_job.sh
+KEEP_ALIVE=1 sbatch --time=02:00:00 ../shared/pg_job.sh #this starts the postgres server for you inside the compute cluster
+squeue -u $USER #ensure it's working
+export pg_job_id=46639943 #save the job_id for convenience as we'll reference it later
+```
+
+This job (which the HURCS people wrote for us) starts the postgres server in the cluster. By default it lives for two hours. Data persists in our local directories, so if it expires and kicks you out, your data survives. You can make it longer if you care by using ` --time=04:00:00`. The maximum time is 7 days. But you will be billing the class if it's idle. So just keep it on the default two hours.
+
+The server is running, how do we connect to it? We can use `srun` to connect a terminal inside a running job:
+
+```bash
+srun --jobid=${pg_job_id} --overlap --pty psql -h /tmp/pg_${USER}_${pg_job_id} classdb
+```
+
+Now we're inside postgres running on the cluster. It is here you will be doing some database work on the homework. We are using a database called `classdb` because we called `psql classdb`. Let's see how we're set up:
+
+```sql
+\conninfo
+-- expected
+\l
+-- the usual defaults + classdb
+\dt
+-- no tables yet
+\timing on
+--let's build a throwaway table
+CREATE TABLE students (
+  id       integer,
+  name     text,
+  born     date,
+  height   double precision,
+  enrolled boolean
+);
+--and add a few rows
+INSERT INTO students VALUES
+  (1, 'Noa',   '2003-04-17', 1.68, true),
+  (2, 'Amir',  '2002-11-02', 1.81, true),
+  (3, 'Yael',  '2004-01-29', 1.62, false),
+  (4, 'Omer',  '2003-08-09', NULL, true);
+--check they are there
+SELECT * FROM students;
+\dt
+-- now students is listed
+\q
+```
+
+We left postgres. Is our data gone? No... it's actually saved to our class home directory
+
+```bash
+ls -alh pgdata/
+```
+
+Where is it exactly? The postgres file system is beyond the scope of the course. But it's there.
+
+Our postgres job started with `sbatch` is still running so we can reconnect into the job within our two hour limit:
+
+```bash
+srun --jobid=${pg_job_id} --overlap --pty psql -h /tmp/pg_${USER}_${pg_job_id} classdb
+```
+
+And now let's make sure our data is still there:
+
+```sql
+SELECT * from students;
+```
+
+This verifies the database data persists on our filesystem. Let's now clean it up since it was just a demo:
+
+```sql
+DROP TABLE students;
+\dt
+\q
+```
+
+Once your're done with your work session, be *considerate* to everyone else in the class (and everyone else on the cluster) and shutdown your postgres server. Do that don't downwith `scancel`:
+
+```bash
+scancel ${pg_job_id} 
+```
+

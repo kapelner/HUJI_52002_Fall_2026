@@ -246,7 +246,7 @@ Spark shows how one `GROUP BY` can run on many machines. A **cloud data warehous
 
 : Five warehouses you will hear about. All of them speak SQL with window functions, CTEs and joins.
 
-**What carries over from this course: almost all of it.** The SQL of Lectures 4 to 7 (grouping, window functions, `WITH`, joins, views) runs on every one of them, with small differences in dialect. Some have conveniences Postgres lacks, such as `QUALIFY`, which filters on a window function directly and saves the subquery of the de-duplication section in Lecture 7. The drivers of Lecture 7 carry over too: each warehouse has a Python connector and an R driver for `DBI`, and `dbplyr` and `ibis` can translate to their SQL. Tools like dbt (Lecture 6) are used mostly on warehouses: the stack of views from Lecture 7, raw to cleaned, is exactly what a dbt project builds there.
+**What carries over from this course: almost all of it.** The SQL of Lectures 4 to 8 (grouping, window functions, `WITH`, joins, views) runs on every one of them, with small differences in dialect. Some have conveniences Postgres lacks, such as `QUALIFY`, which filters on a window function directly and saves the subquery of the de-duplication section in Lecture 7. The drivers of Lecture 8 carry over too: each warehouse has a Python connector and an R driver for `DBI`, and `dbplyr` and `ibis` can translate to their SQL. Tools like dbt (Lecture 6) are used mostly on warehouses: the stack of views from Lecture 7, raw to cleaned, is exactly what a dbt project builds there.
 
 **What is different:**
 

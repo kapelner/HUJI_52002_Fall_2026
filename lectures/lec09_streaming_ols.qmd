@@ -1,5 +1,5 @@
 ---
-title: "Lecture 8: Streaming Algorithms and OLS"
+title: "Lecture 9: Streaming Algorithms and OLS"
 subtitle: "Big Data Algorithms"
 format:
   html:
