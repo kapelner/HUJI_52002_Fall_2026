@@ -43,7 +43,8 @@ We will start with `covid.csv`, from the New York Times' public repository of CO
 Our first "real" linux command is `curl` (client URL) which downloads whatever is at the web address (a URL) you supply. 
 
 ```bash
-curl -L -o covid.csv https://raw.githubusercontent.com/nytimes/covid-19-data/master/us-counties-2020.csv
+curl -L -o covid.csv \
+  https://raw.githubusercontent.com/nytimes/covid-19-data/master/us-counties-2020.csv
 #^^^  ^^^^^^^^^^^^^^ ^^^^^^^^^
 #  |  cmd options    cmd argument
 # linux command
@@ -475,7 +476,8 @@ What do these characters mean? The following is the default permissions:
  | |   |   +-- 8-10: permissions for everyone else ("other")
  | |   +------ 5-7:  permissions for the group (we won't go into this)
  | +---------- 2-4:  permissions for the owner (the user who owns the file)
- +------------ 1:    the type of item (`-` for ordinary file, `d` for directory, `l` for links which we may use later)
+ +------------ 1:    the type of item: `-` for an ordinary file,
+                     `d` for a directory, `l` for a link (later)
 ```
 
 Am I "kapelner"?

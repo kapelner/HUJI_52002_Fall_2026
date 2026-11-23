@@ -10,7 +10,7 @@ format:
     embed-resources: true
 ---
 
-========================== Final exam material ==========================
+========== Final exam material ==========
 
 
 Open the database and set convenience settings:

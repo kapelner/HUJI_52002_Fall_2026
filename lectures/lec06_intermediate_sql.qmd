@@ -475,7 +475,8 @@ In `awk`, an upsert is an array keyed on the unique columns: read the old rows, 
 
 ```bash
 awk -F, '$3=="Texas" && ($2=="Harris" || $2=="Dallas") && $1>="2020-12-30"' covid.csv > texas_load.csv
-printf '2020-12-31,Harris,Texas,48201,237800,3405\n2021-01-01,Harris,Texas,48201,239000,3500\n' > new_day.csv
+printf '2020-12-31,Harris,Texas,48201,237800,3405\n'  > new_day.csv
+printf '2021-01-01,Harris,Texas,48201,239000,3500\n' >> new_day.csv
 # DO UPDATE: the last line of each (date, state, county) wins
 awk -F, '{row[$1 FS $3 FS $2] = $0} END {for (k in row) print row[k]}' texas_load.csv new_day.csv | sort -t, -k2,2 -k1,1   # 5 lines, Harris 2020-12-31 now 237800,3405
 # DO NOTHING: only the first line of each key is kept
@@ -835,4 +836,4 @@ So the 57 MB is the price of the database's features. The row header is what let
 
 We're finally done with one postgres table!!!
 
-========================== Midterm material cutoff ==========================
+========== Midterm material cutoff ==========

@@ -43,13 +43,13 @@ None released yet
 * [Lecture 10: Hash Functions](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/lectures/lec10_hashing.qmd)
 * [Lecture 9: Streaming Algorithms and OLS](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/lectures/lec09_streaming_ols.qmd)
 * [Lecture 8: Joins Continued, Database Drivers and Abstraction, Slurm](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/lectures/lec08_joins_db_drivers_slurm.qmd)-->
-* [Lecture 7: Data Cleaning, Multiple Tables and Joins](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/lectures/lec07_cleaning_multiple_tables_joins.qmd)
-* [Lecture 6: Intermediate PostgreSQL B](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/lectures/lec06_intermediate_sql.qmd)
-* [Lecture 5: Intermediate PostgreSQL A](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/lectures/lec05_basic_sql_continued.qmd)
-* [Lecture 4: Remote Machines, Querying PostgreSQL](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/lectures/lec04_remote_machines_postgres.qmd)
-* [Lecture 3: git, Parquet and Intro to Databases](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/lectures/lec03_git_parquet_databases.qmd)
-* [Lecture 2: Advanced Linux](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/lectures/lec02_linux_advanced.qmd)
-* [Lecture 1: Working at the Unix Command Line](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/lectures/lec01_linux_shell_basics.qmd)
+* Lecture 7: Data Cleaning, Multiple Tables and Joins [(qmd)](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/lectures/lec07_cleaning_multiple_tables_joins.qmd) [(pdf)](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/lectures/lec07_cleaning_multiple_tables_joins.pdf)
+* Lecture 6: Intermediate PostgreSQL B [(qmd)](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/lectures/lec06_intermediate_sql.qmd) [(pdf)](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/lectures/lec06_intermediate_sql.pdf)
+* Lecture 5: Intermediate PostgreSQL A [(qmd)](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/lectures/lec05_basic_sql_continued.qmd) [(pdf)](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/lectures/lec05_basic_sql_continued.pdf)
+* Lecture 4: Remote Machines, Querying PostgreSQL [(qmd)](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/lectures/lec04_remote_machines_postgres.qmd) [(pdf)](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/lectures/lec04_remote_machines_postgres.pdf)
+* Lecture 3: git, Parquet and Intro to Databases [(qmd)](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/lectures/lec03_git_parquet_databases.qmd) [(pdf)](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/lectures/lec03_git_parquet_databases.pdf)
+* Lecture 2: Advanced Linux [(qmd)](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/lectures/lec02_linux_advanced.qmd) [(pdf)](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/lectures/lec02_linux_advanced.pdf)
+* Lecture 1: Working at the Unix Command Line [(qmd)](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/lectures/lec01_linux_shell_basics.qmd) [(pdf)](https://github.com/kapelner/HUJI_52002_Fall_2026/blob/main/lectures/lec01_linux_shell_basics.pdf)
 
 
 ## Exams

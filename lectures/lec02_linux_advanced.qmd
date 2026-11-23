@@ -699,11 +699,11 @@ The value of a key can be a number, a string, an array, or *another hash map*, s
 
 How each format draws the two blocks:
 
-| Building block          | YAML             | JSON                   | XML                                                |
-|-------------------------|------------------|------------------------|----------------------------------------------------|
-| hash map (`key: value`) | `name: Kapelner` | `{"name": "Kapelner"}` | `<name>Kapelner</name>` (a tag is the key)         |
-| array                   | `[R, Python]`    | `["R", "Python"]`      | repeated tags: `<lang>R</lang><lang>Python</lang>` |
-| nesting                 | indentation      | braces and brackets    | tags inside tags                                   |
+| Building block          | YAML             | JSON                   | XML                                                   |
+|-------------------------|------------------|------------------------|-------------------------------------------------------|
+| hash map (`key: value`) | `name: Kapelner` | `{"name": "Kapelner"}` | `<name>Kapelner</name>` (a tag is the key)            |
+| array                   | `[R, Python]`    | `["R", "Python"]`      | repeated tags: `<lang>R</lang>` `<lang>Python</lang>` |
+| nesting                 | indentation      | braces and brackets    | tags inside tags                                      |
 
 Note: XML has no array of its own; a "list" is just the same tag repeated, which is one reason it is wordier and fell out of favor. JSON, YAML and XML are all nested hash maps and arrays, so both Python and R read them into their own structures in a line or two. 
 
@@ -851,21 +851,21 @@ Licenses fall into two families. **Permissive** licenses (MIT, BSD, Apache) let 
 
 What each license lets you do, and what it asks of you in return:
 
-+------------------+-----------+----------+------------+-------+-----------+---------+------------+----------+----------+
-| License          |    Use    |  Modify  | Distribute |  Sell | Keep your |  Patent |  Keep the  |   Mark   |  Share   |
-|                  | privately |          |            |       |  version  |  grant  | copyright  |   your   |   your   |
-|                  |           |          |            |       |   closed  |         |   notice   | changes  |  source  |
-+:=================+:=========:+:========:+:==========:+:=====:+:=========:+:=======:+:==========:+:========:+:========:+
-| MIT              |     ✓     |    ✓     |     ✓      |   ✓   |     ✓     |    ✗    |     ✓      |    ✗     |    ✗  |
-+------------------+-----------+----------+------------+-------+-----------+---------+------------+----------+----------+
-| Apache 2.0       |     ✓     |    ✓     |     ✓      |   ✓   |     ✓     |    ✓    |     ✓      |    ✓     |    ✗  |
-+------------------+-----------+----------+------------+-------+-----------+---------+------------+----------+----------+
-| BSD (2/3-clause) |     ✓     |    ✓     |     ✓      |   ✓   |     ✓     |    ✗    |     ✓      |    ✗     |    ✗  |
-+------------------+-----------+----------+------------+-------+-----------+---------+------------+----------+----------+
-| GPL v3           |     ✓     |    ✓     |     ✓      |   ✓   |     ✗     |    ✓    |     ✓      |    ✓     |    ✓  |
-+------------------+-----------+----------+------------+-------+-----------+---------+------------+----------+----------+
-| GPL v2           |     ✓     |    ✓     |     ✓      |   ✓   |     ✗     |    ✗    |     ✓      |    ✓     |    ✓  |
-+------------------+-----------+----------+------------+-------+-----------+---------+------------+----------+----------+
++------------------+-----------+----------+------------+------+-----------+-----------+-----------+--------------+------------+
+| License          | Use       | Modify   | Distribute | Sell | Keep your | Patent    | Keep the  | Mark         | Share      |
+|                  | privately |          |            |      | version   | grant     | copyright | your         | your       |
+|                  |           |          |            |      | closed    |           | notice    | changes      | source     |
++:=================+:=========:+:========:+:==========:+:====:+:=========:+:=========:+:=========:+:============:+:==========:+
+| MIT              | ✓         | ✓        | ✓          | ✓    | ✓         | ✗         | ✓         | ✗            | ✗          |
++------------------+-----------+----------+------------+------+-----------+-----------+-----------+--------------+------------+
+| Apache 2.0       | ✓         | ✓        | ✓          | ✓    | ✓         | ✓         | ✓         | ✓            | ✗          |
++------------------+-----------+----------+------------+------+-----------+-----------+-----------+--------------+------------+
+| BSD (2/3-clause) | ✓         | ✓        | ✓          | ✓    | ✓         | ✗         | ✓         | ✗            | ✗          |
++------------------+-----------+----------+------------+------+-----------+-----------+-----------+--------------+------------+
+| GPL v3           | ✓         | ✓        | ✓          | ✓    | ✗         | ✓         | ✓         | ✓            | ✓          |
++------------------+-----------+----------+------------+------+-----------+-----------+-----------+--------------+------------+
+| GPL v2           | ✓         | ✓        | ✓          | ✓    | ✗         | ✗         | ✓         | ✓            | ✓          |
++------------------+-----------+----------+------------+------+-----------+-----------+-----------+--------------+------------+
 
 : ✓ = allowed (first six columns: *you may*; last three: *you must*). "Patent grant" means the authors also give you the right to use any patents covering their code. The 3-clause BSD license additionally forbids using the authors' names to promote your product. This is a simplification and not legal advice; read the actual `LICENSE` file.
 

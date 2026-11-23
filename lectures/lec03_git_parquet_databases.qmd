@@ -88,14 +88,16 @@ I'll run every command below in the actual 52002 course repository. The first de
 A change to a file passes through several places on its way to GitHub:
 
 ```
- working folder     staging area      local repository   GitHub (the mothership - for sharing with others)
-  (your files)      (next commit)      (your history)     (remote: origin)
-        |                 |                   |                   |
-        |---- git add ---->                   |                   |
-        |                 |--- git commit ---->                   |
-        |                 |                   |---- git push ----->
-        |                 |                   |                   |
-        <----------------------- git pull ------------------------|
+ working folder    staging area     local repository  GitHub (remote:
+  (your files)     (next commit)     (your history)   origin, the
+                                                      mothership for
+                                                      sharing)
+        |                |                 |                |
+        |--- git add ---->                 |                |
+        |                |-- git commit --->                |
+        |                |                 |--- git push --->
+        |                |                 |                |
+        <-------------------- git pull ---------------------|
 ```
 
 Each level is confusing. The *staging area* lets you choose exactly which changes go into the next commit: `add` puts changes into the staging area, `commit` saves what is staged as one snapshot. And `git status` tells you what is where. Finally, `push` sends it to the mothership.
@@ -168,9 +170,9 @@ A **branch** is a separate line of development. You can think of it as a paralle
 Under the hood a branch is not a copy at all. It is just a **movable label that points to one commit** (a tiny file with a commit code in it), so creating a branch is instant and costs nothing, even for a huge project. When you commit, the label of the branch you are on moves forward to the new commit. `HEAD` (the "where am I?" pointer from before) says which branch is the current one:
 
 ```
-                 C---D         <- lec03-demo   (a branch we are experimenting on)
+                 C---D        <- lec03-demo  (a branch to experiment on)
                 /
-        A---B---E---F          <- main         (the production code, untouched)
+        A---B---E---F         <- main        (production code, untouched)
                     ^
                    HEAD  (if we are standing on main)
 ```
@@ -230,14 +232,17 @@ git show --stat HEAD~1          # "one commit before HEAD" (HEAD~2 is two before
 * To rewrite history and get the branch's old state back, use `git reset --mixed` or `git reset --hard`. C and D will no longer be on the branch so you are destroying the work in C and D
 
   ```
-  A->B->C->D   --git reset --mixed B-->   A->B   (files still contain C's and D's changes, un-staged)
-  A->B->C->D   --git reset --hard B-->    A->B   (any work in C and D is destroyed permanently)
+  A->B->C->D  --git reset --mixed B-->  A->B  (files keep C's and D's
+                                               changes, un-staged)
+  A->B->C->D  --git reset --hard B-->   A->B  (any work in C and D is
+                                               destroyed permanently)
   ```
 
 * To bring back just one file, use `git restore`. It changes your working folder, not the commit history:
 
   ```
-  A->B->C->D   --git restore file-->   A->B->C->D   (only the file in the working folder changes)
+  A->B->C->D  --git restore file-->  A->B->C->D  (only the file in the
+                                                 working folder changes)
   ```
 
 I can demo these different types of "undo" but I don't want to mess up the course repo! So we take a slight detour now to talk about branches first.
